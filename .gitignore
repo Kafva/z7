@@ -1,0 +1,30 @@
+# vi: ft=gitignore
+
+# General
+**/bin/**
+**/obj/**
+dist
+build
+*.o
+*.swp
+*.pid
+*~
+~$*
+*.core
+*.orig
+*.rej
+tags
+.tags
+
+# Zig
+zig-cache
+zig-out
+.zig-cache
+
+# macOS
+Music Library.musiclibrary
+Media.localized
+.localized
+.DS_Store
+_DS_Store
+*.dSYM
