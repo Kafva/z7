@@ -1,20 +1,43 @@
 const std = @import("std");
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    // For one-shot programs, an arena allocator is useful, it allows us
+    // to do allocations and free everything at once with
+    // arena.deinit() at the end of the program instead of keeping track
+    // of each malloc().
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
+    // Setup stdout
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try bw.flush(); // don't forget to flush!
+    const args = try std.process.argsWithAllocator(allocator);
+    while (args.next()) |arg| {
+        stdout.print(arg);
+    }
+    // for (args) |arg| {
+    //     stdout.print(arg);
+    // }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
