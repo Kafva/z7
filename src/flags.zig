@@ -1,14 +1,13 @@
 const std = @import("std");
 
 pub const Flag = struct {
-    /// 2:0, 2 bytes with null termination
-    short: *const [2:0]u8,
-    long: *const [9:0]u8,
+    short: u8,
+    long: *const u8,
     reqArg: bool,
     value: ?*u8,
 };
 
-pub fn parse(args: *std.process.ArgIterator, comptime flags: *const [1]Flag) void {
+pub fn parse(args: *std.process.ArgIterator, comptime flags: []const Flag) void {
     _ = args.next(); // Skip program name
 
     while (args.next()) |arg| {

@@ -2,7 +2,7 @@ const std = @import("std");
 const flags = @import("flags.zig");
 
 const opts = [_]flags.Flag{
-    .{ .short = "-V", .long = "--version", .reqArg = false, .value = null },
+    .{ .short = 'V', .long = @ptrCast("--version"), .reqArg = false, .value = null },
 };
 
 const verbose: bool = false;
