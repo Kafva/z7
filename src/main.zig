@@ -14,30 +14,14 @@ pub fn main() !void {
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
 
-    const args = try std.process.argsWithAllocator(allocator);
+    var args = try std.process.argsWithAllocator(allocator);
+    _ = args.next(); // Skip program name
+
     while (args.next()) |arg| {
-        stdout.print(arg);
+        try stdout.print("{s}\n", .{arg});
+        try bw.flush();
     }
-    // for (args) |arg| {
-    //     stdout.print(arg);
-    // }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
