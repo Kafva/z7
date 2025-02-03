@@ -1,8 +1,9 @@
 const std = @import("std");
 const flags = @import("flags.zig");
 
+const opt_version = "version";
 var opts = [_]flags.Flag{
-    .{ .short = 'V', .long = "version", .value = .{ .active = false } },
+    .{ .short = 'V', .long = opt_version, .value = .{ .active = false } },
 };
 
 const verbose: bool = false;
