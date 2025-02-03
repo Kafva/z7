@@ -1,8 +1,8 @@
 const std = @import("std");
 const flags = @import("flags.zig");
 
-const opts = [_]flags.Flag{
-    .{ .short = 'V', .long = @ptrCast("--version"), .reqArg = false, .value = null },
+var opts = [_]flags.Flag{
+    .{ .short = 'V', .long = "version", .reqArg = false, .value = .{ .active = false } },
 };
 
 const verbose: bool = false;
@@ -30,5 +30,8 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const args = try std.process.argsWithAllocator(allocator);
-    flags.parse(@constCast(&args), &opts);
+    try flags.parse(@constCast(&args), &opts);
+
+    std.debug.print("{any}\n", .{opts[0].value.active});
+    std.debug.print("{any}\n", .{opts});
 }
