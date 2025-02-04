@@ -1,9 +1,19 @@
 const std = @import("std");
-const flags = @import("flags.zig");
 
-const opt_version = "version";
-var opts = [_]flags.Flag{
-    .{ .short = 'V', .long = opt_version, .value = .{ .active = false } },
+const Flag = @import("flags.zig").Flag;
+const FlagIterator = @import("flags.zig").FlagIterator;
+
+const opt_h = "help";
+const opt_V = "version";
+const opt_v = "verbose";
+const opt_d = "decompress";
+const opt_c = "stdout";
+var opts = [_]Flag{
+    .{ .short = 'h', .long = opt_h, .value = .{ .active = false } },
+    .{ .short = 'V', .long = opt_V, .value = .{ .active = false } },
+    .{ .short = 'v', .long = opt_v, .value = .{ .active = false } },
+    .{ .short = 'd', .long = opt_d, .value = .{ .active = false } },
+    .{ .short = 'c', .long = opt_c, .value = .{ .active = false } },
 };
 
 const verbose: bool = false;
@@ -31,7 +41,8 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const args = try std.process.argsWithAllocator(allocator);
-    try flags.parse(@constCast(&args), &opts);
+    var flags = FlagIterator(std.process.ArgIterator){ .iter = args };
+    try flags.parse(&opts);
 
     std.debug.print("{any}\n", .{opts[0].value.active});
     std.debug.print("{any}\n", .{opts});
