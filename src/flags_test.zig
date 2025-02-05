@@ -12,7 +12,7 @@ var opts = [_]Flag{
     .{ .short = 'c', .long = opt_c, .value = .{ .active = false } },
 };
 
-fn tokenize(cmdline: []const u8) std.mem.TokenIterator(u8, .scalar) {
+fn setup(cmdline: []const u8) std.mem.TokenIterator(u8, .scalar) {
     opts[0].value.str = null;
     opts[1].value.str = null;
     opts[2].value.active = false;
@@ -27,7 +27,7 @@ fn run(iter: *std.mem.TokenIterator(u8, .scalar)) FlagError!?([]const u8) {
 
 test "Parse ok flags" {
     const cmdline = "./tester --alpha alpha_argument -b beta_argument --charlie";
-    var iter = tokenize(cmdline);
+    var iter = setup(cmdline);
     const first_arg = try run(&iter);
 
     try std.testing.expectEqual(null, first_arg);
@@ -40,7 +40,7 @@ test "Parse ok flags" {
 
 test "Parse ok arguments without flags" {
     const cmdline = "./tester a bb ccc";
-    var iter = tokenize(cmdline);
+    var iter = setup(cmdline);
     const first_arg = try run(&iter);
 
     try std.testing.expectEqualStrings("a", first_arg.?);
@@ -51,7 +51,7 @@ test "Parse ok arguments without flags" {
 
 test "Parse ok flags followed by arguments" {
     const cmdline = "./tester --charlie -a alpha_argument a bb ccc";
-    var iter = tokenize(cmdline);
+    var iter = setup(cmdline);
     const first_arg = try run(&iter);
 
     try std.testing.expectEqualStrings("a", first_arg.?);
@@ -66,7 +66,7 @@ test "Parse ok flags followed by arguments" {
 
 test "Stop parsing flags after --" {
     const cmdline = "./tester --charlie -a alpha_argument -- -b";
-    var iter = tokenize(cmdline);
+    var iter = setup(cmdline);
 
     const first_arg = try run(&iter);
 
@@ -80,14 +80,14 @@ test "Stop parsing flags after --" {
 
 test "Handle unexpected short flag" {
     const cmdline = "./tester --charlie -q";
-    var iter = tokenize(cmdline);
+    var iter = setup(cmdline);
     const r = run(&iter);
     try std.testing.expectError(FlagError.UnexpectedFlag, r);
 }
 
 test "Handle unexpected long flag" {
     const cmdline = "./tester -c --quiet";
-    var iter = tokenize(cmdline);
+    var iter = setup(cmdline);
     const r = run(&iter);
     try std.testing.expectError(FlagError.UnexpectedFlag, r);
 }
