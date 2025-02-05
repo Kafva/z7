@@ -40,10 +40,13 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const args = try std.process.argsWithAllocator(allocator);
-    var flags = FlagIterator(std.process.ArgIterator){ .iter = args };
-    try flags.parse(&opts);
+    var args = try std.process.argsWithAllocator(allocator);
+    var flags = FlagIterator(std.process.ArgIterator){ .iter = &args };
+    const first_arg = try flags.parse(&opts);
 
+    if (first_arg) |a| {
+        std.debug.print("arg: {s}\n", .{a});
+    }
     std.debug.print("{any}\n", .{opts[0].value.active});
     std.debug.print("{any}\n", .{opts});
 }
