@@ -2,10 +2,10 @@
 Compression tool
 
 ```bash
-zig run src/main.zig
+zig build run -- --help
 ```
 
 ## Unit tests
 ```bash
-zig test src/test.zig
+zig build test
 ```
