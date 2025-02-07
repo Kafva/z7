@@ -61,6 +61,17 @@ pub fn main() !void {
 
     if (first_arg) |a| {
         std.debug.print("arg: {s}\n", .{a});
+
+        const file = try std.fs.cwd().openFile(a, .{});
+        defer file.close();
+
+        const buffer_size = 10;
+        const buf = try file.readToEndAlloc(allocator, buffer_size);
+
+        std.debug.print("{any}\n", .{buf});
+        
+
+
     } else {
         try stdout.writeAll(usage);
     }
