@@ -3,6 +3,7 @@
 # General
 **/bin/**
 **/obj/**
+**/out/**
 dist
 build
 *.o

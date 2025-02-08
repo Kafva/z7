@@ -49,10 +49,32 @@ fn build_tests(
         .optimize = optimize,
     });
 
+    // Build reference implementation library
+    // XXX: we need to place the library at cwd for it to be found...
+    const go_out = ".";
+    const go_out_path = b.path(go_out);
+
+    const go_args = [_][]const u8{
+        "go",
+        "build",
+        "-buildmode=c-shared",
+        "-o",
+        go_out ++ "/libflate.so",
+        "tests/flate.go",
+    };
+    std.fs.cwd().makeDir(go_out) catch {};
+    const go_run = b.addSystemCommand(&go_args);
+
+    tests.addIncludePath(go_out_path);
+    tests.addLibraryPath(go_out_path);
+    tests.linkLibC();
+    tests.linkSystemLibrary("flate");
+
     const tests_run = b.addRunArtifact(tests);
     const tests_install = b.addInstallArtifact(tests, .{});
     const tests_step = b.step("test", "Run unit tests");
 
+    tests.step.dependOn(&go_run.step);
     tests_run.step.dependOn(&tests_install.step);
     tests_step.dependOn(&tests_run.step);
 }
