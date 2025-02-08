@@ -4,7 +4,8 @@ const build_options = @import("build_options");
 const log = @import("log.zig");
 const Flag = @import("flags.zig").Flag;
 const FlagIterator = @import("flags.zig").FlagIterator;
-const deflate = @import("deflate.zig");
+const deflate = @import("deflate.zig").deflate;
+const inflate = @import("inflate.zig").inflate;
 
 const opt_h = "help";
 const opt_V = "version";
@@ -68,9 +69,9 @@ pub fn main() !u8 {
         };
 
         if (opts[4].value.active) {
-            try deflate.inflate(buf);
+            try inflate(buf);
         } else {
-            try deflate.deflate(buf);
+            try deflate(buf);
         }
     } else {
         try stdout.writeAll(usage);
