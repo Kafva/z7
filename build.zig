@@ -4,15 +4,12 @@ const std = @import("std");
 // versions: https://github.com/ziglang/zig/pull/20271
 const version = "0.0.0";
 
-pub fn build(b: *std.Build) void {
-    // Let the user choose the build target
-    const target = b.standardTargetOptions(.{});
-    // Let the user choose optimziation level
-    const optimize = b.standardOptimizeOption(.{});
-    const build_options = b.addOptions();
-    build_options.addOption([]const u8, "version", version);
-
-    // main ////////////////////////////////////////////////////////////////////
+fn build_exe(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    build_options: *std.Build.Step.Options,
+) void {
     const exe = b.addExecutable(.{
         .name = "z7",
         .root_source_file = b.path("src/main.zig"),
@@ -36,8 +33,15 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         exe_run.addArgs(args);
     }
+}
 
-    // tests ///////////////////////////////////////////////////////////////////
+fn build_tests(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    build_options: *std.Build.Step.Options,
+) void {
+    _ = build_options;
     const tests = b.addTest(.{
         .name = "z7-test",
         .root_source_file = b.path("src/test.zig"),
@@ -51,4 +55,19 @@ pub fn build(b: *std.Build) void {
 
     tests_run.step.dependOn(&tests_install.step);
     tests_step.dependOn(&tests_run.step);
+}
+
+pub fn build(b: *std.Build) void {
+    // Let the user choose the build target
+    const target = b.standardTargetOptions(.{});
+
+    // Let the user choose optimziation level
+    const optimize = b.standardOptimizeOption(.{});
+
+    // Configure build options
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", version);
+
+    build_exe(b, target, optimize, build_options);
+    build_tests(b, target, optimize, build_options);
 }
