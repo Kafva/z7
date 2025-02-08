@@ -4,6 +4,7 @@ const build_options = @import("build_options");
 const log = @import("log.zig");
 const Flag = @import("flags.zig").Flag;
 const FlagIterator = @import("flags.zig").FlagIterator;
+const deflate = @import("deflate.zig");
 
 const opt_h = "help";
 const opt_V = "version";
@@ -30,9 +31,6 @@ const usage =
     \\
 ;
 
-// gzip is based of DEFLATE which uses LZ77 and Huffman coding.
-//
-// DEFLATE: https://www.ietf.org/rfc/rfc1951.txt
 pub fn main() !u8 {
     // For one-shot programs, an arena allocator is useful, it allows us
     // to do allocations and free everything at once with
@@ -69,7 +67,11 @@ pub fn main() !u8 {
             return 1;
         };
 
-        _ = buf;
+        if (opts[4].value.active) {
+            try deflate.inflate(buf);
+        } else {
+            try deflate.deflate(buf);
+        }
     } else {
         try stdout.writeAll(usage);
     }
