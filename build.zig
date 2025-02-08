@@ -49,9 +49,10 @@ fn build_tests(
         .optimize = optimize,
     });
 
-    // Build reference implementation library
-    // XXX: we need to place the library at cwd for it to be found...
-    const go_out = ".";
+    // Build reference implementation library for testing, there is a deflate
+    // implementation in zig stdlib but that's no fun xD
+    // XXX: The library is only found if it is present at the project root...
+    const go_out = "tests/out";
     const go_out_path = b.path(go_out);
 
     const go_args = [_][]const u8{

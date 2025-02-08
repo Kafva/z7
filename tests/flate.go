@@ -5,18 +5,19 @@ import "C"
 import (
     "bytes"
     "compress/flate"
+    "math/rand"
     "fmt"
     "io"
 )
 
-//export FlateHuffmanOnly
-func FlateHuffmanOnly(input []uint8, output []uint8) uint8 {
+//export DeflateHuffmanOnly
+func DeflateHuffmanOnly(input []uint8, output []uint8) int {
     var buf bytes.Buffer
 
     w, err := flate.NewWriter(&buf, flate.HuffmanOnly)
 
     if err != nil {
-        return 1
+        return -1
     }
     w.Write(input)
     w.Close()
@@ -24,18 +25,45 @@ func FlateHuffmanOnly(input []uint8, output []uint8) uint8 {
     for i := 0; i < len(output); i++ {
         b, err := buf.ReadByte()
         if err == io.EOF {
-            break
+            return i
         }
         output[i] = b;
     }
 
-    return 0;
+    return len(output);
+}
+
+//export InflateHuffmanOnly
+func InflateHuffmanOnly(input []uint8, output []uint8) int {
+    var buf bytes.Buffer
+
+    _, err := buf.Write(input)
+    if err != nil {
+        fmt.Printf("write: %+v\n", err);
+        return -1
+    }
+
+    reader := flate.NewReader(&buf)
+    defer reader.Close()
+
+    n, err := reader.Read(output);
+    if err != nil {
+        fmt.Printf("read: %+v (%d)\n", err, n);
+        return -1
+    }
+
+    return n;
 }
 
 func main() {
-    input := []uint8{1,2,3,4}
-    output := []uint8{0,0,0,0}
-    FlateHuffmanOnly(input, output)
+    input := make([]uint8, 1024, 1024)
+    output := make([]uint8, 1024, 1024)
+    output2 := make([]uint8, 1024, 1024)
 
-    fmt.Printf("output: %+v\n", output);
+    for i := 0; i < len(input); i++ {
+        input[i] = 'A' + uint8(rand.Int() % 10)
+    }
+
+    compressed_len := DeflateHuffmanOnly(input, output)
+    InflateHuffmanOnly(output[:compressed_len], output2)
 }
