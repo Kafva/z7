@@ -1,10 +1,9 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
+const log = @import("log.zig");
 const Flag = @import("flags.zig").Flag;
 const FlagIterator = @import("flags.zig").FlagIterator;
-
-var verbose: bool = false;
 
 const opt_h = "help";
 const opt_V = "version";
@@ -34,7 +33,7 @@ const usage =
 // gzip is based of DEFLATE which uses LZ77 and Huffman coding.
 //
 // DEFLATE: https://www.ietf.org/rfc/rfc1951.txt
-pub fn main() !void {
+pub fn main() !u8 {
     // For one-shot programs, an arena allocator is useful, it allows us
     // to do allocations and free everything at once with
     // arena.deinit() at the end of the program instead of keeping track
@@ -50,29 +49,30 @@ pub fn main() !void {
 
     if (opts[0].value.active) {
         try stdout.writeAll(usage);
-        return;
+        return 0;
     }
     if (opts[1].value.active) {
         try stdout.writeAll(build_options.version);
         try stdout.writeAll("\n");
-        return;
+        return 0;
     }
-    verbose = opts[2].value.active;
+    log.enable_debug = opts[2].value.active;
+    log.debug(@src(), "Starting z7 {s}", .{build_options.version});
 
     if (first_arg) |a| {
-        std.debug.print("arg: {s}\n", .{a});
-
         const file = try std.fs.cwd().openFile(a, .{});
         defer file.close();
 
-        const buffer_size = 10;
-        const buf = try file.readToEndAlloc(allocator, buffer_size);
+        const buffer_size = 1024;
+        const buf = file.readToEndAlloc(allocator, buffer_size) catch |err| {
+            log.err(@src(), "Error reading {s}: {any}", .{ a, err });
+            return 1;
+        };
 
-        std.debug.print("{any}\n", .{buf});
-        
-
-
+        _ = buf;
     } else {
         try stdout.writeAll(usage);
     }
+
+    return 0;
 }
