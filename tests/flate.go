@@ -16,7 +16,6 @@ func FlateHuffmanOnly(input []uint8, output []uint8) uint8 {
     w, err := flate.NewWriter(&buf, flate.HuffmanOnly)
 
     if err != nil {
-        println("error: " + err.Error())
         return 1
     }
     w.Write(input)
