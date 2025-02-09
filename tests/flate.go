@@ -5,9 +5,10 @@ import "C"
 import (
     "bytes"
     "compress/flate"
-    "math/rand"
     "fmt"
     "io"
+    "math/rand"
+    "os"
 )
 
 //export DeflateHuffmanOnly
@@ -47,8 +48,8 @@ func InflateHuffmanOnly(input []uint8, output []uint8) int {
     defer reader.Close()
 
     n, err := reader.Read(output);
-    if err != nil {
-        fmt.Printf("read: %+v (%d)\n", err, n);
+    if err != nil && err != io.EOF {
+        fmt.Printf("read: %+v\n", err);
         return -1
     }
 
@@ -65,5 +66,15 @@ func main() {
     }
 
     compressed_len := DeflateHuffmanOnly(input, output)
+
     InflateHuffmanOnly(output[:compressed_len], output2)
+
+    for i := 0; i < len(input); i++ {
+        if input[i] != output2[i] {
+            println("FAILED")
+            os.Exit(1)
+        }
+    }
+
+    println("OK")
 }
