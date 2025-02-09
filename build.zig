@@ -49,29 +49,37 @@ fn build_tests(
         .optimize = optimize,
     });
 
-    // Build reference implementation library for testing, there is a deflate
-    // implementation in zig stdlib but that's no fun xD
-    // XXX: The library is only found if it is present at the project root...
+    // Build reference implementation library for testing
+    // There is a reference implementation in zig stdlib but we use this
     const go_out = "tests/out";
+    const go_lib = go_out ++ "/libflate.so";
 
     const go_args = [_][]const u8{
         "go",
         "build",
         "-buildmode=c-shared",
         "-o",
-        go_out ++ "/libflate.so",
+        go_lib,
         "tests/flate.go",
     };
     std.fs.cwd().makeDir(go_out) catch {};
     const go_run = b.addSystemCommand(&go_args);
 
-    //tests.linkLibrary(go_lib);
     tests.addLibraryPath(.{ .cwd_relative = go_out });
-    tests.addRPath(.{ .cwd_relative = go_out });
     tests.linkSystemLibrary("flate");
-    //const go_lib = b.addSharedLibrary(go_out ++ "/libflate.so");
-    //tests.addObjectFile(.{.cwd_relative = go_out ++ "/libflate.so"});
     tests.addIncludePath(.{ .cwd_relative = go_out });
+
+    switch (target.result.os.tag) {
+        .macos => {
+            // XXX: `.addLibraryPath(...) + .linkSystemLibrary(...)` does not
+            // work properly on macOS, the linker only searches in /System paths
+            // and the cwd(?). HACK: workaround, create a symLink at cwd...
+            std.fs.cwd().symLink(go_lib, "./libflate.so", .{}) catch {};
+        },
+        else => {
+            tests.linkLibC();
+        },
+    }
 
     const tests_run = b.addRunArtifact(tests);
     const tests_install = b.addInstallArtifact(tests, .{});
