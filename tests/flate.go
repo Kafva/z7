@@ -3,11 +3,12 @@ package main
 import "C"
 
 import (
+    "bufio"
     "bytes"
     "compress/flate"
+    "compress/gzip"
     "fmt"
     "io"
-    "math/rand"
     "os"
 )
 
@@ -37,8 +38,10 @@ func DeflateHuffmanOnly(input []uint8, output []uint8) int {
 //export InflateHuffmanOnly
 func InflateHuffmanOnly(input []uint8, output []uint8) int {
     var buf bytes.Buffer
+    var n = 0
+    var err error
 
-    _, err := buf.Write(input)
+    _, err = buf.Write(input)
     if err != nil {
         fmt.Printf("write: %+v\n", err);
         return -1
@@ -47,34 +50,101 @@ func InflateHuffmanOnly(input []uint8, output []uint8) int {
     reader := flate.NewReader(&buf)
     defer reader.Close()
 
-    n, err := reader.Read(output);
-    if err != nil && err != io.EOF {
-        fmt.Printf("read: %+v\n", err);
-        return -1
+    for {
+        n, err = reader.Read(output[n:]);
+        if err != nil && err != io.EOF {
+            fmt.Printf("read: %+v\n", err);
+            return -1
+        }
+        if err == io.EOF {
+            break
+        }
     }
 
     return n;
 }
 
-func main() {
-    input := make([]uint8, 1024, 1024)
-    output := make([]uint8, 1024, 1024)
-    output2 := make([]uint8, 1024, 1024)
+func InflateGzip(input []uint8, output []uint8) int {
+    var buf bytes.Buffer
+    var n = 0
+    var err error
 
-    for i := 0; i < len(input); i++ {
-        input[i] = 'A' + uint8(rand.Int() % 10)
+    _, err = buf.Write(input)
+    if err != nil {
+        fmt.Printf("write: %+v\n", err);
+        return -1
     }
 
-    compressed_len := DeflateHuffmanOnly(input, output)
+    reader, err := gzip.NewReader(&buf)
+    if err != nil {
+        fmt.Printf("reader: %+v\n", err);
+        return -1
+    }
+    defer reader.Close()
 
-    InflateHuffmanOnly(output[:compressed_len], output2)
-
-    for i := 0; i < len(input); i++ {
-        if input[i] != output2[i] {
-            println("FAILED")
-            os.Exit(1)
+    for {
+        n, err = reader.Read(output[n:]);
+        if err != nil && err != io.EOF {
+            fmt.Printf("read: %+v\n", err);
+            return -1
+        }
+        if err == io.EOF {
+            break
         }
     }
 
-    println("OK")
+    return n;
+}
+
+
+func loadFromFile(path string) ([]byte, bool) {
+    out, err := os.ReadFile(path)
+    if err != nil {
+        fmt.Printf("Error reading: '%s'\n", path)
+        return nil, false
+    }
+    return out, true
+}
+
+func dump(b []byte) {
+    f := bufio.NewWriter(os.Stderr)
+    f.Write(b)
+    f.Flush() // Make sure to flush the stream
+    println()
+}
+
+func arrayEquals(arr1 []byte, arr2 []byte) bool {
+    for i := 0; i < len(arr1); i++ {
+        if arr1[i] != arr2[i] {
+            return false
+        }
+    }
+    return true
+}
+
+func main() {
+    if len(os.Args) != 3 {
+        println("Usage: <uncompressed> <compressed>")
+        os.Exit(1)
+    }
+    uncompressed, ok := loadFromFile(os.Args[1])
+    if !ok {
+        os.Exit(1)
+    }
+
+    compressed, ok := loadFromFile(os.Args[2])
+    if !ok {
+        os.Exit(1)
+    }
+
+    output := make([]uint8, len(uncompressed), len(uncompressed))
+
+    // Inflate the provided compressed file and compare it to the original
+    InflateGzip(compressed, output)
+
+    if !arrayEquals(uncompressed, output) {
+        println("Inflate: ERROR")
+        os.Exit(1)
+    }
+    println("Inflate: OK")
 }
