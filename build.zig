@@ -53,7 +53,6 @@ fn build_tests(
     // implementation in zig stdlib but that's no fun xD
     // XXX: The library is only found if it is present at the project root...
     const go_out = "tests/out";
-    const go_out_path = b.path(go_out);
 
     const go_args = [_][]const u8{
         "go",
@@ -66,10 +65,13 @@ fn build_tests(
     std.fs.cwd().makeDir(go_out) catch {};
     const go_run = b.addSystemCommand(&go_args);
 
-    tests.addIncludePath(go_out_path);
-    tests.addLibraryPath(go_out_path);
-    tests.linkLibC();
+    //tests.linkLibrary(go_lib);
+    tests.addLibraryPath(.{ .cwd_relative = go_out });
+    tests.addRPath(.{ .cwd_relative = go_out });
     tests.linkSystemLibrary("flate");
+    //const go_lib = b.addSharedLibrary(go_out ++ "/libflate.so");
+    //tests.addObjectFile(.{.cwd_relative = go_out ++ "/libflate.so"});
+    tests.addIncludePath(.{ .cwd_relative = go_out });
 
     const tests_run = b.addRunArtifact(tests);
     const tests_install = b.addInstallArtifact(tests, .{});
