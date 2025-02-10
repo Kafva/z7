@@ -96,17 +96,6 @@
 ///                  encoded using the literal/length Huffman code
 ///
 ///
-/// LZ77
-/// ======
-/// The LZ77 algorithm is a dictionary-based compression algorithm that uses a
-/// sliding window and a lookahead buffer to find and replace repeated patterns
-/// in a data stream with pointers.
-///
-/// LZ77 is allowed to have back-references across block boundaries (32K or less
-/// steps back is the limit)
-///
-///
-///
 pub fn deflate(buf: []const u8) !void {
     _ = buf;
 }

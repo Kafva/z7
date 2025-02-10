@@ -4,7 +4,6 @@ const libflate = @cImport({
 });
 
 test "Reference implementation ok" {
-    // This should be compressible xD
     const input_data = [_]libflate.GoUint8{'A'} ** 256;
 
     var compressed_data = [_]libflate.GoUint8{0} ** 256;
@@ -31,10 +30,12 @@ test "Reference implementation ok" {
     };
     // zig fmt: on
 
+    // Compress.
     compressed_len = libflate.DeflateHuffmanOnly(input, compressed);
     // Sanity check
     try std.testing.expect(250 > compressed_len and compressed_len > 1);
 
+    // Decompress.
     decompressed_len = libflate.InflateHuffmanOnly(compressed, decompressed);
     // Verify that the decompressed output and original input are equal
     try std.testing.expectEqualSlices(u8, &input_data, &decompressed_data);
