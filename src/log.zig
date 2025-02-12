@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 
 pub var enable_debug: bool = false;
 
@@ -28,10 +29,9 @@ pub fn debug(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (!enable_debug) {
-        return;
+    if (build_options.debug or enable_debug) {
+        log(.debug, src, format, args);
     }
-    log(.debug, src, format, args);
 }
 
 pub fn info(

@@ -41,13 +41,13 @@ fn build_tests(
     optimize: std.builtin.OptimizeMode,
     build_options: *std.Build.Step.Options,
 ) void {
-    _ = build_options;
     const tests = b.addTest(.{
         .name = "z7-test",
         .root_source_file = b.path("src/test.zig"),
         .target = target,
         .optimize = optimize,
     });
+    tests.root_module.addOptions("build_options", build_options);
 
     // Build reference implementation library for testing
     // There is a reference implementation in zig stdlib but we use this
@@ -100,6 +100,8 @@ pub fn build(b: *std.Build) void {
     // Configure build options
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", version);
+    const debug_opt = b.option(bool, "debug", "Always print debug logs") orelse false;
+    build_options.addOption(bool, "debug", debug_opt);
 
     build_exe(b, target, optimize, build_options);
     build_tests(b, target, optimize, build_options);

@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("log.zig");
 
 const Lz77Item = struct {
     /// Matches are allowed to be 3..258, let
@@ -13,7 +14,7 @@ const Lz77Item = struct {
     }
 };
 
-const lookahead_length = 3;
+//const lookahead_length = 3;
 const buffer_length = 64;
 
 /// The LZ77 algorithm is a dictionary-based compression algorithm that uses a
@@ -26,34 +27,28 @@ const buffer_length = 64;
 /// About autocomplete for these parameters:
 /// https://github.com/zigtools/zls/discussions/1506
 pub fn compress(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
-    var done = false;
-    var lookahead = [_]u8{0} ** lookahead_length;
+    // Start simple, we do a brute force search in the sliding window from the
+    // cursor position, we let the lookahead be equal to the size of the sliding
+    // window (why would we stop eariler?).
 
-    var table = std.AutoHashMap([lookahead_length]u8, Lz77Item).init(allocator);
-    defer table.deinit();
+    var sliding_window = try std.ArrayList(u8).initCapacity(allocator, buffer_length);
+    defer sliding_window.deinit();
+    log.debug(@src(), "xd: {any}", .{sliding_window.items.len});
+    try sliding_window.append(18);
+    log.debug(@src(), "xd: {any}", .{sliding_window.items.len});
 
     while (true) {
-        // Read the lookahead ammount of new bytes
-        for (0..lookahead_length) |i| {
-            lookahead[i] = reader.readByte() catch {
-                done = true;
-                break;
-            };
-        }
-
-        if (done) {
+        const c = reader.readByte() catch {
             break;
+        };
+
+        // var longest_match_index = 0;
+        // var longest_match_len = 0;
+
+        for (0..sliding_window.items.len) |i| {
+            _ = i;
         }
 
-        // Check if the lookhead value already exists in the lookup table
-        //
-        // The lookup table maps a 1-3 byte sequence onto a Lz77Item
-        // https://stackoverflow.com/a/6886259/9033629
-
-        //table.put(lookahead, .{ .length = 3, .distance = 0, next_char =  })
-
-        for (0..lookahead_length) |i| {
-            try writer.writeByte(lookahead[i]);
-        }
+        try writer.writeByte(c);
     }
 }

@@ -7,5 +7,6 @@ zig build run -- --help
 
 ## Unit tests
 ```bash
-zig build test
+# Add -Ddebug=true to print debug logs
+zig build test --summary all
 ```
