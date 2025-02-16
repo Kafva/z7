@@ -2,18 +2,35 @@ const std = @import("std");
 const log = @import("log.zig");
 
 const Codeword = struct {
-    /// Matches are allowed to be 3..258, let
+    /// Matches are allowed to be 3..258 long, let
     /// 0 => 3, 1 => 4, ... 255 => 258
     length: u8,
-    /// Maximum allowed distance is 16K
+    /// Our window length is only 64 bytes so 1 byte is enough to represent the
     distance: u16,
     next_char: u8,
 
-    fn encode(self: @This()) [4]u8 {
-        const d_high: u8 = @truncate(self.distance & 0xff00);
-        const d_low: u8 = @truncate(self.distance);
-        return [_]u8{ self.length, d_low, d_high, self.next_char };
+    const Self = @This();
+
+    /// Serialised format:
+    ///
+    /// Literal character: [ 0 bit | 8-bit character ]
+    /// Pointer:           [ 1 bit | 8-bit length | 8-bit distance ]
+    fn write(self: *Self, writer: anytype) !void {
+        var w = @constCast(&writer); // 😒
+        if (self.length == 0) {
+            try w.writeBits(@as(u8, 0), 1);
+            try w.writeBits(self.next_char, 8);
+        } else {
+            try w.writeBits(@as(u8, 1), 1);
+            try w.writeBits(self.length, 8);
+            try w.writeBits(self.distance, 8);
+        }
+        try w.flushBits();
     }
+
+    // fn read(self: @This(), reader: *std.io.BitReader, writer: *std.io.BitWriter) void {
+
+    // }
 };
 
 const window_length = 64;
@@ -104,27 +121,14 @@ pub fn compress(allocator: std.mem.Allocator, reader: anytype, writer: anytype) 
             try sliding_window.write(lookahead[i]);
         }
 
-        if (longest_match_distance) |distance| {
-            // Write codeword
-            const codeword = Codeword{
-                .length = longest_match_cnt,
-                .distance = distance,
-                .next_char = lookahead[longest_match_cnt],
-            };
+        var codeword = Codeword{
+            .length = longest_match_cnt,
+            .distance = longest_match_distance orelse 0,
+            .next_char = lookahead[longest_match_cnt],
+        };
 
-            try writer.writeAll(codeword.encode()[0..]);
-            log.debug(@src(), "code: {any}", .{codeword});
-        } else {
-            // Write the byte as is to the output stream
-            const codeword = Codeword{
-                .length = 0,
-                .distance = 0,
-                .next_char = lookahead[0],
-            };
-
-            try writer.writeByte(lookahead[0]);
-            log.debug(@src(), "code: {any}", .{codeword});
-        }
+        try codeword.write(writer);
+        log.debug(@src(), "code: {any}", .{codeword});
     }
 }
 

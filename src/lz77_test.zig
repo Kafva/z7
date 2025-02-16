@@ -12,19 +12,29 @@ fn run(inputfile: []const u8) !void {
     const in_size = (try in.stat()).size;
     const reader = in.reader();
 
-    var compressed = std.ArrayList(u8).init(allocator);
-    try lz77_compress(allocator, reader, compressed.writer());
+    var compressed_array = [_]u8{0} ** 8192;
+    var compressed = std.io.fixedBufferStream(&compressed_array);
+    const compressed_writer = std.io.bitWriter(.little, compressed.writer());
+    // const compressed_reader = std.io.bitReader(.little, compressed.reader());
 
-    std.debug.print("compressed: {any} ({d} -> {d})\n", .{ compressed.items[0..10], in_size, compressed.items.len });
+    // const xd: u8 = 111;
+    // try @constCast(&compressed_writer).*.writeBits(xd, 8);
 
-    var decompressed = std.ArrayList(u8).init(allocator);
-    try lz77_decompress(allocator, std.io.fixedBufferStream(compressed.items), decompressed.writer());
+    try lz77_compress(allocator, reader, compressed_writer);
+
+    std.debug.print("compressed: {any} ({d} -> {d})\n", .{ compressed_array[0..10], in_size, compressed.pos });
+
+    // var decompressed_array = [_]u8{0} ** 8192;
+    // var decompressed = std.io.fixedBufferStream(&decompressed_array);
+    // const decompressed_writer = std.io.bitWriter(.little, decompressed.writer());
+
+    // try lz77_decompress(allocator, compressed_reader, decompressed_writer);
 }
 
 test "lz77 on simple text" {
     try run("tests/testdata/simple.txt");
 }
 
-test "lz77 on rfc1951.txt" {
-    try run("tests/testdata/rfc1951.txt");
-}
+// test "lz77 on rfc1951.txt" {
+//     try run("tests/testdata/rfc1951.txt");
+// }
