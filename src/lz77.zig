@@ -9,13 +9,14 @@ const Codeword = struct {
     distance: u16,
     next_char: u8,
 
-    fn encode(self: @This()) []const u8 {
-        _ = self;
+    fn encode(self: @This()) [4]u8 {
+        const d_high: u8 = @truncate(self.distance & 0xff00);
+        const d_low: u8 = @truncate(self.distance);
+        return [_]u8{ self.length, d_low, d_high, self.next_char };
     }
 };
 
-//const lookahead_length = 3;
-const buffer_length = 64;
+const window_length = 64;
 
 /// The LZ77 algorithm is a dictionary-based compression algorithm that uses a
 /// sliding window and a lookahead buffer to find and replace repeated patterns
@@ -30,86 +31,105 @@ pub fn compress(allocator: std.mem.Allocator, reader: anytype, writer: anytype) 
     var done = false;
     // Start simple, we do a brute force search in the sliding window from the
     // cursor position. We allow matches up to the sliding_window length - 1
-    var sliding_window = try std.RingBuffer.init(allocator, buffer_length);
+    var sliding_window = try std.RingBuffer.init(allocator, window_length);
     defer sliding_window.deinit(allocator);
 
-    var lookahead = try std.RingBuffer.init(allocator, buffer_length - 1);
-    defer lookahead.deinit(allocator);
+    var lookahead = [_]u8{0} ** window_length;
 
     while (!done) {
         var longest_match_distance: ?u8 = null;
-        var longest_match_len: u8 = 0;
-        var match_len: u8 = 0;
-        var next_index: u8 = 0;
-        var lookahead_read: u8 = 0;
+        var longest_match_cnt: u8 = 0;
+        // The index of the last byte in the lookahead buffer.
+        var tail_index: u8 = 0;
+        // The number of matches within the lookahead
+        // match_cnt=0, tail_index=0: No Codeword
+        // match_cnt=1, tail_index=1: Codeword(..., .next_char = lookahead[1])
+        // match_cnt=2, tail_index=2: Codeword(..., .next_char = lookahead[2])
+        // ...
+        var match_cnt: u8 = 0;
 
-        const c = reader.readByte() catch {
+        // Read the first byte into the lookahead
+        lookahead[tail_index] = reader.readByte() catch {
             break;
         };
-        try lookahead.write(c);
 
         // Look for matches in the sliding_window
-        for (0.., sliding_window.data) |i, window_c| {
-            if (TODO != window_c) {
-                // The next character from the sliding window does not match the lookahead,
-                // reset and start matching from the beginning of the lookahead again.
-                next_index = 0;
-                match_len = 0;
+        const win_len: u8 = @truncate(sliding_window.len());
+        for (0..win_len) |i| {
+            const ring_index = (sliding_window.read_index + i) % window_length;
+            if (lookahead[match_cnt] != sliding_window.data[ring_index]) {
+                // Reset and start matching from the beginning of the lookahead again.
+                match_cnt = 0;
                 continue;
             }
 
-            // The next character in the sliding window matches
-            // the character from the lookahead buffer.
-            match_len += 1;
+            match_cnt += 1;
 
-            if (match_len > longest_match_len) {
-                longest_match_len = match_len;
+            // Update the longest match
+            if (match_cnt > longest_match_cnt) {
+                longest_match_cnt = match_cnt;
 
-                if (sliding_window.len() > 0xff or i > 0xff) {
-                    unreachable;
-                }
-                const len: u8 = @truncate(sliding_window.len());
-                const idx: u8 = @truncate(i);
-
-                // The distance from the cursor position to the *start*
-                // of the match in the sliding window.
-                longest_match_distance = len - idx - match_len;
+                // The distance from the *start of the match* in the sliding_window
+                // to the start of the lookahead.
+                const win_index: u8 = @truncate(i);
+                longest_match_distance = (win_len - win_index) + (match_cnt - 1);
             }
 
-            // Read one more byte into the lookahead and continue matching The
-            // `lookahead_read` index in the lookahead should always be a byte
-            // that is *not* part of the match.
-            next_index += 1;
-            if (next_index > lookahead_read) {
-                lookahead[next_index] = reader.readByte() catch {
+            // Matched up to the tail of the lookahead, read another byte
+            if (match_cnt > tail_index) {
+                tail_index += 1;
+                lookahead[tail_index] = reader.readByte() catch {
+                    tail_index -= 1; // TODO
                     done = true;
                     break;
                 };
-                lookahead_read += 1;
+                if (tail_index == window_length - 1) {
+                    // The lookahead cannot fit more bytes
+                    done = true;
+                    break;
+                }
             }
 
-            if (longest_match_len == buffer_length - 1) {
+            if (match_cnt == window_length - 1) {
                 // Longest possible match found.
                 break;
             }
         }
 
         // Update the sliding window
-        for (lookahead) |c| {
-            try sliding_window.write(c);
+        for (0..tail_index + 1) |i| {
+            if (sliding_window.isFull()) {
+                _ = sliding_window.read();
+            }
+            try sliding_window.write(lookahead[i]);
         }
 
         if (longest_match_distance) |distance| {
             // Write codeword
             const codeword = Codeword{
-                .length = longest_match_len,
+                .length = longest_match_cnt,
                 .distance = distance,
-                .next_char = lookahead[lookahead_read],
+                .next_char = lookahead[longest_match_cnt],
             };
-            try writer.writeStruct(codeword);
+
+            try writer.writeAll(codeword.encode()[0..]);
+            log.debug(@src(), "code: {any}", .{codeword});
         } else {
-            // No match, write the byte as is to the output stream
+            // Write the byte as is to the output stream
+            const codeword = Codeword{
+                .length = 0,
+                .distance = 0,
+                .next_char = lookahead[0],
+            };
+
             try writer.writeByte(lookahead[0]);
+            log.debug(@src(), "code: {any}", .{codeword});
         }
     }
+}
+
+pub fn decompress(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
+    _ = allocator;
+    _ = reader;
+    _ = writer;
 }
