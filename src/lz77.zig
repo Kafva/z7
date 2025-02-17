@@ -23,32 +23,22 @@ const Codeword = struct {
 pub fn Lz77(comptime T: type) type {
     return struct {
         const Self = @This();
-        const window_length = 64;
 
+        window_length: usize,
+        lookahead_length: usize,
         allocator: std.mem.Allocator,
         compressed_stream: *T,
         decompressed_stream: *T,
 
-        pub fn init(
-            allocator: std.mem.Allocator,
-            compressed_stream: *T,
-            decompressed_stream: *T,
-        ) !Self {
-            return .{
-                .allocator = allocator,
-                .compressed_stream = compressed_stream,
-                .decompressed_stream = decompressed_stream,
-            };
-        }
-
         pub fn compress(self: Self, reader: anytype) !void {
+            var writer = std.io.bitWriter(.little, self.compressed_stream.writer());
             var done = false;
             // Start simple, we do a brute force search in the sliding window from the
-            // cursor position. We allow matches up to the sliding_window length - 1
-            var sliding_window = try std.RingBuffer.init(self.allocator, window_length);
+            // cursor position. We allow matches up to the lookahead_length.
+            var sliding_window = try std.RingBuffer.init(self.allocator, self.window_length);
             defer sliding_window.deinit(self.allocator);
 
-            var lookahead = [_]u8{0} ** window_length;
+            var lookahead = [_]u8{0} ** self.lookahead_length;
 
             while (!done) {
                 var longest_match_distance: ?u8 = null;
@@ -70,7 +60,7 @@ pub fn Lz77(comptime T: type) type {
                 // Look for matches in the sliding_window
                 const win_len: u8 = @truncate(sliding_window.len());
                 for (0..win_len) |i| {
-                    const ring_index = (sliding_window.read_index + i) % window_length;
+                    const ring_index = (sliding_window.read_index + i) % self.window_length;
                     if (lookahead[match_cnt] != sliding_window.data[ring_index]) {
                         // Reset and start matching from the beginning of the lookahead again.
                         match_cnt = 0;
@@ -97,14 +87,14 @@ pub fn Lz77(comptime T: type) type {
                             done = true;
                             break;
                         };
-                        if (tail_index == window_length - 1) {
+                        if (tail_index == self.window_length - 1) {
                             // The lookahead cannot fit more bytes
                             done = true;
                             break;
                         }
                     }
 
-                    if (match_cnt == window_length - 1) {
+                    if (match_cnt == self.window_length - 1) {
                         // Longest possible match found.
                         break;
                     }
@@ -124,7 +114,7 @@ pub fn Lz77(comptime T: type) type {
                     .next_char = lookahead[longest_match_cnt],
                 };
 
-                try self.write_compressed(codeword);
+                try self.write_codeword(&writer, codeword);
                 log.debug(@src(), "code: {any}", .{codeword});
             }
         }
@@ -138,20 +128,20 @@ pub fn Lz77(comptime T: type) type {
         ///
         /// Literal character: [ 0 bit | 8-bit character ]
         /// Pointer:           [ 1 bit | 8-bit length | 8-bit distance ]
-        fn write_compressed(self: Self, codeword: Codeword) !void {
-            var w = std.io.bitWriter(.little, self.compressed_stream.writer());
+        fn write_codeword(self: Self, writer: anytype, codeword: Codeword) !void {
+            _ = self;
             if (codeword.length == 0) {
-                try w.writeBits(@as(u8, 0), 1);
-                try w.writeBits(codeword.next_char, 8);
+                try writer.writeBits(@as(u8, 0), 1);
+                try writer.writeBits(codeword.next_char, 8);
             } else {
-                try w.writeBits(@as(u8, 1), 1);
-                try w.writeBits(codeword.length, 8);
-                try w.writeBits(codeword.distance, 8);
+                try writer.writeBits(@as(u8, 1), 1);
+                try writer.writeBits(codeword.length, 8);
+                try writer.writeBits(codeword.distance, 8);
             }
-            try w.flushBits();
+            try writer.flushBits();
         }
 
-        // fn read_compressed(self: Self) !void {
+        // fn read_codeword(self: Self) !void {
 
         // }
     };

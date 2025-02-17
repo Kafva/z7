@@ -17,7 +17,13 @@ fn run(inputfile: []const u8) !void {
     var decompressed_array = [_]u8{0} ** 8192;
     var decompressed = std.io.fixedBufferStream(&decompressed_array);
 
-    const lz77 = try Lz77(@TypeOf(compressed)).init(allocator, &compressed, &decompressed);
+    const lz77 = try Lz77(@TypeOf(compressed)) {
+        .allocator = allocator,
+        .lookahead_length = 4,
+        .window_length = 64,
+        .compressed_stream = &compressed,
+        .decompressed_stream = &decompressed
+    };
 
     try lz77.compress(reader);
 
