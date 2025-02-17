@@ -1,6 +1,5 @@
 const std = @import("std");
-const lz77_compress = @import("lz77.zig").compress;
-const lz77_decompress = @import("lz77.zig").decompress;
+const Lz77 = @import("lz77.zig").Lz77;
 
 fn run(inputfile: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -14,18 +13,20 @@ fn run(inputfile: []const u8) !void {
 
     var compressed_array = [_]u8{0} ** 8192;
     var compressed = std.io.fixedBufferStream(&compressed_array);
-    const compressed_writer = std.io.bitWriter(.little, compressed.writer());
-    // const compressed_reader = std.io.bitReader(.little, compressed.reader());
 
-    // const xd: u8 = 111;
-    // try @constCast(&compressed_writer).*.writeBits(xd, 8);
+    var decompressed_array = [_]u8{0} ** 8192;
+    var decompressed = std.io.fixedBufferStream(&decompressed_array);
 
-    try lz77_compress(allocator, reader, compressed_writer);
+    const lz77 = try Lz77(@TypeOf(compressed)).init(allocator, &compressed, &decompressed);
 
-    std.debug.print("compressed: {any} ({d} -> {d})\n", .{ compressed_array[0..10], in_size, compressed.pos });
+    try lz77.compress(reader);
 
-    // var decompressed_array = [_]u8{0} ** 8192;
-    // var decompressed = std.io.fixedBufferStream(&decompressed_array);
+    // zig fmt: off
+    std.debug.print("compressed: {any} ({d} -> {d})\n",
+                    .{ compressed_array[0..10], in_size,
+                       compressed.pos });
+    // zig fmt: on
+
     // const decompressed_writer = std.io.bitWriter(.little, decompressed.writer());
 
     // try lz77_decompress(allocator, compressed_reader, decompressed_writer);
