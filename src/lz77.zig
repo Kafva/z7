@@ -41,7 +41,7 @@ pub fn Lz77(comptime T: type) type {
             var lookahead = [_]u8{0} ** self.lookahead_length;
 
             while (!done) {
-                var longest_match_distance: ?u8 = null;
+                var longest_match_distance: ?u16 = null;
                 var longest_match_cnt: u8 = 0;
                 // The index of the last byte in the lookahead buffer.
                 var tail_index: u8 = 0;
@@ -75,28 +75,28 @@ pub fn Lz77(comptime T: type) type {
 
                         // The distance from the *start of the match* in the sliding_window
                         // to the start of the lookahead.
-                        const win_index: u8 = @truncate(i);
+                        const win_index: u16 = @truncate(i);
                         longest_match_distance = (win_len - win_index) + (match_cnt - 1);
+                    }
+
+                    if (match_cnt == self.lookahead_length - 1) {
+                        // Longest possible match found.
+                        break;
                     }
 
                     // Matched up to the tail of the lookahead, read another byte
                     if (match_cnt > tail_index) {
                         tail_index += 1;
                         lookahead[tail_index] = reader.readByte() catch {
-                            tail_index -= 1; // TODO
+                            tail_index -= 1; // XXX
                             done = true;
                             break;
                         };
-                        if (tail_index == self.window_length - 1) {
+                        if (tail_index == self.lookahead_length - 1) {
                             // The lookahead cannot fit more bytes
                             done = true;
                             break;
                         }
-                    }
-
-                    if (match_cnt == self.window_length - 1) {
-                        // Longest possible match found.
-                        break;
                     }
                 }
 
