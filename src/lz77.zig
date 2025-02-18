@@ -38,24 +38,19 @@ pub fn Lz77(comptime T: type) type {
             var sliding_window = try std.RingBuffer.init(self.allocator, self.window_length);
             defer sliding_window.deinit(self.allocator);
 
-            var lookahead = [_]u8{0} ** self.lookahead_length;
+            var lookahead = try self.allocator.alloc(u8, self.lookahead_length);
+            // Read in the first byte
+            lookahead[0] = try reader.readByte();
 
             while (!done) {
-                var longest_match_distance: ?u16 = null;
+                var longest_match_distance: u16 = 0;
                 var longest_match_cnt: u8 = 0;
-                // The index of the last byte in the lookahead buffer.
-                var tail_index: u8 = 0;
+                // The number bytes read into the lookahead
+                var read_cnt: u8 = 1;
                 // The number of matches within the lookahead
-                // match_cnt=0, tail_index=0: No Codeword
-                // match_cnt=1, tail_index=1: Codeword(..., .next_char = lookahead[1])
-                // match_cnt=2, tail_index=2: Codeword(..., .next_char = lookahead[2])
-                // ...
                 var match_cnt: u8 = 0;
-
-                // Read the first byte into the lookahead
-                lookahead[tail_index] = reader.readByte() catch {
-                    break;
-                };
+                // XXX: The byte at `read_cnt - 1` in the lookahead is never
+                // part of the match!
 
                 // Look for matches in the sliding_window
                 const win_len: u8 = @truncate(sliding_window.len());
@@ -69,54 +64,62 @@ pub fn Lz77(comptime T: type) type {
 
                     match_cnt += 1;
 
-                    // Update the longest match
                     if (match_cnt > longest_match_cnt) {
                         longest_match_cnt = match_cnt;
-
-                        // The distance from the *start of the match* in the sliding_window
-                        // to the start of the lookahead.
                         const win_index: u16 = @truncate(i);
                         longest_match_distance = (win_len - win_index) + (match_cnt - 1);
                     }
 
-                    if (match_cnt == self.lookahead_length - 1) {
-                        // Longest possible match found.
-                        break;
-                    }
-
-                    // Matched up to the tail of the lookahead, read another byte
-                    if (match_cnt > tail_index) {
-                        tail_index += 1;
-                        lookahead[tail_index] = reader.readByte() catch {
-                            tail_index -= 1; // XXX
+                    if (match_cnt == read_cnt) {
+                        // Reached end of lookahead, read another byte
+                        lookahead[read_cnt] = reader.readByte() catch {
                             done = true;
                             break;
                         };
-                        if (tail_index == self.lookahead_length - 1) {
-                            // The lookahead cannot fit more bytes
-                            done = true;
-                            break;
-                        }
+                        read_cnt += 1;
                     }
                 }
 
                 // Update the sliding window
-                for (0..tail_index + 1) |i| {
+                if (longest_match_cnt <= 1) {
                     if (sliding_window.isFull()) {
                         _ = sliding_window.read();
                     }
-                    try sliding_window.write(lookahead[i]);
+                    try sliding_window.write(lookahead[0]);
+                } else {
+                    for (0..longest_match_cnt) |i| {
+                        if (sliding_window.isFull()) {
+                            _ = sliding_window.read();
+                        }
+                        try sliding_window.write(lookahead[i]);
+                    }
                 }
 
+                // Write codeword to output stream
                 const codeword = Codeword{
                     .length = longest_match_cnt,
-                    .distance = longest_match_distance orelse 0,
-                    .next_char = lookahead[longest_match_cnt],
+                    .distance = longest_match_distance,
+                    .next_char = if (longest_match_cnt <= 1) lookahead[0] else lookahead[read_cnt - 1],
                 };
 
                 try self.write_codeword(&writer, codeword);
                 log.debug(@src(), "code: {any}", .{codeword});
+
+                // Set starting byte for next iteration
+                if (longest_match_cnt == 0) {
+                    // We need a new byte
+                    lookahead[0] = reader.readByte() catch {
+                        break;
+                    };
+                } else {
+                    // The final byte of the lookahead was not handled
+                    lookahead[0] = lookahead[read_cnt - 1];
+                }
             }
+
+            // Do not flush to often, incomplete bytes will be padded when
+            // flushing.
+            try writer.flushBits();
         }
 
         pub fn decompress(reader: anytype, writer: anytype) !void {
@@ -127,18 +130,19 @@ pub fn Lz77(comptime T: type) type {
         /// Serialised format:
         ///
         /// Literal character: [ 0 bit | 8-bit character ]
-        /// Pointer:           [ 1 bit | 8-bit length | 8-bit distance ]
+        /// Pointer:           [ 1 bit | 7-bit length | 8-bit distance ]
         fn write_codeword(self: Self, writer: anytype, codeword: Codeword) !void {
             _ = self;
-            if (codeword.length == 0) {
+            // Write references of length 1 as regular bytes instead, takes
+            // up less space.
+            if (codeword.length <= 1) {
                 try writer.writeBits(@as(u8, 0), 1);
                 try writer.writeBits(codeword.next_char, 8);
             } else {
                 try writer.writeBits(@as(u8, 1), 1);
-                try writer.writeBits(codeword.length, 8);
+                try writer.writeBits(codeword.length, 7);
                 try writer.writeBits(codeword.distance, 8);
             }
-            try writer.flushBits();
         }
 
         // fn read_codeword(self: Self) !void {

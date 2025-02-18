@@ -18,7 +18,7 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     var decompressed = std.io.fixedBufferStream(&decompressed_array);
 
     // zig fmt: off
-    const lz77 = try Lz77(@TypeOf(compressed)) {
+    const lz77 = Lz77(@TypeOf(compressed)) {
         .allocator = allocator,
         .lookahead_length = lookahead_length,
         .window_length = window_length,
@@ -42,6 +42,6 @@ test "lz77 on simple text" {
     try run("tests/testdata/simple.txt", 4, 6);
 }
 
-// test "lz77 on rfc1951.txt" {
-//     try run("tests/testdata/rfc1951.txt");
-// }
+test "lz77 on rfc1951.txt" {
+    try run("tests/testdata/rfc1951.txt", 4, 6);
+}
