@@ -77,6 +77,10 @@ pub fn Lz77(comptime T: type) type {
                             break;
                         };
                         read_cnt += 1;
+                        if (read_cnt == self.lookahead_length) {
+                            // Lookahead is filled
+                            break;
+                        }
                     }
                 }
 

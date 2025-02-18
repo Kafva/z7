@@ -1,6 +1,8 @@
 const std = @import("std");
 const Lz77 = @import("lz77.zig").Lz77;
 
+const max_size = 50000;
+
 fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -11,10 +13,13 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     const in_size = (try in.stat()).size;
     const reader = in.reader();
 
-    var compressed_array = [_]u8{0} ** 8192;
+    // Sanity check
+    try std.testing.expect(in_size <= max_size);
+
+    var compressed_array = [_]u8{0} ** max_size;
     var compressed = std.io.fixedBufferStream(&compressed_array);
 
-    var decompressed_array = [_]u8{0} ** 8192;
+    var decompressed_array = [_]u8{0} ** max_size;
     var decompressed = std.io.fixedBufferStream(&decompressed_array);
 
     // zig fmt: off
@@ -43,5 +48,5 @@ test "lz77 on simple text" {
 }
 
 test "lz77 on rfc1951.txt" {
-    try run("tests/testdata/rfc1951.txt", 4, 6);
+    try run("tests/testdata/rfc1951.txt", 8, 64);
 }
