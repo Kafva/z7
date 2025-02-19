@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
+//const mod = @import("util.zig").mod;
 
 const Codeword = struct {
     /// Matches are allowed to be 3..258 long, let
@@ -40,7 +41,9 @@ pub fn Lz77(comptime T: type) type {
 
             var lookahead = try self.allocator.alloc(u8, self.lookahead_length);
             // Read in the first byte
-            lookahead[0] = try reader.readByte();
+            lookahead[0] = reader.readByte() catch {
+                return;
+            };
 
             while (!done) {
                 // The current number of matches within the lookahead
@@ -128,9 +131,63 @@ pub fn Lz77(comptime T: type) type {
             try writer.flushBits();
         }
 
-        pub fn decompress(reader: anytype, writer: anytype) !void {
-            _ = reader;
-            _ = writer;
+        pub fn decompress(self: Self, stream: anytype) !void {
+            var done = false;
+            var reader = std.io.bitReader(.little, stream.reader());
+            var writer = self.decompressed_stream.writer();
+
+            var sliding_window = try std.RingBuffer.init(self.allocator, self.window_length);
+            defer sliding_window.deinit(self.allocator);
+
+            var unused: usize = 0;
+            var type_bit: u8 = 0;
+
+            while (!done) {
+                type_bit = reader.readBits(u8, 1, &unused) catch {
+                    done = true;
+                };
+                switch (type_bit) {
+                    0 => {
+                        const c = reader.readBits(u8, 8, &unused) catch {
+                            done = true;
+                            break;
+                        };
+                        // Write raw byte to output stream
+                        try writer.writeByte(c);
+                        // Update sliding window
+                        try sliding_window.write(c);
+                        log.debug(@src(), "raw: {c}", .{c});
+                    },
+                    1 => {
+                        const length = reader.readBits(u8, 7, &unused) catch {
+                            done = true;
+                            break;
+                        };
+                        const distance = reader.readBits(u8, 8, &unused) catch {
+                            done = true;
+                            break;
+                        };
+
+                        // Write `length` bytes starting from the `distance`
+                        // offset backwards into the buffer.
+                        // TODO
+                        // const read_index_: i32 = @intCast(sliding_window.read_index);
+                        // const distance_: i32 = @intCast(distance);
+                        // const start_index = read_index_ - distance_;
+                        // const start_index_ = if (start_index < 0) self.window_length + start_index
+                        //                      else start_index;
+                        const start_index = 1;
+
+                        for (0..length) |i| {
+                            const ring_index = (start_index + i) % self.window_length;
+                            const c = sliding_window.data[ring_index];
+                            try writer.writeByte(c);
+                            log.debug(@src(), "ref: {c}", .{c});
+                        }
+                    },
+                    else => unreachable,
+                }
+            }
         }
 
         /// Serialised format:
@@ -150,9 +207,5 @@ pub fn Lz77(comptime T: type) type {
                 try writer.writeBits(codeword.distance, 8);
             }
         }
-
-        // fn read_codeword(self: Self) !void {
-
-        // }
     };
 }

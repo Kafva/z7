@@ -13,6 +13,8 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     const in_size = (try in.stat()).size;
     const reader = in.reader();
 
+    const in_data = try std.fs.cwd().readFileAlloc(allocator, inputfile, max_size);
+
     // Sanity check
     try std.testing.expect(in_size <= max_size);
 
@@ -38,9 +40,10 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
                        compressed.pos });
     // zig fmt: on
 
-    // const decompressed_writer = std.io.bitWriter(.little, decompressed.writer());
+    try lz77.decompress(lz77.compressed_stream);
 
-    // try lz77_decompress(allocator, compressed_reader, decompressed_writer);
+    // Verify correct decompression
+    try std.testing.expectEqualSlices(u8, in_data[0..in_size], decompressed_array[0..in_size]);
 }
 
 test "lz77 on simple text" {
