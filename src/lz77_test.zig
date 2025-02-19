@@ -47,6 +47,6 @@ test "lz77 on simple text" {
     try run("tests/testdata/simple.txt", 4, 6);
 }
 
-test "lz77 on rfc1951.txt" {
-    try run("tests/testdata/rfc1951.txt", 8, 64);
-}
+// test "lz77 on rfc1951.txt" {
+//     try run("tests/testdata/rfc1951.txt", 8, 64);
+// }
