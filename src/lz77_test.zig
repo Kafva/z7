@@ -33,10 +33,12 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
         .decompressed_stream = &decompressed
     };
 
+    std.debug.print("before: {any}\n", .{ compressed_array[0..15] });
+
     try lz77.compress(reader);
 
     std.debug.print("compressed: {any} ({d} -> {d})\n",
-                    .{ compressed_array[0..10], in_size,
+                    .{ compressed_array[0..compressed.pos], in_size,
                        compressed.pos });
     // zig fmt: on
 

@@ -3,17 +3,15 @@ const log = @import("log.zig");
 
 pub const Lz77Error = error{
     InvalidDistance,
-    ParsingError,
+    MalformedInput,
 };
 
 const Codeword = struct {
-    /// Matches are allowed to be 3..258 long, let
-    /// 0 => 3, 1 => 4, ... 255 => 258
+    /// XXX: Limit to u7 for now
     length: u8,
-    /// Our window length is only 64 bytes so 1 byte is enough to represent the
-    /// distance.
-    distance: u16,
-    /// Raw character to write.
+    /// XXX: Limit to u8 for now
+    distance: u8,
+    /// Raw character to write
     char: u8,
 };
 
@@ -56,7 +54,7 @@ pub fn Lz77(comptime T: type) type {
                 // XXX: The byte at the `longest_match_cnt` index is not part
                 // of the match!
                 var longest_match_cnt: u8 = 0;
-                var longest_match_distance: u16 = 0;
+                var longest_match_distance: u8 = 0;
 
                 // Look for matches in the sliding_window
                 const win_len: u8 = @truncate(sliding_window.len());
@@ -77,7 +75,7 @@ pub fn Lz77(comptime T: type) type {
 
                     // Update the longest match
                     longest_match_cnt = match_cnt;
-                    const win_index: u16 = @truncate(i);
+                    const win_index: u8 = @truncate(i);
                     longest_match_distance = (win_len - win_index) + (match_cnt - 1);
 
                     if (longest_match_cnt == self.lookahead_length) {
@@ -133,31 +131,42 @@ pub fn Lz77(comptime T: type) type {
         }
 
         pub fn decompress(self: Self, stream: anytype) !void {
-            var done = false;
             var reader = std.io.bitReader(.little, stream.reader());
             var writer = self.decompressed_stream.writer();
-            const end = stream.pos * 8;
-            var pos: usize = 0;
 
             var sliding_window = try std.RingBuffer.init(self.allocator, self.window_length);
             defer sliding_window.deinit(self.allocator);
 
-            var read_bits: usize = 0;
-            var type_bit: u8 = 0;
+            const end = stream.pos * 8;
+            var pos: usize = 0;
 
-            while (!done and pos < end) {
-                type_bit = reader.readBits(u8, 1, &read_bits) catch {
-                    done = true;
+            var type_bit: u1 = 0;
+
+            ////////////////////////
+            // TODO reader only has zeroes...?
+            while (true) {
+                const c = reader.readBitsNoEof(u8, 8) catch {
+                    log.debug(@src(), "end: {}", .{pos / 8});
+                    return;
                 };
-                pos += read_bits;
+                pos += 8;
+                if (c != 0)
+                    log.debug(@src(), "xd: {d}", .{c});
+            }
+            ////////////////////////
+
+            while (pos < end) {
+                type_bit = reader.readBitsNoEof(u1, 1) catch {
+                    return;
+                };
+                pos += 1;
 
                 switch (type_bit) {
                     0 => {
-                        const c = reader.readBits(u8, 8, &read_bits) catch {
-                            done = true;
-                            break;
+                        const c = reader.readBitsNoEof(u8, 8) catch {
+                            return;
                         };
-                        pos += read_bits;
+                        pos += 8;
 
                         // Update sliding window
                         try self.window_write(&sliding_window, c);
@@ -166,17 +175,15 @@ pub fn Lz77(comptime T: type) type {
                         log.debug(@src(), "raw: {d}", .{c});
                     },
                     1 => {
-                        const length = reader.readBits(u8, 7, &read_bits) catch {
-                            done = true;
-                            break;
+                        const length = reader.readBitsNoEof(u7, 7) catch {
+                            return;
                         };
-                        pos += read_bits;
+                        pos += 7;
 
-                        const distance = reader.readBits(u8, 8, &read_bits) catch {
-                            done = true;
-                            break;
+                        const distance = reader.readBitsNoEof(u8, 8) catch {
+                            return Lz77Error.MalformedInput;
                         };
-                        pos += read_bits;
+                        pos += 8;
 
                         // Write `length` bytes starting from the `distance`
                         // offset backwards into the buffer.
@@ -193,7 +200,6 @@ pub fn Lz77(comptime T: type) type {
                             log.debug(@src(), "ref: {c}", .{c});
                         }
                     },
-                    else => unreachable,
                 }
             }
         }
@@ -231,11 +237,12 @@ pub fn Lz77(comptime T: type) type {
             // Write references of length 1 as regular bytes instead, takes
             // up less space.
             if (codeword.length <= 1) {
-                try writer.writeBits(@as(u8, 0), 1);
+                try writer.writeBits(@as(u1, 0), 1);
                 try writer.writeBits(codeword.char, 8);
             } else {
-                try writer.writeBits(@as(u8, 1), 1);
-                try writer.writeBits(codeword.length, 7);
+                const len: u7 = @intCast(codeword.length);
+                try writer.writeBits(@as(u1, 1), 1);
+                try writer.writeBits(len, 7);
                 try writer.writeBits(codeword.distance, 8);
             }
         }
