@@ -1,6 +1,10 @@
 const std = @import("std");
 const log = @import("log.zig");
-//const mod = @import("util.zig").mod;
+
+pub const Lz77Error = error{
+    InvalidDistance,
+    ParsingError,
+};
 
 const Codeword = struct {
     /// Matches are allowed to be 3..258 long, let
@@ -81,7 +85,7 @@ pub fn Lz77(comptime T: type) type {
                         break;
                     }
 
-                    // When `match_cnt` exceeds `longest_match_cnt` we
+                    // When `match_cnt` exceeds `longest_match_cant` we
                     // need to feed another byte into the lookahead.
                     lookahead[longest_match_cnt] = reader.readByte() catch {
                         done = true;
@@ -92,10 +96,7 @@ pub fn Lz77(comptime T: type) type {
                 // Update the sliding window
                 const end = if (longest_match_cnt == 0) 1 else longest_match_cnt;
                 for (0..end) |i| {
-                    if (sliding_window.isFull()) {
-                        _ = sliding_window.read();
-                    }
-                    try sliding_window.write(lookahead[i]);
+                    try self.window_write(&sliding_window, lookahead[i]);
                 }
 
                 // The `char` is only used when length <= 1
@@ -135,52 +136,59 @@ pub fn Lz77(comptime T: type) type {
             var done = false;
             var reader = std.io.bitReader(.little, stream.reader());
             var writer = self.decompressed_stream.writer();
+            const end = stream.pos * 8;
+            var pos: usize = 0;
 
             var sliding_window = try std.RingBuffer.init(self.allocator, self.window_length);
             defer sliding_window.deinit(self.allocator);
 
-            var unused: usize = 0;
+            var read_bits: usize = 0;
             var type_bit: u8 = 0;
 
-            while (!done) {
-                type_bit = reader.readBits(u8, 1, &unused) catch {
+            while (!done and pos < end) {
+                type_bit = reader.readBits(u8, 1, &read_bits) catch {
                     done = true;
                 };
+                pos += read_bits;
+
                 switch (type_bit) {
                     0 => {
-                        const c = reader.readBits(u8, 8, &unused) catch {
+                        const c = reader.readBits(u8, 8, &read_bits) catch {
                             done = true;
                             break;
                         };
+                        pos += read_bits;
+
+                        // Update sliding window
+                        try self.window_write(&sliding_window, c);
                         // Write raw byte to output stream
                         try writer.writeByte(c);
-                        // Update sliding window
-                        try sliding_window.write(c);
-                        log.debug(@src(), "raw: {c}", .{c});
+                        log.debug(@src(), "raw: {d}", .{c});
                     },
                     1 => {
-                        const length = reader.readBits(u8, 7, &unused) catch {
+                        const length = reader.readBits(u8, 7, &read_bits) catch {
                             done = true;
                             break;
                         };
-                        const distance = reader.readBits(u8, 8, &unused) catch {
+                        pos += read_bits;
+
+                        const distance = reader.readBits(u8, 8, &read_bits) catch {
                             done = true;
                             break;
                         };
+                        pos += read_bits;
 
                         // Write `length` bytes starting from the `distance`
                         // offset backwards into the buffer.
-                        // TODO
-                        // const read_index_: i32 = @intCast(sliding_window.read_index);
-                        // const distance_: i32 = @intCast(distance);
-                        // const start_index = read_index_ - distance_;
-                        // const start_index_ = if (start_index < 0) self.window_length + start_index
-                        //                      else start_index;
-                        const start_index = 1;
+                        const read_index = sliding_window.read_index;
+                        const start_index = try self.window_start_index(read_index, distance);
 
                         for (0..length) |i| {
                             const ring_index = (start_index + i) % self.window_length;
                             const c = sliding_window.data[ring_index];
+                            // Update sliding window
+                            try self.window_write(&sliding_window, c);
+                            // Write to output stream
                             try writer.writeByte(c);
                             log.debug(@src(), "ref: {c}", .{c});
                         }
@@ -188,6 +196,30 @@ pub fn Lz77(comptime T: type) type {
                     else => unreachable,
                 }
             }
+        }
+
+        /// Get the starting index of a back reference at `distance` backwards
+        /// into the sliding window.
+        fn window_start_index(self: Self, read_index: usize, distance: u8) !usize {
+            const read_index_i: i32 = @intCast(read_index);
+            const distance_i: i32 = @intCast(distance);
+            const window_length_i: i32 = @intCast(self.window_length);
+
+            if (distance >= self.window_length) {
+                log.err(@src(), "distance too large: {d} >= {d}", .{ distance, self.window_length });
+                return Lz77Error.InvalidDistance;
+            }
+
+            const s: usize = @intCast(read_index_i + window_length_i - distance_i);
+            return s % self.window_length;
+        }
+
+        fn window_write(self: Self, window: *std.RingBuffer, c: u8) !void {
+            _ = self;
+            if (window.isFull()) {
+                _ = window.read();
+            }
+            try window.write(c);
         }
 
         /// Serialised format:
