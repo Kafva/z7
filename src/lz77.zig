@@ -180,7 +180,6 @@ pub fn Lz77(comptime T: type) type {
                         const write_index = sliding_window.write_index;
                         const start_index = try self.window_start_index(write_index, distance);
 
-                        // log.debug(@src(), "window(.start = {}): {any}", .{start_index, sliding_window.data});
                         for (0..length) |i| {
                             const ring_index = (start_index + i) % self.window_length;
                             const c = sliding_window.data[ring_index];
@@ -198,7 +197,7 @@ pub fn Lz77(comptime T: type) type {
         /// Get the starting index of a back reference at `distance` backwards
         /// into the sliding window.
         fn window_start_index(self: Self, write_index: usize, distance: u8) !usize {
-            if (distance >= self.window_length) {
+            if (distance > self.window_length) {
                 log.err(@src(), "distance too large: {d} >= {d}", .{ distance, self.window_length });
                 return Lz77Error.InvalidDistance;
             }

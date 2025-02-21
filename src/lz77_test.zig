@@ -1,7 +1,15 @@
 const std = @import("std");
+const log = @import("log.zig");
 const Lz77 = @import("lz77.zig").Lz77;
 
 const max_size = 50000;
+
+fn log_result(in_size: usize, new_size: usize) void {
+    const k: f64 = @floatFromInt(in_size - new_size);
+    const m: f64 = @floatFromInt(in_size);
+    const percent: f64 = 100*(k / m);
+    log.info(@src(), "compressed: {d} -> {d} ({d:.1} %)", .{ in_size, new_size, percent });
+}
 
 fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -30,13 +38,10 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
         .lookahead_length = lookahead_length,
         .window_length = window_length,
     };
+    // zig fmt: on
 
     try lz77.compress(reader, &compressed);
-
-    std.debug.print("compressed: {any} ({d} -> {d})\n",
-                    .{ compressed_array[0..compressed.pos], in_size,
-                       compressed.pos });
-    // zig fmt: on
+    log_result(in_size, compressed.pos);
 
     try lz77.decompress(&compressed, &decompressed);
 
@@ -48,6 +53,6 @@ test "lz77 on simple text" {
     try run("tests/testdata/simple.txt", 4, 6);
 }
 
-// test "lz77 on rfc1951.txt" {
-//     try run("tests/testdata/rfc1951.txt", 8, 64);
-// }
+test "lz77 on rfc1951.txt" {
+    try run("tests/testdata/rfc1951.txt", 8, 64);
+}
