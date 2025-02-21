@@ -29,20 +29,16 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
         .allocator = allocator,
         .lookahead_length = lookahead_length,
         .window_length = window_length,
-        .compressed_stream = &compressed,
-        .decompressed_stream = &decompressed
     };
 
-    std.debug.print("before: {any}\n", .{ compressed_array[0..15] });
-
-    try lz77.compress(reader);
+    try lz77.compress(reader, &compressed);
 
     std.debug.print("compressed: {any} ({d} -> {d})\n",
                     .{ compressed_array[0..compressed.pos], in_size,
                        compressed.pos });
     // zig fmt: on
 
-    try lz77.decompress(lz77.compressed_stream);
+    try lz77.decompress(&compressed, &decompressed);
 
     // Verify correct decompression
     try std.testing.expectEqualSlices(u8, in_data[0..in_size], decompressed_array[0..in_size]);

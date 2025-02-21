@@ -31,12 +31,10 @@ pub fn Lz77(comptime T: type) type {
         window_length: usize,
         lookahead_length: usize,
         allocator: std.mem.Allocator,
-        compressed_stream: *T,
-        decompressed_stream: *T,
 
-        pub fn compress(self: Self, reader: anytype) !void {
+        pub fn compress(self: Self, reader: anytype, outstream: *T) !void {
             var done = false;
-            var writer = std.io.bitWriter(.little, self.compressed_stream.writer());
+            var writer = std.io.bitWriter(.little, outstream.writer());
 
             var sliding_window = try std.RingBuffer.init(self.allocator, self.window_length);
             defer sliding_window.deinit(self.allocator);
@@ -130,30 +128,22 @@ pub fn Lz77(comptime T: type) type {
             try writer.flushBits();
         }
 
-        pub fn decompress(self: Self, stream: anytype) !void {
-            var reader = std.io.bitReader(.little, stream.reader());
-            var writer = self.decompressed_stream.writer();
+        pub fn decompress(self: Self, instream: anytype, outstream: anytype) !void {
+            // The input stream position should point to the last input element
+            const end = instream.pos * 8;
+
+            // Start from the first element in both streams
+            try instream.seekTo(0);
+            try outstream.seekTo(0);
+
+            var reader = std.io.bitReader(.little, instream.reader());
+            var writer = outstream.writer();
 
             var sliding_window = try std.RingBuffer.init(self.allocator, self.window_length);
             defer sliding_window.deinit(self.allocator);
 
-            const end = stream.pos * 8;
             var pos: usize = 0;
-
             var type_bit: u1 = 0;
-
-            ////////////////////////
-            // TODO reader only has zeroes...?
-            while (true) {
-                const c = reader.readBitsNoEof(u8, 8) catch {
-                    log.debug(@src(), "end: {}", .{pos / 8});
-                    return;
-                };
-                pos += 8;
-                if (c != 0)
-                    log.debug(@src(), "xd: {d}", .{c});
-            }
-            ////////////////////////
 
             while (pos < end) {
                 type_bit = reader.readBitsNoEof(u1, 1) catch {
@@ -172,7 +162,7 @@ pub fn Lz77(comptime T: type) type {
                         try self.window_write(&sliding_window, c);
                         // Write raw byte to output stream
                         try writer.writeByte(c);
-                        log.debug(@src(), "raw: {d}", .{c});
+                        log.debug(@src(), "raw(.char = {})", .{c});
                     },
                     1 => {
                         const length = reader.readBitsNoEof(u7, 7) catch {
@@ -186,10 +176,11 @@ pub fn Lz77(comptime T: type) type {
                         pos += 8;
 
                         // Write `length` bytes starting from the `distance`
-                        // offset backwards into the buffer.
-                        const read_index = sliding_window.read_index;
-                        const start_index = try self.window_start_index(read_index, distance);
+                        // offset backwards from the `write_index`.
+                        const write_index = sliding_window.write_index;
+                        const start_index = try self.window_start_index(write_index, distance);
 
+                        // log.debug(@src(), "window(.start = {}): {any}", .{start_index, sliding_window.data});
                         for (0..length) |i| {
                             const ring_index = (start_index + i) % self.window_length;
                             const c = sliding_window.data[ring_index];
@@ -197,7 +188,7 @@ pub fn Lz77(comptime T: type) type {
                             try self.window_write(&sliding_window, c);
                             // Write to output stream
                             try writer.writeByte(c);
-                            log.debug(@src(), "ref: {c}", .{c});
+                            log.debug(@src(), "ref(.length = {}, .distance = {}, .char = {})", .{length, distance, c});
                         }
                     },
                 }
@@ -206,18 +197,21 @@ pub fn Lz77(comptime T: type) type {
 
         /// Get the starting index of a back reference at `distance` backwards
         /// into the sliding window.
-        fn window_start_index(self: Self, read_index: usize, distance: u8) !usize {
-            const read_index_i: i32 = @intCast(read_index);
-            const distance_i: i32 = @intCast(distance);
-            const window_length_i: i32 = @intCast(self.window_length);
-
+        fn window_start_index(self: Self, write_index: usize, distance: u8) !usize {
             if (distance >= self.window_length) {
                 log.err(@src(), "distance too large: {d} >= {d}", .{ distance, self.window_length });
                 return Lz77Error.InvalidDistance;
             }
 
-            const s: usize = @intCast(read_index_i + window_length_i - distance_i);
-            return s % self.window_length;
+            const write_index_i: i32 = @intCast(write_index);
+            const distance_i: i32 = @intCast(distance);
+            const window_length_i: i32 = @intCast(self.window_length);
+
+            const s: i32 = write_index_i - distance_i;
+
+            const s_usize: usize = @intCast(s + window_length_i);
+
+            return s_usize % self.window_length;
         }
 
         fn window_write(self: Self, window: *std.RingBuffer, c: u8) !void {
