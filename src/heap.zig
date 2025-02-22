@@ -30,8 +30,8 @@ pub const Heap = struct {
             }
 
             const parent_index = (idx - 1) / 2;
-            if (self.array[parent_index].weight > self.array[idx].weight) {
-                // Parent is greater
+            if (self.array[parent_index].weight >= self.array[idx].weight) {
+                // Parent is greater or equal
                 break;
             }
 
