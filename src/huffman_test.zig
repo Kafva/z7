@@ -36,14 +36,11 @@ fn gt(lhs: u8, rhs: u8) bool {
 }
 
 test "Heap insert" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
     const sorted_arr = [_]u8{ 11, 4, 7, 2, 2, 3, 4, 1, 1, 1, 1, 2, 2, 1, 1 };
-    const arr = [_]u8{ 2, 11, 1, 2, 3, 1, 1, 2, 4, 1, 2, 1, 7, 4, 1 };
-    const array = try allocator.alloc(u8, arr.len);
-    const heap = try Heap(u8){ .array = array, .is_greater = gt };
+    var arr = [_]u8{ 2, 11, 1, 2, 3, 1, 1, 2, 4, 1, 2, 1, 7, 4, 1 };
+    arr[0] = 2;
+    //var heap = Heap(u8){ .array = @constCast(&arr), .is_greater = gt };
+    var heap = Heap(u8).init(arr[0..], arr.len, gt);
 
     for (arr) |item| {
         try heap.insert(item);

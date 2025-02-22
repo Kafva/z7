@@ -19,7 +19,12 @@ pub fn Heap(comptime T: type) type {
         count: usize = 0,
         is_greater: fn (lhs: T, rhs: T) bool,
 
-        pub fn insert(self: @This(), node: T) !void {
+        pub fn init(array: []T, count: usize, is_greater: fn (lhs: T, rhs: T) bool) @This() {
+            return @This() { .array = array, .count = count, .is_greater = is_greater };
+
+        }
+
+        pub fn insert(self: *@This(), node: T) !void {
             if (self.count == self.array.len) {
                 return HeapError.OutOfSpace;
             }
@@ -73,12 +78,12 @@ pub const Huffman = struct {
         }
 
         log.debug(@src(), "initial node count: {}", .{cnt});
-        const array: []Node = try allocator.alloc(Node, 256);
+        // var array: []Node = try allocator.alloc(Node, 256);
 
-        const heap = try Heap(Node){ .array = array, .is_greater = Node.is_greater };
-        for (frequencies) |node| {
-            heap.insert(node);
-        }
+        // comptime var heap = Heap(Node){ .array = &array, .is_greater = Node.is_greater };
+        // for (frequencies) |node| {
+        //     heap.insert(node);
+        // }
 
         return @This(){};
     }
