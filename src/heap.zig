@@ -29,14 +29,14 @@ pub const Heap = struct {
                 break;
             }
 
-            const parent_idx = (idx - 1) / 2;
-            if (self.array[parent_idx].weight > self.array[idx].weight) {
+            const parent_index = (idx - 1) / 2;
+            if (self.array[parent_index].weight > self.array[idx].weight) {
                 // Parent is greater
                 break;
             }
 
-            std.mem.swap(Node, &self.array[parent_idx], &self.array[idx]);
-            idx = parent_idx;
+            std.mem.swap(Node, &self.array[parent_index], &self.array[idx]);
+            idx = parent_index;
         }
     }
 
@@ -49,12 +49,12 @@ pub const Heap = struct {
     }
 
     fn child(self: @This(), idx: usize, left: bool) ?Node {
-        const child_idx = if (left) 2 * idx + 1 else 2 * idx + 2;
-        if (child_idx > self.count - 1) {
+        const child_index = if (left) 2 * idx + 1 else 2 * idx + 2;
+        if (child_index > self.count - 1) {
             return null;
         }
 
-        return self.array[child_idx];
+        return self.array[child_index];
     }
 };
 

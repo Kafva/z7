@@ -30,12 +30,12 @@ pub fn FlagIterator(comptime T: type) type {
             // Skip program name
             _ = self.iter.*.next();
 
-            var arg_idx: ?usize = null;
+            var arg_index: ?usize = null;
             while (self.iter.*.next()) |arg| {
                 const is_short = arg.len == 2 and arg[0] == '-';
                 const is_long = arg.len > 2 and arg[0] == '-' and arg[1] == '-';
 
-                if (arg_idx) |idx| {
+                if (arg_index) |idx| {
                     // Parse as argument for previous flag
                     if (is_short or is_long) {
                         // Flag with argument followed by flag encountered
@@ -45,7 +45,7 @@ pub fn FlagIterator(comptime T: type) type {
                         .active => unreachable,
                         .str => flags[idx].value.str = @ptrCast(@constCast(arg))
                     }
-                    arg_idx = null;
+                    arg_index = null;
                 }
                 else if (std.mem.eql(u8, arg, "--")) {
                     // Stop parsing flags
@@ -59,7 +59,7 @@ pub fn FlagIterator(comptime T: type) type {
                         if (match_short or match_long) {
                             switch (flag.value) {
                                 .active => flags[i].value.active = true,
-                                .str => arg_idx = @intCast(i)
+                                .str => arg_index = @intCast(i)
                             }
                             break;
                         }
