@@ -9,9 +9,11 @@ test "Heap insert" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var weights = [_]usize{ 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 4, 4, 7, 11 };
+    var weights = [_]usize{0} ** 2048;
     var prng = std.Random.DefaultPrng.init(0);
-    prng.random().shuffle(usize, weights[0..]);
+    for (0..2048) |i| {
+        weights[i] = @truncate(prng.next() % 2000);
+    }
 
     const nodes = try allocator.alloc(Node, weights.len);
 
@@ -25,8 +27,6 @@ test "Heap insert" {
     for (0.., heap.array) |i, node| {
         weights[i] = node.weight;
     }
-
-    log.debug(@src(), "heap: {any}", .{weights});
 
     // Verify that every child has a smaller or equal weight to its parent
     for (0..weights.len) |i| {
@@ -50,10 +50,10 @@ test "Heap out of space" {
 
     // Insert nodes with weights in random order
     var heap = Heap { .array = nodes };
-    for (0..12) |i| {
+    for (0..10+1) |i| {
         const node = Node { .char = null, .weight = 1 };
-        if (i == 12) {
-            std.testing.expectError(.{HeapError.OutOfSpace}, try heap.insert(node));
+        if (i == 10) {
+            try std.testing.expectError(HeapError.OutOfSpace, heap.insert(node));
         }
         else {
             try heap.insert(Node { .char = null, .weight = 1 });
