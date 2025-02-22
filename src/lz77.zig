@@ -54,8 +54,8 @@ pub const Lz77 = struct {
             // Look for matches in the sliding_window
             const win_len: u8 = @truncate(sliding_window.len());
             for (0..win_len) |i| {
-                const ring_index = (sliding_window.read_index + i) % self.window_length;
-                if (lookahead[match_cnt] != sliding_window.data[ring_index]) {
+                const ring_idx = (sliding_window.read_idx + i) % self.window_length;
+                if (lookahead[match_cnt] != sliding_window.data[ring_idx]) {
                     // Reset and start matching from the beginning of the
                     // lookahead again.
                     match_cnt = 0;
@@ -70,8 +70,8 @@ pub const Lz77 = struct {
 
                 // Update the longest match
                 longest_match_cnt = match_cnt;
-                const win_index: u8 = @truncate(i);
-                longest_match_distance = (win_len - win_index) + (match_cnt - 1);
+                const win_idx: u8 = @truncate(i);
+                longest_match_distance = (win_len - win_idx) + (match_cnt - 1);
 
                 if (longest_match_cnt == self.lookahead_length) {
                     // Lookahead is filled
@@ -93,13 +93,13 @@ pub const Lz77 = struct {
             }
 
             // The `char` is only used when length <= 1
-            const char_index = if (longest_match_cnt <= 1) 0 else longest_match_cnt - 1;
+            const char_idx = if (longest_match_cnt <= 1) 0 else longest_match_cnt - 1;
 
             // Write codeword to output stream
             const codeword = Codeword{
                 .length = longest_match_cnt,
                 .distance = longest_match_distance,
-                .char = lookahead[char_index],
+                .char = lookahead[char_idx],
             };
 
             try self.write_codeword(&writer, codeword);
@@ -173,13 +173,13 @@ pub const Lz77 = struct {
                     pos += 8;
 
                     // Write `length` bytes starting from the `distance`
-                    // offset backwards from the `write_index`.
-                    const write_index = sliding_window.write_index;
-                    const start_index = try self.window_start_index(write_index, distance);
+                    // offset backwards from the `write_idx`.
+                    const write_idx = sliding_window.write_idx;
+                    const start_idx = try self.window_start_idx(write_idx, distance);
 
                     for (0..length) |i| {
-                        const ring_index = (start_index + i) % self.window_length;
-                        const c = sliding_window.data[ring_index];
+                        const ring_idx = (start_idx + i) % self.window_length;
+                        const c = sliding_window.data[ring_idx];
                         // Update sliding window
                         try self.window_write(&sliding_window, c);
                         // Write to output stream
@@ -193,17 +193,17 @@ pub const Lz77 = struct {
 
     /// Get the starting index of a back reference at `distance` backwards
     /// into the sliding window.
-    fn window_start_index(self: @This(), write_index: usize, distance: u8) !usize {
+    fn window_start_idx(self: @This(), write_idx: usize, distance: u8) !usize {
         if (distance > self.window_length) {
             log.err(@src(), "distance too large: {d} >= {d}", .{ distance, self.window_length });
             return Lz77Error.InvalidDistance;
         }
 
-        const write_index_i: i32 = @intCast(write_index);
+        const write_idx_i: i32 = @intCast(write_idx);
         const distance_i: i32 = @intCast(distance);
         const window_length_i: i32 = @intCast(self.window_length);
 
-        const s: i32 = write_index_i - distance_i;
+        const s: i32 = write_idx_i - distance_i;
 
         const s_usize: usize = @intCast(s + window_length_i);
 

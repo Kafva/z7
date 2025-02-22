@@ -1,7 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
 const Huffman = @import("huffman.zig").Huffman;
-const Heap = @import("huffman.zig").Heap;
 
 const max_size = 50000;
 
@@ -31,24 +30,6 @@ fn run(inputfile: []const u8) !void {
     _ = huffman;
 }
 
-fn gt(lhs: u8, rhs: u8) bool {
-    return lhs > rhs;
-}
-
-test "Heap insert" {
-    const sorted_arr = [_]u8{ 11, 4, 7, 2, 2, 3, 4, 1, 1, 1, 1, 2, 2, 1, 1 };
-    var arr = [_]u8{ 2, 11, 1, 2, 3, 1, 1, 2, 4, 1, 2, 1, 7, 4, 1 };
-    arr[0] = 2;
-    //var heap = Heap(u8){ .array = @constCast(&arr), .is_greater = gt };
-    var heap = Heap(u8).init(arr[0..], arr.len, gt);
-
-    for (arr) |item| {
-        try heap.insert(item);
-    }
-
-    // Verify correct decompression
-    try std.testing.expectEqualSlices(u8, sorted_arr, arr);
-}
 
 test "Huffman encode simple text" {
     try run("tests/testdata/helloworld.txt");

@@ -1,58 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
-
-const Node = struct {
-    /// Only leaf nodes contain a character
-    char: ?u8,
-    weight: usize,
-
-    fn is_greater(lhs: Node, rhs: Node) bool {
-        return lhs.weight > rhs.weight;
-    }
-};
-
-const HeapError = error{OutOfSpace};
-
-pub fn Heap(comptime T: type) type {
-    return struct {
-        array: []T,
-        count: usize = 0,
-        is_greater: fn (lhs: T, rhs: T) bool,
-
-        pub fn init(array: []T, count: usize, is_greater: fn (lhs: T, rhs: T) bool) @This() {
-            return @This() { .array = array, .count = count, .is_greater = is_greater };
-
-        }
-
-        pub fn insert(self: *@This(), node: T) !void {
-            if (self.count == self.array.len) {
-                return HeapError.OutOfSpace;
-            }
-
-            // Add the node to the end of the array
-            const idx = self.count;
-            self.array[idx] = node;
-            self.count += 1;
-
-            // Swap it with its parent until it has found its place
-            while (true) {
-                if (idx == 0) {
-                    // Reached root
-                    break;
-                }
-
-                const parent_idx = (idx - 1) / 2;
-                if (self.is_greater(self.array[parent_idx], node)) {
-                    // Parent is greater
-                    break;
-                }
-
-                std.mem.swap(T, &self.array[parent_idx], &self.array[idx]);
-                idx = parent_idx;
-            }
-        }
-    };
-}
+const Node = @import("heap.zig").Node;
 
 pub const Huffman = struct {
     pub fn init(allocator: std.mem.Allocator, reader: anytype) !@This() {
@@ -78,8 +26,24 @@ pub const Huffman = struct {
         }
 
         log.debug(@src(), "initial node count: {}", .{cnt});
-        // var array: []Node = try allocator.alloc(Node, 256);
 
+        var array: []Node = try allocator.alloc(Node, cnt);
+        var idx: usize = 0;
+
+        var keys = frequencies.keyIterator();
+        while (keys.next()) |key| {
+            array[idx] = frequencies.get(key.*).?;
+            idx += 1;
+        }
+
+        // Sort into a max heap
+        // std.sort.heap(Node, array, {}, Node.order);
+
+        // log.debug(@src(), "{any}", .{array});
+
+        // std.sort.insertion()
+
+        // var array: []Node = try allocator.alloc(Node, 256);
         // comptime var heap = Heap(Node){ .array = &array, .is_greater = Node.is_greater };
         // for (frequencies) |node| {
         //     heap.insert(node);
