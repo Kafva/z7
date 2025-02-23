@@ -28,14 +28,13 @@ fn run(inputfile: []const u8) !void {
 
     huffman.dump(0, huffman.array.items.len - 1);
 
+    // Reset input stream for second pass
     try in.seekTo(0);
     try huffman.encode(allocator, reader, &encoded);
-
     try huffman.decode(&encoded, &decoded);
 
     // Verify correct decoding
     try std.testing.expectEqualSlices(u8, in_data[0..in_size], decoded_array[0..in_size]);
-
 }
 
 

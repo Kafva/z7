@@ -15,12 +15,18 @@ pub const Node = struct {
 
     pub fn dump(self: @This(), comptime level: u8, pos: []const u8) void {
         const prefix = util.repeat('-', level) catch unreachable;
+
         if (self.char) |char| {
-            log.debug(@src(), "`{s}{s}: {{ .weight = {d}, .char = '{c}' }}",
-                              .{prefix, pos, self.weight, char});
+            if (std.ascii.isPrint(char) and char != '\n') {
+                log.debug(@src(), "`{s}{s}: {{ .weight = {d}, .char = '{c}' }} [{d}]",
+                                  .{prefix, pos, self.weight, char, level});
+            } else {
+                log.debug(@src(), "`{s}{s}: {{ .weight = {d}, .char = 0x{x} }} [{d}]",
+                                  .{prefix, pos, self.weight, char, level});
+            }
         } else {
-            log.debug(@src(), "`{s}{s}: {{ .weight = {d} }}",
-                              .{prefix, pos, self.weight});
+            log.debug(@src(), "`{s}{s}: {{ .weight = {d} }} [{d}]",
+                              .{prefix, pos, self.weight, level});
         }
     }
 };
@@ -135,7 +141,6 @@ pub const Huffman = struct {
 
         // Create the translation map from 1 byte characters onto encoded Huffman symbols.
         var translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);
-        // Root node should be at the last position
         try self.walk_encode(self.array.items.len - 1, &translation, 0, 0);
 
         while (true) {
@@ -147,35 +152,35 @@ pub const Huffman = struct {
                 switch (c_enc.bit_shift) {
                     0 => {
                         const value: u1 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift);
+                        try writer.writeBits(value, c_enc.bit_shift + 1);
                     },
                     1 => {
                         const value: u2 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift);
+                        try writer.writeBits(value, c_enc.bit_shift + 1);
                     },
                     2 => {
                         const value: u3 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift);
+                        try writer.writeBits(value, c_enc.bit_shift + 1);
                     },
                     3 => {
                         const value: u4 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift);
+                        try writer.writeBits(value, c_enc.bit_shift + 1);
                     },
                     4 => {
                         const value: u5 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift);
+                        try writer.writeBits(value, c_enc.bit_shift + 1);
                     },
                     5 => {
                         const value: u6 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift);
+                        try writer.writeBits(value, c_enc.bit_shift + 1);
                     },
                     6 => {
                         const value: u7 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift);
+                        try writer.writeBits(value, c_enc.bit_shift + 1);
                     },
                     7 => {
                         const value: u8 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift);
+                        try writer.writeBits(value, c_enc.bit_shift + 1);
                     },
                 }
                 written_bits += c_enc.bit_shift;
@@ -210,7 +215,6 @@ pub const Huffman = struct {
             };
 
             if (char) |c| {
-                log.debug(@src(), "c: {c}", .{c});
                 try writer.writeByte(c);
             } else {
                 break;
@@ -309,10 +313,9 @@ pub const Huffman = struct {
             }
             if (right_child_index) |child_index| {
                 // right: 1
-                if (bit_shift > 7) unreachable;
                 const one: u8 = 1;
                 const new_bit: u8 = one << bit_shift;
-                const new_bits = value & new_bit;
+                const new_bits = value | new_bit;
                 try self.walk_encode(child_index, translation, new_bits, bit_shift + 1);
             }
         }
