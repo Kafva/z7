@@ -27,6 +27,7 @@ pub const Node = struct {
 
 const HuffmanError = error {
     UnexpectedCharacter,
+    UnexpectedEncodedSymbol,
     BadTreeStructure,
 };
 
@@ -37,10 +38,8 @@ const NodeEncoding = struct {
 };
 
 pub const Huffman = struct {
-    const Self = @This();
 
     array: std.ArrayList(Node),
-    root_index: usize,
 
     /// Initialize a Huffman tree from the input of the provided `reader`
     pub fn init(allocator: std.mem.Allocator, reader: anytype) !@This() {
@@ -90,6 +89,7 @@ pub const Huffman = struct {
         // 3. Create the tree
         while (queue_cnt > 0) {
             if (queue_cnt == 1) {
+                // The root node will always be the last item
                 try array.append(queue[queue_cnt - 1]);
                 queue_cnt -= 1;
                 array_cnt += 1;
@@ -121,11 +121,11 @@ pub const Huffman = struct {
             std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.desc);
         }
 
-        return @This(){ .array = array, .root_index = array_cnt - 1 };
+        return @This(){ .array = array };
     }
 
     pub fn encode(
-        self: Self,
+        self: @This(),
         allocator: std.mem.Allocator,
         reader: anytype,
         outstream: anytype
@@ -136,7 +136,7 @@ pub const Huffman = struct {
         // Create the translation map from 1 byte characters onto encoded Huffman symbols.
         var translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);
         // Root node should be at the last position
-        try self.walk(self.array.items.len - 1, &translation, 0, 0);
+        try self.walk_encode(self.array.items.len - 1, &translation, 0, 0);
 
         while (true) {
             const c = reader.readByte() catch {
@@ -190,11 +190,39 @@ pub const Huffman = struct {
         log.debug(@src(), "wrote {} bits [{} bytes]", .{written_bits, written_bits / 8});
     }
 
-    pub fn dump(self: Self, comptime level: u8, index: usize) void {
+    pub fn decode(self: @This(), instream: anytype, outstream: anytype) !void {
+        // The input stream position should point to the last input element
+        const end = instream.pos * 8;
+        var pos: usize = 0;
+
+        // Start from the first element in both streams
+        try instream.seekTo(0);
+        try outstream.seekTo(0);
+
+        var reader = std.io.bitReader(.little, instream.reader());
+        var writer = outstream.writer();
+
+        // Decode the stream
+        while (pos < end) {
+            const char = self.walk_decode(self.array.items.len - 1, &reader, &pos) catch |err| {
+                log.err(@src(), "decoding error: {any}", .{err});
+                break;
+            };
+
+            if (char) |c| {
+                log.debug(@src(), "c: {c}", .{c});
+                try writer.writeByte(c);
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub fn dump(self: @This(), comptime level: u8, index: usize) void {
         // Compile time generated strings are built based on the level
         if (level == 255) unreachable;
 
-        if (index == self.root_index) {
+        if (index == self.array.items.len - 1) {
             log.debug(@src(), "node count: {}", .{self.array.items.len});
             const node = self.array.items[index];
             node.dump(0, "root");
@@ -212,8 +240,51 @@ pub const Huffman = struct {
         }
     }
 
-    fn walk(
-        self: Self,
+    fn walk_decode(
+        self: @This(),
+        index: usize,
+        reader: anytype,
+        read_bits: *usize,
+    ) !?u8 {
+        const bit = reader.readBitsNoEof(u1, 1) catch {
+            return null;
+        };
+        read_bits.* += 1;
+
+        const left_child_index = self.array.items[index].left_child_index;
+        const right_child_index = self.array.items[index].right_child_index;
+
+        if (left_child_index == null and right_child_index == null) {
+            // Reached leaf
+            if (self.array.items[index].char) |char| {
+                return char;
+            } else {
+                log.err(@src(), "Missing character from leaf node", .{});
+                return HuffmanError.BadTreeStructure;
+            }
+
+        } else {
+            switch (bit) {
+                0 => {
+                    if (left_child_index) |child_index| {
+                        return try self.walk_decode(child_index, reader, read_bits);
+                    } else {
+                        return HuffmanError.UnexpectedEncodedSymbol;
+                    }
+                },
+                1 => {
+                    if (right_child_index) |child_index| {
+                        return try self.walk_decode(child_index, reader, read_bits);
+                    } else {
+                        return HuffmanError.UnexpectedEncodedSymbol;
+                    }
+                }
+            }
+        }
+    }
+
+    fn walk_encode(
+        self: @This(),
         index: usize,
         translation: *std.AutoHashMap(u8, NodeEncoding),
         value: u8,
@@ -221,19 +292,6 @@ pub const Huffman = struct {
     ) !void {
         const left_child_index = self.array.items[index].left_child_index;
         const right_child_index = self.array.items[index].right_child_index;
-
-        if (left_child_index) |child_index| {
-            // left: 0
-            try self.walk(child_index, translation, value, bit_shift + 1);
-        }
-        if (right_child_index) |child_index| {
-            // right: 1
-            if (bit_shift > 7) unreachable;
-            const one: u8 = 1;
-            const new_bit: u8 = one << bit_shift;
-            const new_bits = value & new_bit;
-            try self.walk(child_index, translation, new_bits, bit_shift + 1);
-        }
 
         if (left_child_index == null and right_child_index == null) {
             // Reached leaf
@@ -244,7 +302,19 @@ pub const Huffman = struct {
                 log.err(@src(), "Missing character from leaf node", .{});
                 return HuffmanError.BadTreeStructure;
             }
+        } else {
+            if (left_child_index) |child_index| {
+                // left: 0
+                try self.walk_encode(child_index, translation, value, bit_shift + 1);
+            }
+            if (right_child_index) |child_index| {
+                // right: 1
+                if (bit_shift > 7) unreachable;
+                const one: u8 = 1;
+                const new_bit: u8 = one << bit_shift;
+                const new_bits = value & new_bit;
+                try self.walk_encode(child_index, translation, new_bits, bit_shift + 1);
+            }
         }
     }
-
 };

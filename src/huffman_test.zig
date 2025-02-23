@@ -17,22 +17,33 @@ fn run(inputfile: []const u8) !void {
     // Sanity check
     try std.testing.expect(in_size <= max_size);
 
-    //const in_data = try std.fs.cwd().readFileAlloc(allocator, inputfile, max_size);
+    const in_data = try std.fs.cwd().readFileAlloc(allocator, inputfile, max_size);
     var encoded_array = [_]u8{0} ** max_size;
     var encoded = std.io.fixedBufferStream(&encoded_array);
 
-    // var decompressed_array = [_]u8{0} ** max_size;
-    // var decompressed = std.io.fixedBufferStream(&decompressed_array);
+    var decoded_array = [_]u8{0} ** max_size;
+    var decoded = std.io.fixedBufferStream(&decoded_array);
 
     const huffman = try Huffman.init(allocator, reader);
 
-    huffman.dump(0, huffman.root_index);
+    huffman.dump(0, huffman.array.items.len - 1);
 
     try in.seekTo(0);
     try huffman.encode(allocator, reader, &encoded);
+
+    try huffman.decode(&encoded, &decoded);
+
+    // Verify correct decoding
+    try std.testing.expectEqualSlices(u8, in_data[0..in_size], decoded_array[0..in_size]);
+
 }
 
 
-test "Huffman encode simple text" {
+test "Huffman on simple text" {
     try run("tests/testdata/helloworld.txt");
 }
+
+// test "Huffman on rfc1951.txt" {
+//     try run("tests/testdata/rfc1951.txt");
+// }
+

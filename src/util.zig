@@ -1,7 +1,6 @@
 const std = @import("std");
 
-/// Create an array with `c` repeated `count` times, limited 
-/// to 255 repetitions.
+/// Create an array with `c` repeated `count` times
 pub fn repeat(comptime c: u8, comptime count: u8) ![]const u8 {
     if (count == 0) return "";
 
