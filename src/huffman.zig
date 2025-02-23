@@ -5,56 +5,130 @@ pub const Node = struct {
     /// Only leaf nodes contain a character
     char: ?u8,
     weight: usize,
-    left_child: *?@This(),
-    right_child: *?@This(),
+    left_child_index: ?usize,
+    right_child_index: ?usize,
 
-    pub fn gt(_:void, lhs: @This(), rhs: @This()) bool {
+    pub fn desc(_:void, lhs: @This(), rhs: @This()) bool {
         return lhs.weight > rhs.weight;
+    }
+
+    pub fn dump(self: @This(), level: usize, pos: []const u8) void {
+        if (self.char) |char| {
+            log.debug(@src(), "#{d} [{s}]: {{ .weight = {d}, .char = '{c}' }}",
+                              .{level, pos, self.weight, char});
+        } else {
+            log.debug(@src(), "#{d} [{s}]: {{ .weight = {d} }}",
+                              .{level, pos, self.weight});
+        }
     }
 };
 
 pub const Huffman = struct {
-    pub fn init(allocator: std.mem.Allocator, reader: anytype) !@This() {
-        var frequencies = std.AutoHashMap(u8, Node).init(allocator);
-        defer frequencies.deinit();
-        var cnt: usize = 0;
+    const Self = @This();
 
-        // Calculate the frequencies for each character in the input stream.
-        // TODO: This does not scale for large input streams.
+    array: std.ArrayList(Node),
+    root_index: usize,
+
+    /// Initialize a Huffman tree from the input of the provided `reader`
+    pub fn init(allocator: std.mem.Allocator, reader: anytype) !@This() {
+        var frequencies = std.AutoHashMap(u8, usize).init(allocator);
+        var cnt: usize = 0;
+        defer frequencies.deinit();
+
+        // 1. Calculate the frequencies for each character in the input stream.
         while (true) {
             const c = reader.readByte() catch {
                 break;
             };
 
-            if (frequencies.get(c)) |current_node| {
-                @constCast(&current_node).weight += 1;
-                try frequencies.put(c, current_node);
+            if (frequencies.get(c)) |weight| {
+                try frequencies.put(c, weight + 1);
             } else {
-                const new_node = Node{
-                    .char = c,
-                    .weight = 1,
-                    .left_child = undefined,
-                    .right_child = undefined
-                };
-                try frequencies.put(c, new_node);
+                try frequencies.put(c, 1);
                 cnt += 1;
             }
         }
 
-        log.debug(@src(), "initial node count: {}", .{cnt});
-        const nodes = try allocator.alloc(Node, 2*cnt);
+        // 2. Create a queue of nodes to place into the tree
+        var queue_cnt: usize = cnt;
+        const queue = try allocator.alloc(Node, queue_cnt);
+
+        var array_cnt: usize = 0;
+        // The array will grow if the capacity turns out to be too low
+        var array = try std.ArrayList(Node).initCapacity(allocator, 2*queue_cnt);
 
         var keys = frequencies.keyIterator();
         var index: usize = 0;
         while (keys.next()) |key| {
-            const node = frequencies.get(key.*).?;
-            nodes[index] = node;
-            std.sort.insertion(Node, nodes[0..index], {}, Node.gt);
+            const weight = frequencies.get(key.*).?;
+            queue[index] = Node {
+                .char = key.*,
+                .weight = weight,
+                .left_child_index = undefined,
+                .right_child_index = undefined
+            };
+            // Sort in descending order with the largest node first
+            std.sort.insertion(Node, queue[0..index], {}, Node.desc);
             index += 1;
         }
 
-        std.debug.print("{any}\n", .{nodes[0..cnt]});
 
-        return @This(){};
+        // 3. Create the tree
+        log.debug(@src(), "initial node count: {}", .{queue_cnt});
+
+        while (queue_cnt > 0) {
+            if (queue_cnt == 1) {
+                try array.append(queue[queue_cnt - 1]);
+                queue_cnt -= 1;
+                array_cnt += 1;
+                continue;
+            }
+
+            // Pick the two elements from the queue with the lowest weight
+            const left_child = queue[queue_cnt - 2];
+            const right_child = queue[queue_cnt - 1];
+
+            // Save the children from the queue into the backing array
+            try array.append(left_child);
+            try array.append(right_child);
+            array_cnt += 2;
+
+            // Create the parent node
+            const parent_weight = left_child.weight + right_child.weight;
+            const parent_node = Node {
+                .char = undefined,
+                .weight = parent_weight,
+                .left_child_index = array_cnt - 2,
+                .right_child_index = array_cnt - 1
+            };
+
+            // Insert the parent node into the priority queue, overwriting
+            // one of the children and dropping the other
+            queue_cnt -= 1;
+            queue[queue_cnt - 1] = parent_node;
+            std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.desc);
+        }
+
+        log.debug(@src(), "tree node count: {}", .{array_cnt});
+
+        return @This(){ .array = array, .root_index = array_cnt - 1 };
+    }
+
+    pub fn dump(self: Self, level: usize, idx: usize) void {
+        if (idx == self.root_index) {
+            const node = self.array.items[idx];
+            node.dump(level, "root");
+        }
+
+        if (self.array.items[idx].left_child_index) |child_index| {
+            const node = self.array.items[child_index];
+            node.dump(level + 1, "left");
+            self.dump(level + 1, child_index);
+        }
+        if (self.array.items[idx].right_child_index) |child_index| {
+            const node = self.array.items[child_index];
+            node.dump(level + 1, "right");
+            self.dump(level + 1, child_index);
+        }
     }
 };

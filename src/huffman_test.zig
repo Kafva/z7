@@ -27,7 +27,7 @@ fn run(inputfile: []const u8) !void {
     // zig fmt: off
     const huffman = try Huffman.init(allocator, reader);
     // zig fmt: on
-    _ = huffman;
+    huffman.dump(0, huffman.root_index);
 }
 
 
