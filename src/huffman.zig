@@ -37,10 +37,11 @@ const HuffmanError = error {
     BadTreeStructure,
 };
 
+/// The maximum possible encoding length for a character will be 2**8
+/// I.e. in the worst-case we need to store a 256-bit value
 const NodeEncoding = struct {
-    /// A shift within [0..7] is enough to index all parts of an 8 byte value
-    bit_shift: u3,
-    value: u8
+    bit_shift: u8,
+    bits: [4]u64
 };
 
 pub const Huffman = struct {
@@ -141,49 +142,41 @@ pub const Huffman = struct {
 
         // Create the translation map from 1 byte characters onto encoded Huffman symbols.
         var translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);
-        try self.walk_encode(self.array.items.len - 1, &translation, 0, 0);
+        const start_enc = NodeEncoding { .bit_shift = 0, .bits = .{ 0, 0, 0, 0  } };
+        try self.walk_encode(self.array.items.len - 1, &translation, start_enc);
 
         while (true) {
             const c = reader.readByte() catch {
                 break;
             };
 
-            if (translation.get(c)) |c_enc| {
-                switch (c_enc.bit_shift) {
-                    0 => {
-                        const value: u1 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift + 1);
+            if (translation.get(c)) |enc| {
+                // Write the translation to the output stream
+                switch (enc.bit_shift) {
+                    0...63 => {
+                        const shift: u6 = @truncate(enc.bit_shift);
+                        try writer.writeBits(enc.bits[0], shift + 1);
                     },
-                    1 => {
-                        const value: u2 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift + 1);
+                    64...127 => {
+                        const shift: u6 = @intCast(enc.bit_shift - 64);
+                        try writer.writeBits(enc.bits[0], 64);
+                        try writer.writeBits(enc.bits[1], shift + 1);
                     },
-                    2 => {
-                        const value: u3 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift + 1);
+                    128...191 => {
+                        const shift: u6 = @intCast(enc.bit_shift - 128);
+                        try writer.writeBits(enc.bits[0], 64);
+                        try writer.writeBits(enc.bits[1], 64);
+                        try writer.writeBits(enc.bits[2], shift + 1);
                     },
-                    3 => {
-                        const value: u4 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift + 1);
-                    },
-                    4 => {
-                        const value: u5 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift + 1);
-                    },
-                    5 => {
-                        const value: u6 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift + 1);
-                    },
-                    6 => {
-                        const value: u7 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift + 1);
-                    },
-                    7 => {
-                        const value: u8 = @intCast(c_enc.value);
-                        try writer.writeBits(value, c_enc.bit_shift + 1);
+                    192...255 => {
+                        const shift: u6 = @intCast(enc.bit_shift - 192);
+                        try writer.writeBits(enc.bits[0], 64);
+                        try writer.writeBits(enc.bits[1], 64);
+                        try writer.writeBits(enc.bits[2], 64);
+                        try writer.writeBits(enc.bits[3], shift + 1);
                     },
                 }
-                written_bits += c_enc.bit_shift;
+                written_bits += enc.bit_shift;
 
             } else {
                 log.err(@src(), "Unexpected byte: 0x{x}", .{c});
@@ -291,17 +284,25 @@ pub const Huffman = struct {
         self: @This(),
         index: usize,
         translation: *std.AutoHashMap(u8, NodeEncoding),
-        value: u8,
-        bit_shift: u3
+        node_enc: NodeEncoding,
     ) !void {
         const left_child_index = self.array.items[index].left_child_index;
         const right_child_index = self.array.items[index].right_child_index;
+        // Create a mutable copy
+        var enc = NodeEncoding {
+            .bit_shift = node_enc.bit_shift,
+            .bits = .{
+                node_enc.bits[0],
+                node_enc.bits[1],
+                node_enc.bits[2],
+                node_enc.bits[3],
+            }
+        };
 
         if (left_child_index == null and right_child_index == null) {
             // Reached leaf
             if (self.array.items[index].char) |char| {
-                const c_enc = NodeEncoding { .bit_shift = bit_shift, .value = value };
-                try translation.put(char, c_enc);
+                try translation.put(char, enc);
             } else {
                 log.err(@src(), "Missing character from leaf node", .{});
                 return HuffmanError.BadTreeStructure;
@@ -309,14 +310,35 @@ pub const Huffman = struct {
         } else {
             if (left_child_index) |child_index| {
                 // left: 0
-                try self.walk_encode(child_index, translation, value, bit_shift + 1);
+                // Nothing to do, all bits start initialised to 0
+                try self.walk_encode(child_index, translation, enc);
             }
             if (right_child_index) |child_index| {
                 // right: 1
-                const one: u8 = 1;
-                const new_bit: u8 = one << bit_shift;
-                const new_bits = value | new_bit;
-                try self.walk_encode(child_index, translation, new_bits, bit_shift + 1);
+                const one: u64 = 1;
+                switch (enc.bit_shift) {
+                    0...63 => {
+                        const shift: u6 = @truncate(enc.bit_shift);
+                        const new_bit: u64 = one << shift;
+                        enc.bits[0] = enc.bits[0] | new_bit;
+                    },
+                    64...127 => {
+                        const shift: u6 = @intCast(enc.bit_shift - 64);
+                        const new_bit: u64 = one << shift;
+                        enc.bits[1] = enc.bits[1] | new_bit;
+                    },
+                    128...191 => {
+                        const shift: u6 = @intCast(enc.bit_shift - 128);
+                        const new_bit: u64 = one << shift;
+                        enc.bits[2] = enc.bits[2] | new_bit;
+                    },
+                    192...255 => {
+                        const shift: u6 = @intCast(enc.bit_shift - 192);
+                        const new_bit: u64 = one << shift;
+                        enc.bits[3] = enc.bits[3] | new_bit;
+                    },
+                }
+                try self.walk_encode(child_index, translation, enc);
             }
         }
     }
