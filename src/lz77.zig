@@ -22,7 +22,7 @@ const Codeword = struct {
 /// LZ77 is allowed to have back-references across block boundaries (32K or less
 /// steps back is the limit for deflate)
 ///
-/// About autocomplete for these parameters:
+/// About autocomplete for 'anytype'
 /// https://github.com/zigtools/zls/discussions/1506
 pub const Lz77 = struct {
     window_length: usize,

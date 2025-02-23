@@ -23,10 +23,21 @@ pub const Node = struct {
     }
 };
 
+const HuffmanError = error {
+    UnexpectedCharacter,
+    UnexpectedBitCount,
+};
+
+const NodeEncoding = struct {
+    bit_count: u8,
+    value: u8
+};
+
 pub const Huffman = struct {
     const Self = @This();
 
     array: std.ArrayList(Node),
+    translation: std.AutoHashMap(u8, NodeEncoding),
     root_index: usize,
 
     /// Initialize a Huffman tree from the input of the provided `reader`
@@ -72,7 +83,6 @@ pub const Huffman = struct {
             index += 1;
         }
 
-
         // 3. Create the tree
         log.debug(@src(), "initial node count: {}", .{queue_cnt});
 
@@ -111,8 +121,41 @@ pub const Huffman = struct {
 
         log.debug(@src(), "tree node count: {}", .{array_cnt});
 
-        return @This(){ .array = array, .root_index = array_cnt - 1 };
+        // 4. Create the translation map from 1 byte characters onto
+        // encoded huffman symbols.
+        const translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);
+
+        return @This(){ .array = array, .root_index = array_cnt - 1, .translation = translation };
     }
+
+    pub fn encode(self: Self, reader: anytype, outstream: anytype) !void {
+        var writer = std.io.bitWriter(.little, outstream.writer());
+
+        while (true) {
+            const c = reader.readByte() catch {
+                return;
+            };
+
+            if (self.translation.get(c)) |c_enc| {
+                switch (c_enc.bit_count) {
+                    1 => try writer.writeBits(@as(u1, c_enc.value), 1),
+                    2 => try writer.writeBits(@as(u2, c_enc.value), 2),
+                    3 => try writer.writeBits(@as(u3, c_enc.value), 3),
+                    4 => try writer.writeBits(@as(u4, c_enc.value), 4),
+                    5 => try writer.writeBits(@as(u5, c_enc.value), 5),
+                    6 => try writer.writeBits(@as(u6, c_enc.value), 6),
+                    7 => try writer.writeBits(@as(u7, c_enc.value), 7),
+                    8 => try writer.writeBits(@as(u8, c_enc.value), 8),
+                    else => return HuffmanError.UnexpectedBitCount
+                }
+            } else {
+                return HuffmanError.UnexpectedCharacter;
+            }
+
+        }
+
+    }
+
 
     pub fn dump(self: Self, level: usize, idx: usize) void {
         if (idx == self.root_index) {
