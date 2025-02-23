@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("util.zig");
 const log = @import("log.zig");
 
 pub const Node = struct {
@@ -12,24 +13,26 @@ pub const Node = struct {
         return lhs.weight > rhs.weight;
     }
 
-    pub fn dump(self: @This(), level: usize, pos: []const u8) void {
+    pub fn dump(self: @This(), comptime level: u8, pos: []const u8) void {
+        const prefix = util.repeat('-', level) catch unreachable;
         if (self.char) |char| {
-            log.debug(@src(), "#{d} [{s}]: {{ .weight = {d}, .char = '{c}' }}",
-                              .{level, pos, self.weight, char});
+            log.debug(@src(), "`{s}{s}: {{ .weight = {d}, .char = '{c}' }}",
+                              .{prefix, pos, self.weight, char});
         } else {
-            log.debug(@src(), "#{d} [{s}]: {{ .weight = {d} }}",
-                              .{level, pos, self.weight});
+            log.debug(@src(), "`{s}{s}: {{ .weight = {d} }}",
+                              .{prefix, pos, self.weight});
         }
     }
 };
 
 const HuffmanError = error {
     UnexpectedCharacter,
-    UnexpectedBitCount,
+    BadTreeStructure,
 };
 
 const NodeEncoding = struct {
-    bit_count: u8,
+    /// A shift within [0..7] is enough to index all parts of an 8 byte value
+    bit_shift: u3,
     value: u8
 };
 
@@ -37,7 +40,6 @@ pub const Huffman = struct {
     const Self = @This();
 
     array: std.ArrayList(Node),
-    translation: std.AutoHashMap(u8, NodeEncoding),
     root_index: usize,
 
     /// Initialize a Huffman tree from the input of the provided `reader`
@@ -83,9 +85,9 @@ pub const Huffman = struct {
             index += 1;
         }
 
-        // 3. Create the tree
         log.debug(@src(), "initial node count: {}", .{queue_cnt});
 
+        // 3. Create the tree
         while (queue_cnt > 0) {
             if (queue_cnt == 1) {
                 try array.append(queue[queue_cnt - 1]);
@@ -119,59 +121,130 @@ pub const Huffman = struct {
             std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.desc);
         }
 
-        log.debug(@src(), "tree node count: {}", .{array_cnt});
-
-        // 4. Create the translation map from 1 byte characters onto
-        // encoded huffman symbols.
-        const translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);
-
-        return @This(){ .array = array, .root_index = array_cnt - 1, .translation = translation };
+        return @This(){ .array = array, .root_index = array_cnt - 1 };
     }
 
-    pub fn encode(self: Self, reader: anytype, outstream: anytype) !void {
+    pub fn encode(
+        self: Self,
+        allocator: std.mem.Allocator,
+        reader: anytype,
+        outstream: anytype
+    ) !void {
         var writer = std.io.bitWriter(.little, outstream.writer());
+        var written_bits: usize = 0;
+
+        // Create the translation map from 1 byte characters onto encoded Huffman symbols.
+        var translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);
+        // Root node should be at the last position
+        try self.walk(self.array.items.len - 1, &translation, 0, 0);
 
         while (true) {
             const c = reader.readByte() catch {
-                return;
+                break;
             };
 
-            if (self.translation.get(c)) |c_enc| {
-                switch (c_enc.bit_count) {
-                    1 => try writer.writeBits(@as(u1, c_enc.value), 1),
-                    2 => try writer.writeBits(@as(u2, c_enc.value), 2),
-                    3 => try writer.writeBits(@as(u3, c_enc.value), 3),
-                    4 => try writer.writeBits(@as(u4, c_enc.value), 4),
-                    5 => try writer.writeBits(@as(u5, c_enc.value), 5),
-                    6 => try writer.writeBits(@as(u6, c_enc.value), 6),
-                    7 => try writer.writeBits(@as(u7, c_enc.value), 7),
-                    8 => try writer.writeBits(@as(u8, c_enc.value), 8),
-                    else => return HuffmanError.UnexpectedBitCount
+            if (translation.get(c)) |c_enc| {
+                switch (c_enc.bit_shift) {
+                    0 => {
+                        const value: u1 = @intCast(c_enc.value);
+                        try writer.writeBits(value, c_enc.bit_shift);
+                    },
+                    1 => {
+                        const value: u2 = @intCast(c_enc.value);
+                        try writer.writeBits(value, c_enc.bit_shift);
+                    },
+                    2 => {
+                        const value: u3 = @intCast(c_enc.value);
+                        try writer.writeBits(value, c_enc.bit_shift);
+                    },
+                    3 => {
+                        const value: u4 = @intCast(c_enc.value);
+                        try writer.writeBits(value, c_enc.bit_shift);
+                    },
+                    4 => {
+                        const value: u5 = @intCast(c_enc.value);
+                        try writer.writeBits(value, c_enc.bit_shift);
+                    },
+                    5 => {
+                        const value: u6 = @intCast(c_enc.value);
+                        try writer.writeBits(value, c_enc.bit_shift);
+                    },
+                    6 => {
+                        const value: u7 = @intCast(c_enc.value);
+                        try writer.writeBits(value, c_enc.bit_shift);
+                    },
+                    7 => {
+                        const value: u8 = @intCast(c_enc.value);
+                        try writer.writeBits(value, c_enc.bit_shift);
+                    },
                 }
+                written_bits += c_enc.bit_shift;
+
             } else {
+                log.err(@src(), "Unexpected byte: 0x{x}", .{c});
                 return HuffmanError.UnexpectedCharacter;
             }
-
         }
 
+        try writer.flushBits();
+        log.debug(@src(), "wrote {} bits [{} bytes]", .{written_bits, written_bits / 8});
     }
 
+    pub fn dump(self: Self, comptime level: u8, index: usize) void {
+        // Compile time generated strings are built based on the level
+        if (level == 255) unreachable;
 
-    pub fn dump(self: Self, level: usize, idx: usize) void {
-        if (idx == self.root_index) {
-            const node = self.array.items[idx];
-            node.dump(level, "root");
+        if (index == self.root_index) {
+            log.debug(@src(), "node count: {}", .{self.array.items.len});
+            const node = self.array.items[index];
+            node.dump(0, "root");
         }
 
-        if (self.array.items[idx].left_child_index) |child_index| {
+        if (self.array.items[index].left_child_index) |child_index| {
             const node = self.array.items[child_index];
-            node.dump(level + 1, "left");
+            node.dump(level + 1, "0");
             self.dump(level + 1, child_index);
         }
-        if (self.array.items[idx].right_child_index) |child_index| {
+        if (self.array.items[index].right_child_index) |child_index| {
             const node = self.array.items[child_index];
-            node.dump(level + 1, "right");
+            node.dump(level + 1, "1");
             self.dump(level + 1, child_index);
         }
     }
+
+    fn walk(
+        self: Self,
+        index: usize,
+        translation: *std.AutoHashMap(u8, NodeEncoding),
+        value: u8,
+        bit_shift: u3
+    ) !void {
+        const left_child_index = self.array.items[index].left_child_index;
+        const right_child_index = self.array.items[index].right_child_index;
+
+        if (left_child_index) |child_index| {
+            // left: 0
+            try self.walk(child_index, translation, value, bit_shift + 1);
+        }
+        if (right_child_index) |child_index| {
+            // right: 1
+            if (bit_shift > 7) unreachable;
+            const one: u8 = 1;
+            const new_bit: u8 = one << bit_shift;
+            const new_bits = value & new_bit;
+            try self.walk(child_index, translation, new_bits, bit_shift + 1);
+        }
+
+        if (left_child_index == null and right_child_index == null) {
+            // Reached leaf
+            if (self.array.items[index].char) |char| {
+                const c_enc = NodeEncoding { .bit_shift = bit_shift, .value = value };
+                try translation.put(char, c_enc);
+            } else {
+                log.err(@src(), "Missing character from leaf node", .{});
+                return HuffmanError.BadTreeStructure;
+            }
+        }
+    }
+
 };

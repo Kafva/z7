@@ -19,7 +19,7 @@ fn run(inputfile: []const u8) !void {
 
     //const in_data = try std.fs.cwd().readFileAlloc(allocator, inputfile, max_size);
     var encoded_array = [_]u8{0} ** max_size;
-    const encoded = std.io.fixedBufferStream(&encoded_array);
+    var encoded = std.io.fixedBufferStream(&encoded_array);
 
     // var decompressed_array = [_]u8{0} ** max_size;
     // var decompressed = std.io.fixedBufferStream(&decompressed_array);
@@ -29,7 +29,7 @@ fn run(inputfile: []const u8) !void {
     huffman.dump(0, huffman.root_index);
 
     try in.seekTo(0);
-    try huffman.encode(reader, encoded);
+    try huffman.encode(allocator, reader, &encoded);
 }
 
 
