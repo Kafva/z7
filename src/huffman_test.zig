@@ -26,8 +26,6 @@ fn run(inputfile: []const u8) !void {
 
     const huffman = try Huffman.init(allocator, reader);
 
-    huffman.dump(0, huffman.array.items.len - 1);
-
     // Reset input stream for second pass
     try in.seekTo(0);
     try huffman.encode(allocator, reader, &encoded);

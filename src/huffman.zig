@@ -2,35 +2,6 @@ const std = @import("std");
 const util = @import("util.zig");
 const log = @import("log.zig");
 
-pub const Node = struct {
-    /// Only leaf nodes contain a character
-    char: ?u8,
-    weight: usize,
-    left_child_index: ?usize,
-    right_child_index: ?usize,
-
-    pub fn desc(_:void, lhs: @This(), rhs: @This()) bool {
-        return lhs.weight > rhs.weight;
-    }
-
-    pub fn dump(self: @This(), comptime level: u8, pos: []const u8) void {
-        const prefix = util.repeat('-', level) catch unreachable;
-
-        if (self.char) |char| {
-            if (std.ascii.isPrint(char) and char != '\n') {
-                log.debug(@src(), "`{s}{s}: {{ .weight = {d}, .char = '{c}' }} [{d}]",
-                                  .{prefix, pos, self.weight, char, level});
-            } else {
-                log.debug(@src(), "`{s}{s}: {{ .weight = {d}, .char = 0x{x} }} [{d}]",
-                                  .{prefix, pos, self.weight, char, level});
-            }
-        } else {
-            log.debug(@src(), "`{s}{s}: {{ .weight = {d} }} [{d}]",
-                              .{prefix, pos, self.weight, level});
-        }
-    }
-};
-
 const HuffmanError = error {
     UnexpectedCharacter,
     UnexpectedEncodedSymbol,
@@ -41,11 +12,73 @@ const HuffmanError = error {
 /// I.e. in the worst-case we need to store a 256-bit value
 const NodeEncoding = struct {
     bit_shift: u8,
-    bits: [4]u64
+    bits: [4]u64,
+
+    pub fn format(
+        self: *const @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype
+    ) !void {
+        if (fmt.len != 0) {
+            return std.fmt.invalidFmtError(fmt, self);
+        }
+
+        if (self.bits[1] == 0 and
+            self.bits[2] == 0 and
+            self.bits[3] == 0) {
+            return writer.print("{{ .bit_shift = {}, .bits = {{ 0b{b} }} }}",
+                                .{self.bit_shift, self.bits[0]});
+        } else {
+            return writer.print("{{ .bit_shift = {}, .bits = {{ 0x{x}, 0x{x}, 0x{x}, 0x{x} }} }}",
+                                .{self.bit_shift, self.bits[0], self.bits[1], self.bits[2], self.bits[3]});
+        }
+    }
+};
+
+pub const Node = struct {
+    /// Only leaf nodes contain a character
+    char: ?u8,
+    weight: usize,
+    left_child_index: ?usize,
+    right_child_index: ?usize,
+
+    /// Descending sort comparison method
+    pub fn desc(_:void, lhs: @This(), rhs: @This()) bool {
+        return lhs.weight > rhs.weight;
+    }
+
+    pub fn format(
+        self: *const @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype
+    ) !void {
+        if (fmt.len != 0) {
+            return std.fmt.invalidFmtError(fmt, self);
+        }
+
+        if (self.char) |char| {
+            if (std.ascii.isPrint(char) and char != '\n') {
+                return writer.print("{{ .weight = {d}, .char = '{c}' }}",
+                                  .{self.weight, char});
+            } else {
+                return writer.print("{{ .weight = {d}, .char = 0x{x} }}",
+                                  .{self.weight, char});
+            }
+        } else {
+            return writer.print("{{ .weight = {d} }}", .{self.weight});
+        }
+    }
+
+    pub fn dump(self: @This(), comptime level: u8, pos: []const u8) void {
+        const prefix = util.repeat('-', level) catch unreachable;
+        log.debug(@src(), "`{s}{s}: {any} [{d}]", .{prefix, pos, self, level});
+        std.heap.page_allocator.free(prefix);
+    }
 };
 
 pub const Huffman = struct {
-
     array: std.ArrayList(Node),
 
     /// Initialize a Huffman tree from the input of the provided `reader`
@@ -142,8 +175,11 @@ pub const Huffman = struct {
 
         // Create the translation map from 1 byte characters onto encoded Huffman symbols.
         var translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);
-        const start_enc = NodeEncoding { .bit_shift = 0, .bits = .{ 0, 0, 0, 0  } };
-        try self.walk_encode(self.array.items.len - 1, &translation, start_enc);
+        try self.walk_generate_translation(self.array.items.len - 1, &translation, .{0, 0, 0, 0}, 0);
+
+        // Dump tree for debugging
+        self.dump_tree(0, self.array.items.len - 1);
+        self.dump_translation(&translation);
 
         while (true) {
             const c = reader.readByte() catch {
@@ -215,28 +251,7 @@ pub const Huffman = struct {
         }
     }
 
-    pub fn dump(self: @This(), comptime level: u8, index: usize) void {
-        // Compile time generated strings are built based on the level
-        if (level == 255) unreachable;
-
-        if (index == self.array.items.len - 1) {
-            log.debug(@src(), "node count: {}", .{self.array.items.len});
-            const node = self.array.items[index];
-            node.dump(0, "root");
-        }
-
-        if (self.array.items[index].left_child_index) |child_index| {
-            const node = self.array.items[child_index];
-            node.dump(level + 1, "0");
-            self.dump(level + 1, child_index);
-        }
-        if (self.array.items[index].right_child_index) |child_index| {
-            const node = self.array.items[child_index];
-            node.dump(level + 1, "1");
-            self.dump(level + 1, child_index);
-        }
-    }
-
+    /// Read bits from the `reader` and return decoded bytes.
     fn walk_decode(
         self: @This(),
         index: usize,
@@ -280,28 +295,28 @@ pub const Huffman = struct {
         }
     }
 
-    fn walk_encode(
+    /// Walk the tree and setup the byte -> encoding mappings used for encoding.
+    fn walk_generate_translation(
         self: @This(),
         index: usize,
         translation: *std.AutoHashMap(u8, NodeEncoding),
-        node_enc: NodeEncoding,
+        node_bits: [4]u64,
+        bit_shift: u8,
     ) !void {
         const left_child_index = self.array.items[index].left_child_index;
         const right_child_index = self.array.items[index].right_child_index;
         // Create a mutable copy
-        var enc = NodeEncoding {
-            .bit_shift = node_enc.bit_shift,
-            .bits = .{
-                node_enc.bits[0],
-                node_enc.bits[1],
-                node_enc.bits[2],
-                node_enc.bits[3],
-            }
+        var bits = .{
+            node_bits[0],
+            node_bits[1],
+            node_bits[2],
+            node_bits[3],
         };
 
         if (left_child_index == null and right_child_index == null) {
             // Reached leaf
             if (self.array.items[index].char) |char| {
+                const enc = NodeEncoding { .bit_shift = bit_shift, .bits = bits };
                 try translation.put(char, enc);
             } else {
                 log.err(@src(), "Missing character from leaf node", .{});
@@ -311,35 +326,72 @@ pub const Huffman = struct {
             if (left_child_index) |child_index| {
                 // left: 0
                 // Nothing to do, all bits start initialised to 0
-                try self.walk_encode(child_index, translation, enc);
+                try self.walk_generate_translation(child_index, translation, bits, bit_shift + 1);
             }
             if (right_child_index) |child_index| {
                 // right: 1
                 const one: u64 = 1;
-                switch (enc.bit_shift) {
+                switch (bit_shift) {
                     0...63 => {
-                        const shift: u6 = @truncate(enc.bit_shift);
+                        const shift: u6 = @intCast(bit_shift);
                         const new_bit: u64 = one << shift;
-                        enc.bits[0] = enc.bits[0] | new_bit;
+                        bits[0] = bits[0] | new_bit;
                     },
                     64...127 => {
-                        const shift: u6 = @intCast(enc.bit_shift - 64);
+                        const shift: u6 = @intCast(bit_shift - 64);
                         const new_bit: u64 = one << shift;
-                        enc.bits[1] = enc.bits[1] | new_bit;
+                        bits[1] = bits[1] | new_bit;
                     },
                     128...191 => {
-                        const shift: u6 = @intCast(enc.bit_shift - 128);
+                        const shift: u6 = @intCast(bit_shift - 128);
                         const new_bit: u64 = one << shift;
-                        enc.bits[2] = enc.bits[2] | new_bit;
+                        bits[2] = bits[2] | new_bit;
                     },
                     192...255 => {
-                        const shift: u6 = @intCast(enc.bit_shift - 192);
+                        const shift: u6 = @intCast(bit_shift - 192);
                         const new_bit: u64 = one << shift;
-                        enc.bits[3] = enc.bits[3] | new_bit;
+                        bits[3] = bits[3] | new_bit;
                     },
                 }
-                try self.walk_encode(child_index, translation, enc);
+                try self.walk_generate_translation(child_index, translation, bits, bit_shift + 1);
             }
         }
     }
+
+    fn dump_tree(self: @This(), comptime level: u8, index: usize) void {
+        // Compile time generated strings are built based on the level
+        if (level == 255) unreachable;
+
+        if (index == self.array.items.len - 1) {
+            log.debug(@src(), "node count: {}", .{self.array.items.len});
+            const node = self.array.items[index];
+            node.dump(0, "root");
+        }
+
+        if (self.array.items[index].left_child_index) |child_index| {
+            const node = self.array.items[child_index];
+            node.dump(level + 1, "0");
+            self.dump_tree(level + 1, child_index);
+        }
+        if (self.array.items[index].right_child_index) |child_index| {
+            const node = self.array.items[child_index];
+            node.dump(level + 1, "1");
+            self.dump_tree(level + 1, child_index);
+        }
+    }
+
+    fn dump_translation(self: @This(), translation: *const std.AutoHashMap(u8, NodeEncoding)) void {
+        _ = self;
+        var keys = translation.keyIterator();
+        while (keys.next()) |char| {
+            if (translation.get(char.*)) |enc| {
+                if (std.ascii.isPrint(char.*) and char.* != '\n') {
+                    log.debug(@src(), "'{c}' -> {any}", .{char.*, enc});
+                } else {
+                    log.debug(@src(), "0x{x} -> {any}", .{char.*, enc});
+                }
+            }
+        }
+    }
+
 };
