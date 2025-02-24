@@ -170,6 +170,9 @@ pub const Huffman = struct {
         reader: anytype,
         outstream: anytype
     ) !void {
+        if (self.array.items.len == 0) {
+            return;
+        }
         var writer = std.io.bitWriter(.little, outstream.writer());
         var written_bits: usize = 0;
 
@@ -225,6 +228,9 @@ pub const Huffman = struct {
     }
 
     pub fn decode(self: @This(), instream: anytype, outstream: anytype) !void {
+        if (self.array.items.len == 0) {
+            return;
+        }
         // The input stream position should point to the last input element
         const end = instream.pos * 8;
         var pos: usize = 0;
@@ -363,7 +369,7 @@ pub const Huffman = struct {
         if (level == 255) unreachable;
 
         if (index == self.array.items.len - 1) {
-            log.debug(@src(), "node count: {}", .{self.array.items.len});
+            log.debug(@src(), "complete tree node count: {}", .{self.array.items.len});
             const node = self.array.items[index];
             node.dump(0, "root");
         }
@@ -393,5 +399,4 @@ pub const Huffman = struct {
             }
         }
     }
-
 };
