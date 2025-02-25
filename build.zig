@@ -83,6 +83,7 @@ fn build_tests(
 
     const tests_run = b.addRunArtifact(tests);
     const tests_install = b.addInstallArtifact(tests, .{});
+    // TODO running the tests like this hides some important output...
     const tests_step = b.step("test", "Run unit tests");
 
     tests.step.dependOn(&go_run.step);

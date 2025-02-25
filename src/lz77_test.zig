@@ -9,12 +9,12 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const in = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
-    defer in.close();
-    const in_size = (try in.stat()).size;
-    const reader = in.reader();
+    var in_size: usize = undefined;
+    var in_data = [_]u8{0} ** max_size;
 
-    const in_data = try std.fs.cwd().readFileAlloc(allocator, inputfile, max_size);
+    const in = try util.read_input(inputfile, &in_data[0..], &in_size);
+    defer in.close();
+    const reader = in.reader();
 
     // Sanity check
     try std.testing.expect(in_size <= max_size);
@@ -55,3 +55,7 @@ test "lz77 on 9001 repeated characters" {
 test "lz77 on rfc1951.txt" {
     try run("tests/testdata/rfc1951.txt", 8, 64);
 }
+
+// test "lz77 on random data" {
+//     try run(util.random_label, 4, 6);
+// }

@@ -9,15 +9,16 @@ fn run(inputfile: []const u8) !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const in = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
+    var in_size: usize = undefined;
+    var in_data = [_]u8{0} ** max_size;
+
+    const in = try util.read_input(inputfile, &in_data[0..], &in_size);
     defer in.close();
-    const in_size = (try in.stat()).size;
     const reader = in.reader();
 
     // Sanity check
     try std.testing.expect(in_size <= max_size);
 
-    const in_data = try std.fs.cwd().readFileAlloc(allocator, inputfile, max_size);
     var encoded_array = [_]u8{0} ** max_size;
     var encoded = std.io.fixedBufferStream(&encoded_array);
 
