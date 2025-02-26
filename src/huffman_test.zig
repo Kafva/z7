@@ -14,7 +14,8 @@ fn run(inputfile: []const u8) !void {
     var in: std.fs.File = undefined;
 
     if (std.mem.eql(u8, inputfile, util.random_label)) {
-        in = try util.read_random(&in_data[0..], &in_size);
+        in_size = 128;
+        in = try util.read_random(&in_data[0..], in_size);
     } else {
         in = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
         in_size = (try in.stat()).size;
@@ -38,7 +39,7 @@ fn run(inputfile: []const u8) !void {
     // Reset input stream for second pass
     try in.seekTo(0);
     try huffman.encode(allocator, reader, &encoded);
-    try util.log_result("huffman", inputfile, encoded.pos);
+    try util.log_result("huffman", inputfile, in_size, encoded.pos);
 
     try huffman.decode(&encoded, &decoded);
 
@@ -62,3 +63,6 @@ test "Huffman on rfc1951.txt" {
     try run("tests/testdata/rfc1951.txt");
 }
 
+test "Huffman on random data" {
+    try run(util.random_label);
+}

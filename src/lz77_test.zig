@@ -14,7 +14,8 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     var in: std.fs.File = undefined;
 
     if (std.mem.eql(u8, inputfile, util.random_label)) {
-        in = try util.read_random(&in_data[0..], &in_size);
+        in_size = 128;
+        in = try util.read_random(&in_data[0..], in_size);
     } else {
         in = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
         in_size = (try in.stat()).size;
@@ -40,7 +41,7 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     };
 
     try lz77.compress(reader, &compressed);
-    try util.log_result("lz77", inputfile, compressed.pos);
+    try util.log_result("lz77", inputfile, in_size, compressed.pos);
 
     try lz77.decompress(&compressed, &decompressed);
 
@@ -48,21 +49,21 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     try std.testing.expectEqualSlices(u8, in_data[0..in_size], decompressed_array[0..in_size]);
 }
 
-// test "lz77 on empty file" {
-//     try run("tests/testdata/empty", 4, 6);
-// }
+test "lz77 on empty file" {
+    try run("tests/testdata/empty", 4, 6);
+}
 
-// test "lz77 on simple text" {
-//     try run("tests/testdata/simple.txt", 4, 6);
-// }
+test "lz77 on simple text" {
+    try run("tests/testdata/simple.txt", 4, 6);
+}
 
-// test "lz77 on 9001 repeated characters" {
-//     try run("tests/testdata/over_9000_a.txt", 32, 128);
-// }
+test "lz77 on 9001 repeated characters" {
+    try run("tests/testdata/over_9000_a.txt", 32, 128);
+}
 
-// test "lz77 on rfc1951.txt" {
-//     try run("tests/testdata/rfc1951.txt", 8, 64);
-// }
+test "lz77 on rfc1951.txt" {
+    try run("tests/testdata/rfc1951.txt", 8, 64);
+}
 
 test "lz77 on random data" {
     try run(util.random_label, 4, 6);
