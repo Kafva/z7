@@ -11,8 +11,16 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
 
     var in_size: usize = undefined;
     var in_data = [_]u8{0} ** max_size;
+    var in: std.fs.File = undefined;
 
-    const in = try util.read_input(inputfile, &in_data[0..], &in_size);
+    if (std.mem.eql(u8, inputfile, util.random_label)) {
+        in = try util.read_random(&in_data[0..], &in_size);
+    } else {
+        in = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
+        in_size = (try in.stat()).size;
+        _ = try std.fs.cwd().readFile(inputfile, &in_data);
+    }
+
     defer in.close();
     const reader = in.reader();
 

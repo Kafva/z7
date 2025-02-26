@@ -81,14 +81,14 @@ fn build_tests(
         },
     }
 
-    const tests_run = b.addRunArtifact(tests);
+    // Just *build* the unit tests, want to run them separately, not with
+    // `.addRunArtifact()`, running the tests directly from `zig build` can
+    // obscure some important output
     const tests_install = b.addInstallArtifact(tests, .{});
-    // TODO running the tests like this hides some important output...
-    const tests_step = b.step("test", "Run unit tests");
+    const tests_step = b.step("test", "Build unit tests");
 
     tests.step.dependOn(&go_run.step);
-    tests_run.step.dependOn(&tests_install.step);
-    tests_step.dependOn(&tests_run.step);
+    tests_step.dependOn(&tests_install.step);
 }
 
 pub fn build(b: *std.Build) void {
