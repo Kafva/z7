@@ -41,9 +41,17 @@ fn build_tests(
     optimize: std.builtin.OptimizeMode,
     build_options: *std.Build.Step.Options,
 ) void {
+    // Support overriding the test file via `zig build test -- <file>`
+    var root_source_file: []const u8 = "src/test.zig";
+    if (b.args) |args| {
+        for (args) |arg| {
+            root_source_file = arg;
+        }
+    }
+
     const tests = b.addTest(.{
         .name = "z7-test",
-        .root_source_file = b.path("src/test.zig"),
+        .root_source_file = b.path(root_source_file),
         .target = target,
         .optimize = optimize,
     });
@@ -81,9 +89,10 @@ fn build_tests(
         },
     }
 
-    // Just *build* the unit tests, want to run them separately, not with
+    // Just *build* the unit tests, we want to run them separately, not with
     // `.addRunArtifact()`, running the tests directly from `zig build` can
-    // obscure some important output
+    // obscure some important output, e.g.
+    //   1/1 lz77_test.test.lz77 on random data...FAIL (NoSpaceLeft)
     const tests_install = b.addInstallArtifact(tests, .{});
     const tests_step = b.step("test", "Build unit tests");
 
@@ -95,7 +104,7 @@ pub fn build(b: *std.Build) void {
     // Let the user choose the build target
     const target = b.standardTargetOptions(.{});
 
-    // Let the user choose optimziation level
+    // Let the user choose optimization level
     const optimize = b.standardOptimizeOption(.{});
 
     // Configure build options

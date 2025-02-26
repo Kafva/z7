@@ -48,22 +48,22 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     try std.testing.expectEqualSlices(u8, in_data[0..in_size], decompressed_array[0..in_size]);
 }
 
-test "lz77 on empty file" {
-    try run("tests/testdata/empty", 4, 6);
-}
-
-test "lz77 on simple text" {
-    try run("tests/testdata/simple.txt", 4, 6);
-}
-
-test "lz77 on 9001 repeated characters" {
-    try run("tests/testdata/over_9000_a.txt", 32, 128);
-}
-
-test "lz77 on rfc1951.txt" {
-    try run("tests/testdata/rfc1951.txt", 8, 64);
-}
-
-// test "lz77 on random data" {
-//     try run(util.random_label, 4, 6);
+// test "lz77 on empty file" {
+//     try run("tests/testdata/empty", 4, 6);
 // }
+
+// test "lz77 on simple text" {
+//     try run("tests/testdata/simple.txt", 4, 6);
+// }
+
+// test "lz77 on 9001 repeated characters" {
+//     try run("tests/testdata/over_9000_a.txt", 32, 128);
+// }
+
+// test "lz77 on rfc1951.txt" {
+//     try run("tests/testdata/rfc1951.txt", 8, 64);
+// }
+
+test "lz77 on random data" {
+    try run(util.random_label, 4, 6);
+}
