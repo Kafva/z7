@@ -14,23 +14,26 @@ pub fn log_result(
     var sign: []const u8 = undefined;
 
     if (new_size > in_size) {
-        // Very bad compression xD
         k = @floatFromInt(new_size - in_size);
-        sign = "+";
+        sign = "\x1b[91m+";
     } else {
         k = @floatFromInt(in_size - new_size);
-        sign = "-";
+        sign = "\x1b[92m-";
     }
     const m: f64 = @floatFromInt(in_size);
     const percent = if (m == 0) 0.0 else 100 * (k / m);
-    log.info(@src(), "{d:8} -> {d:8} ({s}{d:4.1} %) [{s}({s})]",
-                     .{in_size, new_size, sign, percent, name, filename});
+    std.debug.print("{d:8} -> {d:8} ({s}{d:4.1}\x1b[0m %) [{s}({s})]\n",
+                    .{in_size, new_size, sign, percent, name, filename});
 }
 
 pub fn read_random(data: *const []u8, count: usize) !std.fs.File {
     var in: std.fs.File = undefined;
 
-    var prng = std.Random.DefaultPrng.init(0);
+    var prng = std.rand.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
     const random = prng.random();
 
     std.Random.bytes(random, data.*[0..count]);

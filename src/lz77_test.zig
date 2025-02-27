@@ -14,6 +14,7 @@ fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !vo
     var in: std.fs.File = undefined;
 
     if (std.mem.eql(u8, inputfile, util.random_label)) {
+        // The "compressed" output from this is larger than the input!
         in_size = 128;
         in = try util.read_random(&in_data[0..], in_size);
     } else {

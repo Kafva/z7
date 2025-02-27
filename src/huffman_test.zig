@@ -2,7 +2,26 @@ const std = @import("std");
 const util = @import("util_test.zig");
 const Huffman = @import("huffman.zig").Huffman;
 
-const max_size = 50000;
+const max_size = 70000;
+
+fn run_dir(dirpath: []const u8) !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    var dir = try std.fs.cwd().openDir(dirpath, .{});
+    defer dir.close();
+    var iter = dir.iterate();
+
+    while (try iter.next()) |entry| {
+        if (entry.kind != .file) {
+            continue;
+        }
+        const buf = try std.fmt.allocPrint(allocator, "{s}/{s}", .{dirpath, entry.name});
+        try run(buf);
+        allocator.free(buf);
+    }
+}
 
 fn run(inputfile: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -66,3 +85,11 @@ test "Huffman on rfc1951.txt" {
 test "Huffman on random data" {
     try run(util.random_label);
 }
+
+test "Huffman on fuzzing testdata from zig stdlib" {
+    try run_dir("tests/testdata/zig/fuzz");
+}
+
+// test "Huffman on block writer testdata from zig stdlib" {
+//     try run_dir("tests/testdata/zig/block_writer");
+// }
