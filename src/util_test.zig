@@ -13,7 +13,11 @@ pub fn log_result(
     var k: f64 = undefined;
     var sign: []const u8 = undefined;
 
-    if (new_size > in_size) {
+    if (new_size == in_size) {
+        k = 0.0;
+        sign = "";
+    }
+    else if (new_size > in_size) {
         k = @floatFromInt(new_size - in_size);
         sign = "\x1b[91m+";
     } else {

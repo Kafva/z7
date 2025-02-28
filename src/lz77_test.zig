@@ -2,13 +2,44 @@ const std = @import("std");
 const util = @import("util_test.zig");
 const Lz77 = @import("lz77.zig").Lz77;
 
-const max_size = 50000;
+const max_size = 512*1024; // 0.5 MB
+
+fn runDir(
+    dirpath: []const u8,
+    lookahead_length: usize,
+    window_length: usize
+) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var dir = try std.fs.cwd().openDir(dirpath, .{});
+    defer dir.close();
+    var iter = dir.iterate();
+
+    while (try iter.next()) |entry| {
+        if (entry.kind != .file) {
+            continue;
+        }
+        const buf = try std.fmt.allocPrint(allocator, "{s}/{s}", .{dirpath, entry.name});
+        try runAlloc(allocator, buf, lookahead_length, window_length);
+    }
+}
 
 fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    try runAlloc(allocator, inputfile, lookahead_length, window_length);
+}
+
+fn runAlloc(
+    allocator: std.mem.Allocator,
+    inputfile: []const u8,
+    lookahead_length: usize,
+    window_length: usize
+) !void {
     var in_size: usize = undefined;
     var in_data = [_]u8{0} ** max_size;
     var in: std.fs.File = undefined;
@@ -68,4 +99,12 @@ test "lz77 on rfc1951.txt" {
 
 test "lz77 on random data" {
     try run(util.random_label, 4, 6);
+}
+
+test "lz77 on fuzzing testdata from zig stdlib" {
+    try runDir("tests/testdata/zig/fuzz", 8, 64);
+}
+
+test "lz77 on block writer testdata from zig stdlib" {
+    try runDir("tests/testdata/zig/block_writer", 8, 64);
 }

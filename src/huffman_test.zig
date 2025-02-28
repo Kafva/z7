@@ -2,12 +2,12 @@ const std = @import("std");
 const util = @import("util_test.zig");
 const Huffman = @import("huffman.zig").Huffman;
 
-const max_size = 70000;
+const max_size = 512*1024; // 0.5 MB
 
-fn run_dir(dirpath: []const u8) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    defer _ = gpa.deinit();
+fn runDir(dirpath: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     var dir = try std.fs.cwd().openDir(dirpath, .{});
     defer dir.close();
@@ -18,8 +18,7 @@ fn run_dir(dirpath: []const u8) !void {
             continue;
         }
         const buf = try std.fmt.allocPrint(allocator, "{s}/{s}", .{dirpath, entry.name});
-        try run(buf);
-        allocator.free(buf);
+        try runAlloc(allocator, buf);
     }
 }
 
@@ -27,7 +26,10 @@ fn run(inputfile: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    try runAlloc(allocator, inputfile);
+}
 
+fn runAlloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
     var in_size: usize = undefined;
     var in_data = [_]u8{0} ** max_size;
     var in: std.fs.File = undefined;
@@ -87,9 +89,9 @@ test "Huffman on random data" {
 }
 
 test "Huffman on fuzzing testdata from zig stdlib" {
-    try run_dir("tests/testdata/zig/fuzz");
+    try runDir("tests/testdata/zig/fuzz");
 }
 
-// test "Huffman on block writer testdata from zig stdlib" {
-//     try run_dir("tests/testdata/zig/block_writer");
-// }
+test "Huffman on block writer testdata from zig stdlib" {
+    try runDir("tests/testdata/zig/block_writer");
+}
