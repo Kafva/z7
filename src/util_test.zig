@@ -3,6 +3,27 @@ const log = @import("log.zig");
 
 pub const random_label = "RANDOM";
 
+pub fn list_files(
+    allocator: std.mem.Allocator,
+    dirpath: []const u8,
+) !std.ArrayList([]const u8) {
+    var dir = try std.fs.cwd().openDir(dirpath, .{});
+    defer dir.close();
+    var iter = dir.iterate();
+
+    var list = std.ArrayList([]const u8).init(allocator);
+
+    while (try iter.next()) |entry| {
+        if (entry.kind != .file) {
+            continue;
+        }
+        const buf = try std.fmt.allocPrint(allocator, "{s}/{s}", .{dirpath, entry.name});
+        try list.append(buf);
+    }
+
+    return list;
+}
+
 pub fn log_result(
     name: []const u8,
     inputfile: []const u8,

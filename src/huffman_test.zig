@@ -4,32 +4,14 @@ const Huffman = @import("huffman.zig").Huffman;
 
 const max_size = 512*1024; // 0.5 MB
 
-fn runDir(dirpath: []const u8) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    var dir = try std.fs.cwd().openDir(dirpath, .{});
-    defer dir.close();
-    var iter = dir.iterate();
-
-    while (try iter.next()) |entry| {
-        if (entry.kind != .file) {
-            continue;
-        }
-        const buf = try std.fmt.allocPrint(allocator, "{s}/{s}", .{dirpath, entry.name});
-        try runAlloc(allocator, buf);
-    }
-}
-
 fn run(inputfile: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    try runAlloc(allocator, inputfile);
+    try run_alloc(allocator, inputfile);
 }
 
-fn runAlloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
+fn run_alloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
     var in_size: usize = undefined;
     var in_data = [_]u8{0} ** max_size;
     var in: std.fs.File = undefined;
@@ -68,6 +50,18 @@ fn runAlloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
     try std.testing.expectEqualSlices(u8, in_data[0..in_size], decoded_array[0..in_size]);
 }
 
+fn run_dir(dirpath: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const filepaths = try util.list_files(allocator, dirpath);
+
+    for (filepaths.items) |filepath| {
+        try run_alloc(allocator, filepath);
+    }
+}
+
 test "Huffman on empty file" {
     try run("tests/testdata/empty");
 }
@@ -89,9 +83,9 @@ test "Huffman on random data" {
 }
 
 test "Huffman on fuzzing testdata from zig stdlib" {
-    try runDir("tests/testdata/zig/fuzz");
+    try run_dir("tests/testdata/zig/fuzz");
 }
 
 test "Huffman on block writer testdata from zig stdlib" {
-    try runDir("tests/testdata/zig/block_writer");
+    try run_dir("tests/testdata/zig/block_writer");
 }

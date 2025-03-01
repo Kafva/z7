@@ -4,37 +4,15 @@ const Lz77 = @import("lz77.zig").Lz77;
 
 const max_size = 512*1024; // 0.5 MB
 
-fn runDir(
-    dirpath: []const u8,
-    lookahead_length: usize,
-    window_length: usize
-) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    var dir = try std.fs.cwd().openDir(dirpath, .{});
-    defer dir.close();
-    var iter = dir.iterate();
-
-    while (try iter.next()) |entry| {
-        if (entry.kind != .file) {
-            continue;
-        }
-        const buf = try std.fmt.allocPrint(allocator, "{s}/{s}", .{dirpath, entry.name});
-        try runAlloc(allocator, buf, lookahead_length, window_length);
-    }
-}
-
 fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    try runAlloc(allocator, inputfile, lookahead_length, window_length);
+    try run_alloc(allocator, inputfile, lookahead_length, window_length);
 }
 
-fn runAlloc(
+fn run_alloc(
     allocator: std.mem.Allocator,
     inputfile: []const u8,
     lookahead_length: usize,
@@ -45,7 +23,6 @@ fn runAlloc(
     var in: std.fs.File = undefined;
 
     if (std.mem.eql(u8, inputfile, util.random_label)) {
-        // The "compressed" output from this is larger than the input!
         in_size = 128;
         in = try util.read_random(&in_data[0..], in_size);
     } else {
@@ -81,6 +58,22 @@ fn runAlloc(
     try std.testing.expectEqualSlices(u8, in_data[0..in_size], decompressed_array[0..in_size]);
 }
 
+fn run_dir(
+    dirpath: []const u8,
+    lookahead_length: usize,
+    window_length: usize
+) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const filepaths = try util.list_files(allocator, dirpath);
+
+    for (filepaths.items) |filepath| {
+        try run_alloc(allocator, filepath, lookahead_length, window_length);
+    }
+}
+
 test "lz77 on empty file" {
     try run("tests/testdata/empty", 4, 6);
 }
@@ -102,9 +95,9 @@ test "lz77 on random data" {
 }
 
 test "lz77 on fuzzing testdata from zig stdlib" {
-    try runDir("tests/testdata/zig/fuzz", 8, 64);
+    try run_dir("tests/testdata/zig/fuzz", 8, 64);
 }
 
 test "lz77 on block writer testdata from zig stdlib" {
-    try runDir("tests/testdata/zig/block_writer", 8, 64);
+    try run_dir("tests/testdata/zig/block_writer", 8, 64);
 }
