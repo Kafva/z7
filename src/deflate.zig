@@ -5,7 +5,8 @@
 /// deflate: https://www.ietf.org/rfc/rfc1951.txt
 ///
 /// The deflate algorithm uses a variant Huffman encoding and LZ77.
-/// There is no rfc for LZ77 (Lempel-Ziv), it is an old algorithm from the '70s.
+/// There is no rfc for LZ77 (Lempel-Ziv), it is an old algorithm from the '70s
+/// with many different implentation variants.
 ///
 /// Deflate performs compression on a per-block basis, the block sizes are
 /// *arbitrary* but an uncompressed block can not be larger than 2**16 (2 byte

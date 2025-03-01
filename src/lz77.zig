@@ -19,8 +19,8 @@ const Codeword = struct {
 /// sliding window and a lookahead buffer to find and replace repeated patterns
 /// in a data stream with pointers.
 ///
-/// LZ77 is allowed to have back-references across block boundaries (32K or less
-/// steps back is the limit for deflate)
+/// LZ77 is allowed to have back-references across block boundaries of 32K or less
+/// steps back in deflate.
 ///
 /// About autocomplete for 'anytype'
 /// https://github.com/zigtools/zls/discussions/1506

@@ -47,7 +47,7 @@ pub fn log_result(
     }
     const m: f64 = @floatFromInt(in_size);
     const percent = if (m == 0) 0.0 else 100 * (k / m);
-    std.debug.print("{d:8} -> {d:8} ({s}{d:4.1}\x1b[0m %) [{s}({s})]\n",
+    std.debug.print("{d:<7} -> {d:<7} ({s}{d:4.1}\x1b[0m %) [{s}({s})]\n",
                     .{in_size, new_size, sign, percent, name, filename});
 }
 

@@ -24,7 +24,7 @@ func DeflateHuffmanOnly(input []uint8, output []uint8) int {
     w.Write(input)
     w.Close()
 
-    for i := 0; i < len(output); i++ {
+    for i := range output {
         b, err := buf.ReadByte()
         if err == io.EOF {
             return i
@@ -114,7 +114,7 @@ func dump(b []byte) {
 }
 
 func arrayEquals(arr1 []byte, arr2 []byte) bool {
-    for i := 0; i < len(arr1); i++ {
+    for i := range arr1 {
         if arr1[i] != arr2[i] {
             return false
         }
