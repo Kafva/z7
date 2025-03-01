@@ -36,6 +36,10 @@ const usage =
     \\
 ;
 
+const Z7Error = error {
+    InputFileMissingExtension
+};
+
 pub fn main() !u8 {
     // For one-shot programs, an arena allocator is useful, it allows us
     // to do allocations and free everything at once with
@@ -60,7 +64,7 @@ pub fn main() !u8 {
         return 0;
     }
     log.enable_debug = opts[flag_v].value.active;
-    log.debug(@src(), "Starting z7 {s}", .{build_options.version});
+    log.debug(@src(), "starting z7 {s}", .{build_options.version});
 
     if (first_arg) |inputfile| {
         const flate = Flate {
@@ -73,44 +77,32 @@ pub fn main() !u8 {
                 break :blk std.io.getStdIn();
             }
             else {
-                const file = try std.fs.cwd().openFile(inputfile, .{});
+                const file = std.fs.cwd().openFile(inputfile, .{}) catch |err| {
+                    log.err(@src(), "failed to open input file: {any}", .{err});
+                    return 1;
+                };
                 break :blk file;
             }
         };
         defer instream.close();
 
-        const outstream = blk: {
-            if (opts[flag_c].value.active) {
-                break :blk std.io.getStdOut();
+        const outstream = open_output(allocator, inputfile) catch |err| {
+            switch (err) {
+                Z7Error.InputFileMissingExtension =>
+                    log.err(@src(), "input file is missing .gz extension", .{}),
+                else => {
+                    log.err(@src(), "failed to open output file: {any}", .{err});
+                }
             }
-            else {
-                const outfile = inner_blk: {
-                    if (opts[flag_d].value.active) {
-                        if (inputfile.len <= 3) {
-                            log.err(@src(), "Input file is missing .gz extension", .{});
-                            return 1;
-                        }
-                        const suffix = inputfile[inputfile.len - 2..];
-                        if (!std.mem.eql(u8, suffix, ".gz")) {
-                            log.err(@src(), "Input file is missing .gz extension", .{});
-                            return 1;
-                        }
-                        break :inner_blk inputfile[0..inputfile.len - 3];
-                    } else {
-                        break :inner_blk try std.fmt.allocPrint(allocator,
-                                                                "{s}.gz", .{inputfile});
-                    }
-                };
-                break :blk try std.fs.cwd().openFile(outfile, .{});
-            }
+            return 1;
         };
         defer outstream.close();
 
         if (opts[flag_d].value.active) {
-            log.debug(@src(), "Decompressing: {s}", .{inputfile});
+            log.debug(@src(), "decompressing: {s}", .{inputfile});
             try flate.decompress(instream, outstream);
         } else {
-            log.debug(@src(), "Compressing: {s}", .{inputfile});
+            log.debug(@src(), "compressing: {s}", .{inputfile});
             try flate.compress(instream, outstream);
         }
     } else {
@@ -118,4 +110,28 @@ pub fn main() !u8 {
     }
 
     return 0;
+}
+
+fn open_output(allocator: std.mem.Allocator, inputfile: []const u8) !std.fs.File {
+    if (opts[flag_c].value.active) {
+        return std.io.getStdOut();
+    }
+    else {
+        const outfile = blk: {
+            if (opts[flag_d].value.active) {
+                if (inputfile.len <= 3) {
+                    return Z7Error.InputFileMissingExtension;
+                }
+                const suffix = inputfile[inputfile.len - 3..];
+                if (!std.mem.eql(u8, suffix, ".gz")) {
+                    return Z7Error.InputFileMissingExtension;
+                }
+                break :blk inputfile[0..inputfile.len - 3];
+            } else {
+                break :blk try std.fmt.allocPrint(allocator,
+                                                  "{s}.gz", .{inputfile});
+            }
+        };
+        return try std.fs.cwd().createFile(outfile, .{});
+    }
 }
