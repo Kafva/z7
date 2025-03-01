@@ -2,6 +2,21 @@ const std = @import("std");
 const log = @import("log.zig");
 
 pub const random_label = "RANDOM";
+const max_size = 512*1024; // 0.5 MB
+
+pub fn setup(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, inputfile: []const u8,  in: *std.fs.File, in_size: *usize, compressed: *std.fs.File, decompressed: *std.fs.File) !void {
+    compressed.* = try tmp.dir.createFile("compressed.bin", .{ .read = true });
+    decompressed.* = try tmp.dir.createFile("decompressed.bin", .{ .read = true });
+
+    in.* = blk: {
+        if (std.mem.eql(u8, inputfile, random_label)) {
+            break :blk try read_random(allocator, tmp, 128);
+        } else {
+            break :blk try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
+        }
+    };
+    in_size.* = (try in.stat()).size;
+}
 
 pub fn list_files(
     allocator: std.mem.Allocator,
@@ -51,9 +66,17 @@ pub fn log_result(
                     .{in_size, new_size, sign, percent, name, filename});
 }
 
-pub fn read_random(data: *const []u8, count: usize) !std.fs.File {
-    var in: std.fs.File = undefined;
+pub fn eql(allocator: std.mem.Allocator, lhs: std.fs.File, rhs: std.fs.File) !void {
+    const lhs_data = try lhs.readToEndAlloc(allocator, max_size);
+    const rhs_data = try rhs.readToEndAlloc(allocator, max_size);
+    try std.testing.expectEqualSlices(u8, lhs_data, rhs_data);
+}
 
+fn read_random(
+    allocator: std.mem.Allocator,
+    tmp: *std.testing.TmpDir,
+    count: usize
+) !std.fs.File {
     var prng = std.rand.DefaultPrng.init(blk: {
         var seed: u64 = undefined;
         try std.posix.getrandom(std.mem.asBytes(&seed));
@@ -61,17 +84,13 @@ pub fn read_random(data: *const []u8, count: usize) !std.fs.File {
     });
     const random = prng.random();
 
-    std.Random.bytes(random, data.*[0..count]);
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const data = try allocator.alloc(u8, count);
+    std.Random.bytes(random, data);
 
     var infile = try tmp.dir.createFile("random.bin", .{});
-    try infile.writeAll(data.*[0..count]);
+    try infile.writeAll(data);
     infile.close();
 
-    in = try tmp.dir.openFile("random.bin", .{ .mode = .read_only });
-
-    return in;
+    return try tmp.dir.openFile("random.bin", .{ .mode = .read_only });
 }
 

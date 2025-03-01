@@ -165,7 +165,7 @@ pub const Huffman = struct {
         return @This(){ .array = array };
     }
 
-    pub fn encode(
+    pub fn compress(
         self: @This(),
         allocator: std.mem.Allocator,
         instream: std.fs.File,
@@ -229,12 +229,12 @@ pub const Huffman = struct {
         log.debug(@src(), "wrote {} bits [{} bytes]", .{written_bits, written_bits / 8});
     }
 
-    pub fn decode(self: @This(), instream: anytype, outstream: anytype) !void {
+    pub fn decompress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
         if (self.array.items.len == 0) {
             return;
         }
         // The input stream position should point to the last input element
-        const end = instream.pos * 8;
+        const end = (try instream.getPos()) * 8;
         var pos: usize = 0;
 
         // Start from the first element in both streams
