@@ -4,8 +4,7 @@ const build_options = @import("build_options");
 const log = @import("log.zig");
 const Flag = @import("flags.zig").Flag;
 const FlagIterator = @import("flags.zig").FlagIterator;
-const deflate = @import("deflate.zig").deflate;
-const inflate = @import("inflate.zig").inflate;
+const Flate = @import("flate.zig").Flate;
 
 const opt_h = "help";
 const opt_V = "version";
@@ -19,6 +18,11 @@ var opts = [_]Flag{
     .{ .short = 'd', .long = opt_d, .value = .{ .active = false } },
     .{ .short = 'c', .long = opt_c, .value = .{ .active = false } },
 };
+const flag_h = 0;
+const flag_V = 1;
+const flag_v = 2;
+const flag_d = 3;
+const flag_c = 4;
 
 const usage =
     \\Usage: z7 [OPTION]... [FILE]...
@@ -46,32 +50,68 @@ pub fn main() !u8 {
     var flags = FlagIterator(std.process.ArgIterator){ .iter = &args };
     const first_arg = try flags.parse(&opts);
 
-    if (opts[0].value.active) {
+    if (opts[flag_h].value.active) {
         try stdout.writeAll(usage);
         return 0;
     }
-    if (opts[1].value.active) {
+    if (opts[flag_V].value.active) {
         try stdout.writeAll(build_options.version);
         try stdout.writeAll("\n");
         return 0;
     }
-    log.enable_debug = opts[2].value.active;
+    log.enable_debug = opts[flag_v].value.active;
     log.debug(@src(), "Starting z7 {s}", .{build_options.version});
 
-    if (first_arg) |a| {
-        const file = try std.fs.cwd().openFile(a, .{});
-        defer file.close();
-
-        const buffer_size = 1024;
-        const buf = file.readToEndAlloc(allocator, buffer_size) catch |err| {
-            log.err(@src(), "Error reading {s}: {any}", .{ a, err });
-            return 1;
+    if (first_arg) |inputfile| {
+        const flate = Flate {
+            .allocator = allocator,
+            .lookahead_length = 32,
+            .window_length = 128,
         };
+        const instream = blk: {
+            if (std.mem.eql(u8, inputfile, "-")) {
+                break :blk std.io.getStdIn();
+            }
+            else {
+                const file = try std.fs.cwd().openFile(inputfile, .{});
+                break :blk file;
+            }
+        };
+        defer instream.close();
 
-        if (opts[4].value.active) {
-            try inflate(buf);
+        const outstream = blk: {
+            if (opts[flag_c].value.active) {
+                break :blk std.io.getStdOut();
+            }
+            else {
+                const outfile = inner_blk: {
+                    if (opts[flag_d].value.active) {
+                        if (inputfile.len <= 3) {
+                            log.err(@src(), "Input file is missing .gz extension", .{});
+                            return 1;
+                        }
+                        const suffix = inputfile[inputfile.len - 2..];
+                        if (!std.mem.eql(u8, suffix, ".gz")) {
+                            log.err(@src(), "Input file is missing .gz extension", .{});
+                            return 1;
+                        }
+                        break :inner_blk inputfile[0..inputfile.len - 3];
+                    } else {
+                        break :inner_blk try std.fmt.allocPrint(allocator,
+                                                                "{s}.gz", .{inputfile});
+                    }
+                };
+                break :blk try std.fs.cwd().openFile(outfile, .{});
+            }
+        };
+        defer outstream.close();
+
+        if (opts[flag_d].value.active) {
+            log.debug(@src(), "Decompressing: {s}", .{inputfile});
+            try flate.decompress(instream, outstream);
         } else {
-            try deflate(buf);
+            log.debug(@src(), "Compressing: {s}", .{inputfile});
+            try flate.compress(instream, outstream);
         }
     } else {
         try stdout.writeAll(usage);

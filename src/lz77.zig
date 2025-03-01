@@ -29,9 +29,10 @@ pub const Lz77 = struct {
     lookahead_length: usize,
     allocator: std.mem.Allocator,
 
-    pub fn compress(self: @This(), reader: anytype, outstream: anytype) !void {
+    pub fn compress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
         var done = false;
         var writer = std.io.bitWriter(.little, outstream.writer());
+        const reader = instream.reader();
 
         var sliding_window = try std.RingBuffer.init(self.allocator, self.window_length);
         defer sliding_window.deinit(self.allocator);
@@ -125,9 +126,9 @@ pub const Lz77 = struct {
         try writer.flushBits();
     }
 
-    pub fn decompress(self: @This(), instream: anytype, outstream: anytype) !void {
+    pub fn decompress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
         // The input stream position should point to the last input element
-        const end = instream.pos * 8;
+        const end = (try instream.getPos()) * 8;
 
         // Start from the first element in both streams
         try instream.seekTo(0);

@@ -82,10 +82,11 @@ pub const Huffman = struct {
     array: std.ArrayList(Node),
 
     /// Initialize a Huffman tree from the input of the provided `reader`
-    pub fn init(allocator: std.mem.Allocator, reader: anytype) !@This() {
+    pub fn init(allocator: std.mem.Allocator, instream: std.fs.File) !@This() {
         var frequencies = std.AutoHashMap(u8, usize).init(allocator);
         var cnt: usize = 0;
         defer frequencies.deinit();
+        const reader = instream.reader();
 
         // 1. Calculate the frequencies for each character in the input stream.
         while (true) {
@@ -167,14 +168,15 @@ pub const Huffman = struct {
     pub fn encode(
         self: @This(),
         allocator: std.mem.Allocator,
-        reader: anytype,
-        outstream: anytype
+        instream: std.fs.File,
+        outstream: std.fs.File
     ) !void {
         if (self.array.items.len == 0) {
             return;
         }
         var writer = std.io.bitWriter(.little, outstream.writer());
         var written_bits: usize = 0;
+        const reader = instream.reader();
 
         // Create the translation map from 1 byte characters onto encoded Huffman symbols.
         var translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);

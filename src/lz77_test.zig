@@ -30,9 +30,7 @@ fn run_alloc(
         in_size = (try in.stat()).size;
         _ = try std.fs.cwd().readFile(inputfile, &in_data);
     }
-
     defer in.close();
-    const reader = in.reader();
 
     // Sanity check
     try std.testing.expect(in_size <= max_size);
@@ -49,7 +47,7 @@ fn run_alloc(
         .window_length = window_length,
     };
 
-    try lz77.compress(reader, &compressed);
+    try lz77.compress(in, &compressed);
     try util.log_result("lz77", inputfile, in_size, compressed.pos);
 
     try lz77.decompress(&compressed, &decompressed);

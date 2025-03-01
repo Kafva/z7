@@ -1,3 +1,5 @@
+const std = @import("std");
+
 /// gzip is just a file format.
 /// gzip: https://www.ietf.org/rfc/rfc1952.txt
 ///
@@ -97,10 +99,22 @@
 ///                  encoded using the literal/length Huffman code
 ///
 ///
-pub fn deflate(buf: []const u8) !void {
-    _ = buf;
-}
+pub const Flate = struct {
+    window_length: usize,
+    lookahead_length: usize,
+    allocator: std.mem.Allocator,
 
-pub fn huffman_encode(buf: []const u8) !void {
-    _ = buf;
-}
+    pub fn compress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
+        _ = self;
+        _ = instream;
+        _ = outstream;
+    }
+
+    pub fn decompress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
+        _ = self;
+        _ = instream;
+        _ = outstream;
+    }
+
+};
+

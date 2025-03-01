@@ -26,7 +26,6 @@ fn run_alloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
     }
 
     defer in.close();
-    const reader = in.reader();
 
     // Sanity check
     try std.testing.expect(in_size <= max_size);
@@ -37,11 +36,11 @@ fn run_alloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
     var decoded_array = [_]u8{0} ** max_size;
     var decoded = std.io.fixedBufferStream(&decoded_array);
 
-    const huffman = try Huffman.init(allocator, reader);
+    const huffman = try Huffman.init(allocator, in);
 
     // Reset input stream for second pass
     try in.seekTo(0);
-    try huffman.encode(allocator, reader, &encoded);
+    try huffman.encode(allocator, in, &encoded);
     try util.log_result("huffman", inputfile, in_size, encoded.pos);
 
     try huffman.decode(&encoded, &decoded);
