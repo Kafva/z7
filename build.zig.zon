@@ -1,5 +1,6 @@
 .{
-    .name = "z7",
+    .name = .z7,
+    .fingerprint = 0x2cb4268ce000c5cb,
     .version = "0.0.0",
     .dependencies = .{},
     .paths = .{
