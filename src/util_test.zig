@@ -4,7 +4,15 @@ const log = @import("log.zig");
 pub const random_label = "RANDOM";
 const max_size = 512*1024; // 0.5 MB
 
-pub fn setup(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, inputfile: []const u8,  in: *std.fs.File, in_size: *usize, compressed: *std.fs.File, decompressed: *std.fs.File) !void {
+pub fn setup(
+    allocator: std.mem.Allocator,
+    tmp: *std.testing.TmpDir,
+    inputfile: []const u8,
+    in: *std.fs.File,
+    in_size: *usize,
+    compressed: *std.fs.File,
+    decompressed: *std.fs.File,
+) !void {
     compressed.* = try tmp.dir.createFile("compressed.bin", .{ .read = true });
     decompressed.* = try tmp.dir.createFile("decompressed.bin", .{ .read = true });
 
