@@ -112,6 +112,8 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "version", version);
     const debug_opt = b.option(bool, "debug", "Always print debug logs") orelse false;
     build_options.addOption(bool, "debug", debug_opt);
+    const verbose_opt = b.option(bool, "verbose", "Print verbose test results") orelse false;
+    build_options.addOption(bool, "verbose", verbose_opt);
 
     build_exe(b, target, optimize, build_options);
     build_tests(b, target, optimize, build_options);

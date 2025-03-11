@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
+const build_options = @import("build_options");
 
 pub const random_label = "RANDOM";
 const max_size = 512*1024; // 0.5 MB
@@ -53,6 +54,10 @@ pub fn log_result(
     in_size: usize,
     new_size: usize
 ) !void {
+    if (!build_options.verbose) {
+        return;
+    }
+
     const filename = std.fs.path.basename(inputfile);
     var k: f64 = undefined;
     var sign: []const u8 = undefined;
