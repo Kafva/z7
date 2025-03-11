@@ -6,9 +6,8 @@ const std = @import("std");
 /// The actual compression is done with the DEFLATE algorithm.
 /// deflate: https://www.ietf.org/rfc/rfc1951.txt
 ///
-/// The deflate algorithm uses a variant Huffman encoding and LZ77.
-/// There is no rfc for LZ77 (Lempel-Ziv), it is an old algorithm from the '70s
-/// with many different implentation variants.
+/// The deflate algorithm uses a variant of Huffman encoding and LZ77.
+/// The exact implentation for LZ77 (Lempel-Ziv) is not part of the RFC.
 ///
 /// Deflate performs compression on a per-block basis, the block sizes are
 /// *arbitrary* but an uncompressed block can not be larger than 2**16 (2 byte
@@ -21,14 +20,45 @@ const std = @import("std");
 /// Each block contains two Huffman trees and compressed data.
 /// To make the Huffman trees canonical the Huffman encoding used in deflate
 /// has some special rules:
-///     * Codes of the same length should encode values in the order of the
-///     alphabeht, so e.g.
-///     NOK [A: 011, B: 010]
-///     OK  [A: 010, B: 011]  (A encoding should be lower than B encoding)
 ///
-///     * Shorter codes precede longer codes
-///     NOK [A: 111, B: 10]
-///     OK  [A: 10, B: 111]
+///   * All codes of a given bit length have lexicographically
+///     *consecutive* values, in the same order as the symbols
+///     they represent:
+///   * Shorter codes lexicographically precede longer codes.
+///
+///   'W' -> { .bit_shift = 3, .bits = { 0b110 } }
+///   'o' -> { .bit_shift = 3, .bits = { 0b000 } }
+///   ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
+///   'd' -> { .bit_shift = 4, .bits = { 0b1010 } }
+///   'r' -> { .bit_shift = 4, .bits = { 0b0100 } }
+///   'H' -> { .bit_shift = 4, .bits = { 0b1100 } }
+///   'e' -> { .bit_shift = 2, .bits = { 0b01 } }
+///   'l' -> { .bit_shift = 2, .bits = { 0b11 } }
+/// 
+/// On the canonical form you only need to know the length of the encoding of
+/// each symbol to re-create the tree!
+///
+/// To create a canonical form code:
+///
+/// 1. Sort with the shortest codes first
+///   'e' -> { .bit_shift = 2, .bits = { 0b01 } }
+///   'l' -> { .bit_shift = 2, .bits = { 0b11 } }
+///   'W' -> { .bit_shift = 3, .bits = { 0b110 } }
+///   'o' -> { .bit_shift = 3, .bits = { 0b000 } }
+///   ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
+///   'd' -> { .bit_shift = 4, .bits = { 0b1010 } }
+///   'r' -> { .bit_shift = 4, .bits = { 0b0100 } }
+///   'H' -> { .bit_shift = 4, .bits = { 0b1100 } }
+/// 2. Assign sequential codes for each length block
+///   'e' -> { .bit_shift = 2, .bits = { 0b00 } }
+///   'l' -> { .bit_shift = 2, .bits = { 0b01 } }
+///   'W' -> { .bit_shift = 3, .bits = { 0b010 } }   (prev + 1), append 0
+///   'o' -> { .bit_shift = 3, .bits = { 0b011 } }   (prev + 1)
+///   ' ' -> { .bit_shift = 4, .bits = { 0b0110 } }  (prev + 1), append 0
+///   'd' -> { .bit_shift = 4, .bits = { 0b0111 } }  (prev + 1)
+///   'r' -> { .bit_shift = 4, .bits = { 0b1000 } }  (prev + 1)
+///   'H' -> { .bit_shift = 4, .bits = { 0b1100 } }
+///
 ///
 /// The compressed data has two types:
 ///     * Literal byte (0..255) sequences (that do not appear in the prior 32K)

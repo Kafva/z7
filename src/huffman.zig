@@ -388,7 +388,10 @@ pub const Huffman = struct {
         }
     }
 
-    fn dump_translation(self: @This(), translation: *const std.AutoHashMap(u8, NodeEncoding)) void {
+    fn dump_translation(
+        self: @This(),
+        translation: *const std.AutoHashMap(u8, NodeEncoding),
+    ) void {
         _ = self;
         var keys = translation.keyIterator();
         while (keys.next()) |char| {

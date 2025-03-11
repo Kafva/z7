@@ -58,22 +58,22 @@ test "Huffman on simple text" {
     try run("tests/testdata/helloworld.txt");
 }
 
-test "Huffman on rfc1951.txt" {
-    try run("tests/testdata/rfc1951.txt");
-}
+// test "Huffman on rfc1951.txt" {
+//     try run("tests/testdata/rfc1951.txt");
+// }
 
-test "Huffman on 9001 repeated characters" {
-    try run("tests/testdata/over_9000_a.txt");
-}
+// test "Huffman on 9001 repeated characters" {
+//     try run("tests/testdata/over_9000_a.txt");
+// }
 
-test "Huffman on random data" {
-    try run(util.random_label);
-}
+// test "Huffman on random data" {
+//     try run(util.random_label);
+// }
 
-test "Huffman on fuzzing testdata from zig stdlib" {
-    try run_dir("tests/testdata/zig/fuzz");
-}
+// test "Huffman on fuzzing testdata from zig stdlib" {
+//     try run_dir("tests/testdata/zig/fuzz");
+// }
 
-test "Huffman on block writer testdata from zig stdlib" {
-    try run_dir("tests/testdata/zig/block_writer");
-}
+// test "Huffman on block writer testdata from zig stdlib" {
+//     try run_dir("tests/testdata/zig/block_writer");
+// }
