@@ -29,7 +29,7 @@ fn run_alloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
 
     // Reset input stream for second pass
     try in.seekTo(0);
-    try huffman.compress(allocator, in, compressed);
+    try huffman.compress(in, compressed);
     try util.log_result("huffman", inputfile, in_size, try compressed.getPos());
 
     try huffman.decompress(compressed, decompressed);

@@ -2,6 +2,9 @@ const std = @import("std");
 const util = @import("util.zig");
 const log = @import("log.zig");
 
+/// Longest possible bit length of a symbol
+const max_code: usize = std.math.pow(usize, 2, 8);
+
 const HuffmanError = error {
     UnexpectedCharacter,
     UnexpectedEncodedSymbol,
@@ -79,7 +82,11 @@ pub const Node = struct {
 };
 
 pub const Huffman = struct {
+    /// Backing array for Huffman tree nodes
     array: std.ArrayList(Node),
+
+    /// Mappings from 1 byte symbols onto 256-bit encodings
+    enc_map: []NodeEncoding,
 
     /// Initialize a Huffman tree from the input of the provided `reader`
     pub fn init(allocator: std.mem.Allocator, instream: std.fs.File) !@This() {
@@ -165,71 +172,74 @@ pub const Huffman = struct {
             std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.desc);
         }
 
-        return @This(){ .array = array };
+        var enc_map = try allocator.alloc(NodeEncoding, 256);
+        try canonify(&array, &enc_map);
+
+        return @This(){ .array = array, .enc_map = enc_map };
     }
 
-    /// The canonical form for a Huffman tree in deflate allows us to represent
-    /// the encoding by simply knowing the *code length* of each symbol in the
-    /// alphabet.
-    /// Canonisation example:
-    ///
-    /// 1. Count how many entries there are for each code length (bit count)
-    ///
-    ///  ( 32)  ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
-    ///  ( 72)  'H' -> { .bit_shift = 4, .bits = { 0b1100 } }
-    ///  ( 87)  'W' -> { .bit_shift = 3, .bits = { 0b110 } }
-    ///  (100)  'd' -> { .bit_shift = 4, .bits = { 0b1010 } }
-    ///  (108)  'l' -> { .bit_shift = 2, .bits = { 0b11 } }
-    ///  (101)  'e' -> { .bit_shift = 2, .bits = { 0b01 } }
-    ///  (111)  'o' -> { .bit_shift = 3, .bits = { 0b000 } }
-    ///  (114)  'r' -> { .bit_shift = 4, .bits = { 0b0100 } }
-    ///
-    ///    Codelen    Occurrences
-    ///    ---------------------
-    ///    1          0
-    ///    2          2
-    ///    3          2
-    ///    4          4
-    ///
-    /// 2. Find the numerical value of the *smallest* code for each code length:
-    ///
-    ///    Codelen    Start value
-    ///    ---------------------
-    ///    1          - (none)
-    ///    2          1 (0b01)
-    ///    3          0 (0b000)
-    ///    4          2 (0b0010)
-    ///
-    /// 3. Assign incrementing numerical values to all codes (per code length)
-    ///
-    ///  (101) 'e' -> { .bit_shift = 2, .bits = { 0b01 } }
-    ///  (108) 'l' -> { .bit_shift = 2, .bits = { 0b10 } }
-    ///  ( 87) 'W' -> { .bit_shift = 3, .bits = { 0b000 } }
-    ///  (111) 'o' -> { .bit_shift = 3, .bits = { 0b001 } }
-    ///  ( 32) ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
-    ///  ( 72) 'H' -> { .bit_shift = 4, .bits = { 0b0011 } }
-    ///  (114) 'r' -> { .bit_shift = 4, .bits = { 0b0101 } }
-    ///  (100) 'd' -> { .bit_shift = 4, .bits = { 0b0100 } }
-    ///
-    /// 4. The order needs to be be alphabetical for it to be canonical!
-    ///
-    ///  ( 32) ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
-    ///  ( 72) 'H' -> { .bit_shift = 4, .bits = { 0b0011 } }
-    ///  ( 87) 'W' -> { .bit_shift = 3, .bits = { 0b000 } }
-    ///  (100) 'd' -> { .bit_shift = 4, .bits = { 0b0100 } }
-    ///  (101) 'e' -> { .bit_shift = 2, .bits = { 0b01 } }
-    ///  (108) 'l' -> { .bit_shift = 2, .bits = { 0b10 } }
-    ///  (111) 'o' -> { .bit_shift = 3, .bits = { 0b001 } }
-    ///  (114) 'r' -> { .bit_shift = 4, .bits = { 0b0101 } }
-    ///
-    pub fn canonify(self: @This()) !void {
+    fn canonify(array: *std.ArrayList(Node), enc_map: *[]NodeEncoding) !void {
+        // Create the initial translation map from 1 byte characters onto encoded Huffman symbols.
+        try walk_generate_translation(array, enc_map, array.items.len - 1, .{0, 0, 0, 0}, 0);
 
-        _ = self;
+        // 1)  Count the number of codes for each code length.  Let
+        //     bl_count[N] be the number of codes of length N (bit length)
+        var max_bits: u8 = 0;
+        var bl_count = [_]u8{0} ** max_code;
+        for (0..enc_map.len) |i| {
+            const enc = enc_map.*[i];
+            if (enc.bit_shift == 0) continue;
+
+            if (enc.bit_shift >= max_code) unreachable;
+            bl_count[enc.bit_shift] += 1;
+
+            if (enc.bit_shift > max_bits) {
+                max_bits = enc.bit_shift;
+            }
+        }
+
+        for (0..bl_count.len) |i| {
+            if (bl_count[i] != 0) {
+                log.debug(@src(), "bl_count[{}] = {}", .{i, bl_count[i]});
+            }
+        }
+
+        // 2)  Find the numerical value of the smallest code for each
+        //     code length:
+        var next_code = [_][4]u64{ .{0,0,0,0}  } ** max_code;
+
+        var code: u8 = 0;
+        for (1..max_bits + 1) |i| {
+            code = (code + bl_count[i-1]) << 1;
+            next_code[i][0] = code;
+            if (next_code[i][0] != 0) {
+                log.debug(@src(), "next_code[{}] = {}", .{i, next_code[i][0]});
+            }
+        }
+
+        // 3)  Assign numerical values to all codes, using consecutive
+        //     values for all codes of the same length with the base
+        //     values determined at step 2
+        for (0..enc_map.len) |i| {
+            const enc = enc_map.*[i];
+            if (enc.bit_shift == 0) continue;
+
+            const new_enc = NodeEncoding {
+                .bit_shift = enc.bit_shift,
+                .bits = .{
+                    next_code[enc.bit_shift][0],
+                    next_code[enc.bit_shift][1],
+                    next_code[enc.bit_shift][2],
+                    next_code[enc.bit_shift][3],
+                }
+            };
+            enc_map.*[i] = new_enc;
+            next_code[enc.bit_shift][0] += 1;
+        }
     }
 
     pub fn compress(
         self: @This(),
-        allocator: std.mem.Allocator,
         instream: std.fs.File,
         outstream: std.fs.File
     ) !void {
@@ -240,20 +250,17 @@ pub const Huffman = struct {
         var written_bits: usize = 0;
         const reader = instream.reader();
 
-        // Create the translation map from 1 byte characters onto encoded Huffman symbols.
-        var translation = std.AutoHashMap(u8, NodeEncoding).init(allocator);
-        try self.walk_generate_translation(self.array.items.len - 1, &translation, .{0, 0, 0, 0}, 0);
-
         // Dump tree for debugging
         self.dump_tree(0, self.array.items.len - 1);
-        util.dump_hashmap(NodeEncoding, &translation);
+        self.dump_encodings();
 
         while (true) {
             const c = reader.readByte() catch {
                 break;
             };
 
-            if (translation.get(c)) |enc| {
+            const enc = self.enc_map[@intCast(c)];
+            if (enc.bit_shift > 0) {
                 // Write the translation to the output stream
                 switch (enc.bit_shift) {
                     0...63 => {
@@ -280,7 +287,6 @@ pub const Huffman = struct {
                     },
                 }
                 written_bits += enc.bit_shift;
-
             } else {
                 log.err(@src(), "Unexpected byte: 0x{x}", .{c});
                 return HuffmanError.UnexpectedCharacter;
@@ -367,14 +373,14 @@ pub const Huffman = struct {
 
     /// Walk the tree and setup the byte -> encoding mappings used for encoding.
     fn walk_generate_translation(
-        self: @This(),
+        array: *std.ArrayList(Node),
+        enc_map: *[]NodeEncoding,
         index: usize,
-        translation: *std.AutoHashMap(u8, NodeEncoding),
         node_bits: [4]u64,
         bit_shift: u8,
     ) !void {
-        const left_child_index = self.array.items[index].left_child_index;
-        const right_child_index = self.array.items[index].right_child_index;
+        const left_child_index = array.items[index].left_child_index;
+        const right_child_index = array.items[index].right_child_index;
         // Create a mutable copy
         var bits = .{
             node_bits[0],
@@ -385,9 +391,9 @@ pub const Huffman = struct {
 
         if (left_child_index == null and right_child_index == null) {
             // Reached leaf
-            if (self.array.items[index].char) |char| {
+            if (array.items[index].char) |char| {
                 const enc = NodeEncoding { .bit_shift = bit_shift, .bits = bits };
-                try translation.put(char, enc);
+                enc_map.*[char] = enc;
             } else {
                 log.err(@src(), "Missing character from leaf node", .{});
                 return HuffmanError.BadTreeStructure;
@@ -396,7 +402,7 @@ pub const Huffman = struct {
             if (left_child_index) |child_index| {
                 // left: 0
                 // Nothing to do, all bits start initialised to 0
-                try self.walk_generate_translation(child_index, translation, bits, bit_shift + 1);
+                try walk_generate_translation(array, enc_map, child_index, bits, bit_shift + 1);
             }
             if (right_child_index) |child_index| {
                 // right: 1
@@ -423,7 +429,7 @@ pub const Huffman = struct {
                         bits[3] = bits[3] | new_bit;
                     },
                 }
-                try self.walk_generate_translation(child_index, translation, bits, bit_shift + 1);
+                try walk_generate_translation(array, enc_map, child_index, bits, bit_shift + 1);
             }
         }
     }
@@ -449,4 +455,22 @@ pub const Huffman = struct {
             self.dump_tree(level + 1, child_index);
         }
     }
+
+    fn dump_encodings(
+        self: @This(),
+    ) void {
+        for (0..self.enc_map.len) |i| {
+            const char: u8 = @truncate(i);
+            const enc = self.enc_map[i];
+            // TODO: proper optionals, 170 is stack data
+            if (enc.bit_shift == 0 or enc.bit_shift == 170) continue;
+
+            if (std.ascii.isPrint(char)) {
+                log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{char, char, enc});
+            } else {
+                log.debug(@src(), "(0x{x})     -> {any}", .{char, enc});
+            }
+        }
+    }
+
 };
