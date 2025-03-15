@@ -1,5 +1,5 @@
 # z7
-Gzip implementation in zig. Compatible with zig 0.14.0.
+Zig implementation of gzip compression. Compatible with zig 0.14.0.
 
 ```bash
 zig build run -- --help
