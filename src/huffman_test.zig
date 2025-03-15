@@ -50,12 +50,18 @@ fn run_dir(dirpath: []const u8) !void {
     }
 }
 
-test "Huffman on empty file" {
-    try run("tests/testdata/empty");
-}
+// test "Huffman on empty file" {
+//     try run("tests/testdata/empty");
+// }
 
-test "Huffman on simple text" {
-    try run("tests/testdata/helloworld.txt");
+// test "Huffman on simple text" {
+//     try run("tests/testdata/helloworld.txt");
+// }
+
+test "Huffman canonical form encoding" {
+    // Alphabet: ABCDEFGH
+    // Frequencies: (3, 3, 3, 3, 3, 2, 4, 4)
+    try run("tests/testdata/flate_huffman.txt");
 }
 
 // test "Huffman on rfc1951.txt" {

@@ -26,39 +26,10 @@ const std = @import("std");
 ///     they represent:
 ///   * Shorter codes lexicographically precede longer codes.
 ///
-///   'W' -> { .bit_shift = 3, .bits = { 0b110 } }
-///   'o' -> { .bit_shift = 3, .bits = { 0b000 } }
-///   ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
-///   'd' -> { .bit_shift = 4, .bits = { 0b1010 } }
-///   'r' -> { .bit_shift = 4, .bits = { 0b0100 } }
-///   'H' -> { .bit_shift = 4, .bits = { 0b1100 } }
-///   'e' -> { .bit_shift = 2, .bits = { 0b01 } }
-///   'l' -> { .bit_shift = 2, .bits = { 0b11 } }
-/// 
 /// On the canonical form you only need to know the length of the encoding of
 /// each symbol to re-create the tree!
 ///
 /// To create a canonical form code:
-///
-/// 1. Sort with the shortest codes first
-///   'e' -> { .bit_shift = 2, .bits = { 0b01 } }
-///   'l' -> { .bit_shift = 2, .bits = { 0b11 } }
-///   'W' -> { .bit_shift = 3, .bits = { 0b110 } }
-///   'o' -> { .bit_shift = 3, .bits = { 0b000 } }
-///   ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
-///   'd' -> { .bit_shift = 4, .bits = { 0b1010 } }
-///   'r' -> { .bit_shift = 4, .bits = { 0b0100 } }
-///   'H' -> { .bit_shift = 4, .bits = { 0b1100 } }
-/// 2. Assign sequential codes for each length block
-///   'e' -> { .bit_shift = 2, .bits = { 0b00 } }
-///   'l' -> { .bit_shift = 2, .bits = { 0b01 } }
-///   'W' -> { .bit_shift = 3, .bits = { 0b010 } }   (prev + 1), append 0
-///   'o' -> { .bit_shift = 3, .bits = { 0b011 } }   (prev + 1)
-///   ' ' -> { .bit_shift = 4, .bits = { 0b0110 } }  (prev + 1), append 0
-///   'd' -> { .bit_shift = 4, .bits = { 0b0111 } }  (prev + 1)
-///   'r' -> { .bit_shift = 4, .bits = { 0b1000 } }  (prev + 1)
-///   'H' -> { .bit_shift = 4, .bits = { 0b1100 } }
-///
 ///
 /// The compressed data has two types:
 ///     * Literal byte (0..255) sequences (that do not appear in the prior 32K)

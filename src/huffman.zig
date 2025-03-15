@@ -102,6 +102,9 @@ pub const Huffman = struct {
             }
         }
 
+        log.debug(@src(), "Frequencies:", .{});
+        util.dump_hashmap(usize, &frequencies);
+
         // 2. Create a queue of nodes to place into the tree
         var queue_cnt: usize = cnt;
         const queue = try allocator.alloc(Node, queue_cnt);
@@ -165,6 +168,10 @@ pub const Huffman = struct {
         return @This(){ .array = array };
     }
 
+    pub fn canonify(self: @This()) !void {
+        _ = self;
+    }
+
     pub fn compress(
         self: @This(),
         allocator: std.mem.Allocator,
@@ -184,7 +191,7 @@ pub const Huffman = struct {
 
         // Dump tree for debugging
         self.dump_tree(0, self.array.items.len - 1);
-        self.dump_translation(&translation);
+        util.dump_hashmap(NodeEncoding, &translation);
 
         while (true) {
             const c = reader.readByte() catch {
@@ -385,23 +392,6 @@ pub const Huffman = struct {
             const node = self.array.items[child_index];
             node.dump(level + 1, "1");
             self.dump_tree(level + 1, child_index);
-        }
-    }
-
-    fn dump_translation(
-        self: @This(),
-        translation: *const std.AutoHashMap(u8, NodeEncoding),
-    ) void {
-        _ = self;
-        var keys = translation.keyIterator();
-        while (keys.next()) |char| {
-            if (translation.get(char.*)) |enc| {
-                if (std.ascii.isPrint(char.*) and char.* != '\n') {
-                    log.debug(@src(), "'{c}' -> {any}", .{char.*, enc});
-                } else {
-                    log.debug(@src(), "0x{x} -> {any}", .{char.*, enc});
-                }
-            }
         }
     }
 };

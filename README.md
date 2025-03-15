@@ -1,5 +1,5 @@
 # z7
-Compression tool
+Gzip implementation in zig. Compatible with zig 0.14.0.
 
 ```bash
 zig build run -- --help
