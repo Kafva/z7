@@ -21,10 +21,10 @@ pub fn dump_hashmap(
     var keys = map.keyIterator();
     while (keys.next()) |key| {
         if (map.get(key.*)) |enc| {
-            if (std.ascii.isPrint(key.*) and key.* != '\n') {
-                log.debug(@src(), "'{c}' -> {any}", .{key.*, enc});
+            if (std.ascii.isPrint(key.*)) {
+                log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{key.*, key.*, enc});
             } else {
-                log.debug(@src(), "0x{x} -> {any}", .{key.*, enc});
+                log.debug(@src(), "(0x{x})     -> {any}", .{key.*, enc});
             }
         }
     }

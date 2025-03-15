@@ -102,7 +102,7 @@ pub const Huffman = struct {
             }
         }
 
-        log.debug(@src(), "Frequencies:", .{});
+        log.debug(@src(), "frequencies:", .{});
         util.dump_hashmap(usize, &frequencies);
 
         // 2. Create a queue of nodes to place into the tree
@@ -168,7 +168,62 @@ pub const Huffman = struct {
         return @This(){ .array = array };
     }
 
+    /// The canonical form for a Huffman tree in deflate allows us to represent
+    /// the encoding by simply knowing the *code length* of each symbol in the
+    /// alphabet.
+    /// Canonisation example:
+    ///
+    /// 1. Count how many entries there are for each code length (bit count)
+    ///
+    ///  ( 32)  ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
+    ///  ( 72)  'H' -> { .bit_shift = 4, .bits = { 0b1100 } }
+    ///  ( 87)  'W' -> { .bit_shift = 3, .bits = { 0b110 } }
+    ///  (100)  'd' -> { .bit_shift = 4, .bits = { 0b1010 } }
+    ///  (108)  'l' -> { .bit_shift = 2, .bits = { 0b11 } }
+    ///  (101)  'e' -> { .bit_shift = 2, .bits = { 0b01 } }
+    ///  (111)  'o' -> { .bit_shift = 3, .bits = { 0b000 } }
+    ///  (114)  'r' -> { .bit_shift = 4, .bits = { 0b0100 } }
+    ///
+    ///    Codelen    Occurrences
+    ///    ---------------------
+    ///    1          0
+    ///    2          2
+    ///    3          2
+    ///    4          4
+    ///
+    /// 2. Find the numerical value of the *smallest* code for each code length:
+    ///
+    ///    Codelen    Start value
+    ///    ---------------------
+    ///    1          - (none)
+    ///    2          1 (0b01)
+    ///    3          0 (0b000)
+    ///    4          2 (0b0010)
+    ///
+    /// 3. Assign incrementing numerical values to all codes (per code length)
+    ///
+    ///  (101) 'e' -> { .bit_shift = 2, .bits = { 0b01 } }
+    ///  (108) 'l' -> { .bit_shift = 2, .bits = { 0b10 } }
+    ///  ( 87) 'W' -> { .bit_shift = 3, .bits = { 0b000 } }
+    ///  (111) 'o' -> { .bit_shift = 3, .bits = { 0b001 } }
+    ///  ( 32) ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
+    ///  ( 72) 'H' -> { .bit_shift = 4, .bits = { 0b0011 } }
+    ///  (114) 'r' -> { .bit_shift = 4, .bits = { 0b0101 } }
+    ///  (100) 'd' -> { .bit_shift = 4, .bits = { 0b0100 } }
+    ///
+    /// 4. The order needs to be be alphabetical for it to be canonical!
+    ///
+    ///  ( 32) ' ' -> { .bit_shift = 4, .bits = { 0b0010 } }
+    ///  ( 72) 'H' -> { .bit_shift = 4, .bits = { 0b0011 } }
+    ///  ( 87) 'W' -> { .bit_shift = 3, .bits = { 0b000 } }
+    ///  (100) 'd' -> { .bit_shift = 4, .bits = { 0b0100 } }
+    ///  (101) 'e' -> { .bit_shift = 2, .bits = { 0b01 } }
+    ///  (108) 'l' -> { .bit_shift = 2, .bits = { 0b10 } }
+    ///  (111) 'o' -> { .bit_shift = 3, .bits = { 0b001 } }
+    ///  (114) 'r' -> { .bit_shift = 4, .bits = { 0b0101 } }
+    ///
     pub fn canonify(self: @This()) !void {
+
         _ = self;
     }
 

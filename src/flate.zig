@@ -18,18 +18,6 @@ const std = @import("std");
 /// =======
 /// Each block is compressed individually.
 /// Each block contains two Huffman trees and compressed data.
-/// To make the Huffman trees canonical the Huffman encoding used in deflate
-/// has some special rules:
-///
-///   * All codes of a given bit length have lexicographically
-///     *consecutive* values, in the same order as the symbols
-///     they represent:
-///   * Shorter codes lexicographically precede longer codes.
-///
-/// On the canonical form you only need to know the length of the encoding of
-/// each symbol to re-create the tree!
-///
-/// To create a canonical form code:
 ///
 /// The compressed data has two types:
 ///     * Literal byte (0..255) sequences (that do not appear in the prior 32K)
