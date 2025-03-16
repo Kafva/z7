@@ -183,12 +183,16 @@ pub const Huffman = struct {
         for (0..enc_map.len) |i| {
             enc_map.*[i] = null;
         }
+        if (array.items.len == 0) {
+            return;
+        }
+
         // Create the initial translation map from 1 byte characters onto encoded Huffman symbols.
         try walk_generate_translation(array, enc_map, array.items.len - 1, .{0, 0, 0, 0}, 0);
 
         // 1. Count how many entries there are for each code length (bit length)
         // 256 entries, maximum bit length of an encoded symbol
-        var bit_length_counts = [_]u8{0} ** 256;
+        var bit_length_counts = [_]u64{0} ** 256;
         var max_seen_bits: u8 = 0;
         for (0..enc_map.len) |i| {
             if (enc_map.*[i]) |enc| {
@@ -211,9 +215,10 @@ pub const Huffman = struct {
         // determine the starting code value.
         var next_code = [_][4]u64{ .{0,0,0,0}  } ** 256;
 
-        var code: u8 = 0;
+        var code: u64 = 0;
         for (1..max_seen_bits + 1) |i| {
             // Starting code is based of previous bit length code
+            // TODO: handle bit lengths above 64
             code = (code + bit_length_counts[i-1]) << 1;
             next_code[i][0] = code;
             if (next_code[i][0] != 0) {
