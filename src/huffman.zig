@@ -2,9 +2,6 @@ const std = @import("std");
 const util = @import("util.zig");
 const log = @import("log.zig");
 
-/// Longest possible bit length of a symbol
-const max_code: usize = std.math.pow(usize, 2, 8);
-
 const HuffmanError = error {
     UnexpectedCharacter,
     UnexpectedEncodedSymbol,
@@ -86,7 +83,7 @@ pub const Huffman = struct {
     array: std.ArrayList(Node),
 
     /// Mappings from 1 byte symbols onto 256-bit encodings
-    enc_map: []NodeEncoding,
+    enc_map: []?NodeEncoding,
 
     /// Initialize a Huffman tree from the input of the provided `reader`
     pub fn init(allocator: std.mem.Allocator, instream: std.fs.File) !@This() {
@@ -172,69 +169,75 @@ pub const Huffman = struct {
             std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.desc);
         }
 
-        var enc_map = try allocator.alloc(NodeEncoding, 256);
-        try canonify(&array, &enc_map);
+        var enc_map = try allocator.alloc(?NodeEncoding, 256);
+        try build_canonical_encoding(&array, &enc_map);
 
         return @This(){ .array = array, .enc_map = enc_map };
     }
 
-    fn canonify(array: *std.ArrayList(Node), enc_map: *[]NodeEncoding) !void {
+    /// Convert the Huffman tree stored in `array` into its canonical form, it
+    /// is enough to know the code length of every symbol in the alphabet to
+    /// encode/decode on the canonical form.
+    fn build_canonical_encoding(array: *std.ArrayList(Node), enc_map: *[]?NodeEncoding) !void {
+        // Make sure all encodings start as null
+        for (0..enc_map.len) |i| {
+            enc_map.*[i] = null;
+        }
         // Create the initial translation map from 1 byte characters onto encoded Huffman symbols.
         try walk_generate_translation(array, enc_map, array.items.len - 1, .{0, 0, 0, 0}, 0);
 
-        // 1)  Count the number of codes for each code length.  Let
-        //     bl_count[N] be the number of codes of length N (bit length)
-        var max_bits: u8 = 0;
-        var bl_count = [_]u8{0} ** max_code;
+        // 1. Count how many entries there are for each code length (bit length)
+        // 256 entries, maximum bit length of an encoded symbol
+        var bit_length_counts = [_]u8{0} ** 256;
+        var max_seen_bits: u8 = 0;
         for (0..enc_map.len) |i| {
-            const enc = enc_map.*[i];
-            if (enc.bit_shift == 0) continue;
+            if (enc_map.*[i]) |enc| {
+                if (enc.bit_shift >= 256) unreachable;
+                bit_length_counts[enc.bit_shift] += 1;
 
-            if (enc.bit_shift >= max_code) unreachable;
-            bl_count[enc.bit_shift] += 1;
-
-            if (enc.bit_shift > max_bits) {
-                max_bits = enc.bit_shift;
+                if (enc.bit_shift > max_seen_bits) {
+                    max_seen_bits = enc.bit_shift;
+                }
             }
         }
 
-        for (0..bl_count.len) |i| {
-            if (bl_count[i] != 0) {
-                log.debug(@src(), "bl_count[{}] = {}", .{i, bl_count[i]});
+        for (0..bit_length_counts.len) |i| {
+            if (bit_length_counts[i] != 0) {
+                log.debug(@src(), "bit_length_counts[{}] = {}", .{i, bit_length_counts[i]});
             }
         }
 
-        // 2)  Find the numerical value of the smallest code for each
-        //     code length:
-        var next_code = [_][4]u64{ .{0,0,0,0}  } ** max_code;
+        // 2. For each bit length (up to the maximum we observed in step 1),
+        // determine the starting code value.
+        var next_code = [_][4]u64{ .{0,0,0,0}  } ** 256;
 
         var code: u8 = 0;
-        for (1..max_bits + 1) |i| {
-            code = (code + bl_count[i-1]) << 1;
+        for (1..max_seen_bits + 1) |i| {
+            // Starting code is based of previous bit length code
+            code = (code + bit_length_counts[i-1]) << 1;
             next_code[i][0] = code;
             if (next_code[i][0] != 0) {
                 log.debug(@src(), "next_code[{}] = {}", .{i, next_code[i][0]});
             }
         }
 
-        // 3)  Assign numerical values to all codes, using consecutive
-        //     values for all codes of the same length with the base
-        //     values determined at step 2
+        // 3. Assign numerical values to all codes, using consecutive values for
+        // all codes of the same length with the base values determined at step
+        // 2
         for (0..enc_map.len) |i| {
-            const enc = enc_map.*[i];
-            if (enc.bit_shift == 0) continue;
-
-            const new_enc = NodeEncoding {
-                .bit_shift = enc.bit_shift,
-                .bits = .{
-                    next_code[enc.bit_shift][0],
-                    next_code[enc.bit_shift][1],
-                    next_code[enc.bit_shift][2],
-                    next_code[enc.bit_shift][3],
-                }
-            };
-            enc_map.*[i] = new_enc;
-            next_code[enc.bit_shift][0] += 1;
+            if (enc_map.*[i]) |enc| {
+                const new_enc = NodeEncoding {
+                    .bit_shift = enc.bit_shift,
+                    .bits = .{
+                        next_code[enc.bit_shift][0],
+                        next_code[enc.bit_shift][1],
+                        next_code[enc.bit_shift][2],
+                        next_code[enc.bit_shift][3],
+                    }
+                };
+                enc_map.*[i] = new_enc;
+                next_code[enc.bit_shift][0] += 1;
+            }
         }
     }
 
@@ -259,8 +262,7 @@ pub const Huffman = struct {
                 break;
             };
 
-            const enc = self.enc_map[@intCast(c)];
-            if (enc.bit_shift > 0) {
+            if (self.enc_map[@intCast(c)]) |enc| {
                 // Write the translation to the output stream
                 switch (enc.bit_shift) {
                     0...63 => {
@@ -374,7 +376,7 @@ pub const Huffman = struct {
     /// Walk the tree and setup the byte -> encoding mappings used for encoding.
     fn walk_generate_translation(
         array: *std.ArrayList(Node),
-        enc_map: *[]NodeEncoding,
+        enc_map: *[]?NodeEncoding,
         index: usize,
         node_bits: [4]u64,
         bit_shift: u8,
@@ -461,14 +463,12 @@ pub const Huffman = struct {
     ) void {
         for (0..self.enc_map.len) |i| {
             const char: u8 = @truncate(i);
-            const enc = self.enc_map[i];
-            // TODO: proper optionals, 170 is stack data
-            if (enc.bit_shift == 0 or enc.bit_shift == 170) continue;
-
-            if (std.ascii.isPrint(char)) {
-                log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{char, char, enc});
-            } else {
-                log.debug(@src(), "(0x{x})     -> {any}", .{char, enc});
+            if (self.enc_map[i]) |enc| {
+                if (std.ascii.isPrint(char)) {
+                    log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{char, char, enc});
+                } else {
+                    log.debug(@src(), "(0x{x})     -> {any}", .{char, enc});
+                }
             }
         }
     }
