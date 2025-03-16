@@ -8,11 +8,15 @@ const HuffmanError = error {
     BadTreeStructure,
 };
 
-/// The maximum possible encoding length for a character will be 2**8
-/// I.e. in the worst-case we need to store a 256-bit value
 const NodeEncoding = struct {
-    bit_shift: u8,
-    bits: [4]u64,
+    /// It is seldom efficient to use encodings longer than 15 (2**4 - 1) bits
+    /// for a character.
+    ///
+    /// go/src/compress/flate/huffman_code.go
+    ///   "[...] the maximum number of bits that should be used to encode any literal.
+    ///   It must be less than 16."
+    bit_shift: u4,
+    bits: u16,
 
     pub fn format(
         self: *const @This(),
@@ -24,15 +28,8 @@ const NodeEncoding = struct {
             return std.fmt.invalidFmtError(fmt, self);
         }
 
-        if (self.bits[1] == 0 and
-            self.bits[2] == 0 and
-            self.bits[3] == 0) {
-            return writer.print("{{ .bit_shift = {}, .bits = {{ 0b{b} }} }}",
-                                .{self.bit_shift, self.bits[0]});
-        } else {
-            return writer.print("{{ .bit_shift = {}, .bits = {{ 0x{x}, 0x{x}, 0x{x}, 0x{x} }} }}",
-                                .{self.bit_shift, self.bits[0], self.bits[1], self.bits[2], self.bits[3]});
-        }
+        return writer.print("{{ .bit_shift = {}, .bits = 0x{b} }}",
+                            .{self.bit_shift, self.bits});
     }
 };
 
@@ -86,41 +83,25 @@ pub const Huffman = struct {
     enc_map: []?NodeEncoding,
 
     /// Initialize a Huffman tree from the input of the provided `reader`
-    pub fn init(allocator: std.mem.Allocator, instream: std.fs.File) !@This() {
-        var frequencies = std.AutoHashMap(u8, usize).init(allocator);
-        var cnt: usize = 0;
-        defer frequencies.deinit();
-        const reader = instream.reader();
-
-        // 1. Calculate the frequencies for each character in the input stream.
-        while (true) {
-            const c = reader.readByte() catch {
-                break;
-            };
-
-            if (frequencies.get(c)) |weight| {
-                try frequencies.put(c, weight + 1);
-            } else {
-                try frequencies.put(c, 1);
-                cnt += 1;
-            }
-        }
-
+    pub fn init(
+        allocator: std.mem.Allocator,
+        frequencies: *const std.AutoHashMap(u8, usize),
+    ) !@This() {
         log.debug(@src(), "frequencies:", .{});
-        util.dump_hashmap(usize, &frequencies);
+        util.dump_hashmap(usize, frequencies);
 
         // 2. Create a queue of nodes to place into the tree
-        var queue_cnt: usize = cnt;
+        var queue_cnt: usize = frequencies.count();
         const queue = try allocator.alloc(Node, queue_cnt);
 
         var array_cnt: usize = 0;
         // The array will grow if the capacity turns out to be too low
         var array = try std.ArrayList(Node).initCapacity(allocator, 2*queue_cnt);
 
-        var keys = frequencies.keyIterator();
+        var keys = frequencies.*.keyIterator();
         var index: usize = 0;
         while (keys.next()) |key| {
-            const weight = frequencies.get(key.*).?;
+            const weight = frequencies.*.get(key.*).?;
             queue[index] = Node {
                 .char = key.*,
                 .weight = weight,
@@ -134,7 +115,9 @@ pub const Huffman = struct {
 
         log.debug(@src(), "initial node count: {}", .{queue_cnt});
 
-        // 3. Create the tree
+        // 3. Create the tree, we need to make sure that we do not grow
+        // the tree deeper than 15 levels so that every leaf can be encoded
+        // with a u16.
         while (queue_cnt > 0) {
             if (queue_cnt == 1) {
                 // The root node will always be the last item
@@ -188,15 +171,14 @@ pub const Huffman = struct {
         }
 
         // Create the initial translation map from 1 byte characters onto encoded Huffman symbols.
-        try walk_generate_translation(array, enc_map, array.items.len - 1, .{0, 0, 0, 0}, 0);
+        try walk_generate_translation(array, enc_map, array.items.len - 1, 0, 0);
 
         // 1. Count how many entries there are for each code length (bit length)
-        // 256 entries, maximum bit length of an encoded symbol
-        var bit_length_counts = [_]u64{0} ** 256;
-        var max_seen_bits: u8 = 0;
+        // We only allow code lengths that fit into a u16
+        var bit_length_counts = [_]u16{0} ** 256;
+        var max_seen_bits: u4 = 0;
         for (0..enc_map.len) |i| {
             if (enc_map.*[i]) |enc| {
-                if (enc.bit_shift >= 256) unreachable;
                 bit_length_counts[enc.bit_shift] += 1;
 
                 if (enc.bit_shift > max_seen_bits) {
@@ -213,37 +195,54 @@ pub const Huffman = struct {
 
         // 2. For each bit length (up to the maximum we observed in step 1),
         // determine the starting code value.
-        var next_code = [_][4]u64{ .{0,0,0,0}  } ** 256;
+        var next_code = [_]u16{0} ** 256;
 
-        var code: u64 = 0;
-        for (1..max_seen_bits + 1) |i| {
+        var code: u16 = 0;
+        const end: usize = @intCast(max_seen_bits);
+        for (1..end + 1) |i| {
             // Starting code is based of previous bit length code
-            // TODO: handle bit lengths above 64
             code = (code + bit_length_counts[i-1]) << 1;
-            next_code[i][0] = code;
-            if (next_code[i][0] != 0) {
-                log.debug(@src(), "next_code[{}] = {}", .{i, next_code[i][0]});
+            next_code[i] = code;
+            if (next_code[i] != 0) {
+                log.debug(@src(), "next_code[{}] = {}", .{i, next_code[i]});
             }
         }
 
         // 3. Assign numerical values to all codes, using consecutive values for
         // all codes of the same length with the base values determined at step
-        // 2
         for (0..enc_map.len) |i| {
             if (enc_map.*[i]) |enc| {
                 const new_enc = NodeEncoding {
                     .bit_shift = enc.bit_shift,
-                    .bits = .{
-                        next_code[enc.bit_shift][0],
-                        next_code[enc.bit_shift][1],
-                        next_code[enc.bit_shift][2],
-                        next_code[enc.bit_shift][3],
-                    }
+                    .bits = next_code[enc.bit_shift]
                 };
                 enc_map.*[i] = new_enc;
-                next_code[enc.bit_shift][0] += 1;
+                next_code[enc.bit_shift] += 1;
             }
         }
+    }
+
+    /// Count the occurrences of each byte in `instream`
+    pub fn get_frequencies(allocator: std.mem.Allocator, instream: std.fs.File) !std.AutoHashMap(u8, usize) {
+        var frequencies = std.AutoHashMap(u8, usize).init(allocator);
+        var cnt: usize = 0;
+        const reader = instream.reader();
+
+        // 1. Calculate the frequencies for each character in the input stream.
+        while (true) {
+            const c = reader.readByte() catch {
+                break;
+            };
+
+            if (frequencies.get(c)) |weight| {
+                try frequencies.put(c, weight + 1);
+            } else {
+                try frequencies.put(c, 1);
+                cnt += 1;
+            }
+        }
+
+        return frequencies;
     }
 
     pub fn compress(
@@ -268,32 +267,13 @@ pub const Huffman = struct {
             };
 
             if (self.enc_map[@intCast(c)]) |enc| {
-                // Write the translation to the output stream
-                switch (enc.bit_shift) {
-                    0...63 => {
-                        const shift: u6 = @truncate(enc.bit_shift);
-                        try writer.writeBits(enc.bits[0], shift + 1);
-                    },
-                    64...127 => {
-                        const shift: u6 = @intCast(enc.bit_shift - 64);
-                        try writer.writeBits(enc.bits[0], 64);
-                        try writer.writeBits(enc.bits[1], shift + 1);
-                    },
-                    128...191 => {
-                        const shift: u6 = @intCast(enc.bit_shift - 128);
-                        try writer.writeBits(enc.bits[0], 64);
-                        try writer.writeBits(enc.bits[1], 64);
-                        try writer.writeBits(enc.bits[2], shift + 1);
-                    },
-                    192...255 => {
-                        const shift: u6 = @intCast(enc.bit_shift - 192);
-                        try writer.writeBits(enc.bits[0], 64);
-                        try writer.writeBits(enc.bits[1], 64);
-                        try writer.writeBits(enc.bits[2], 64);
-                        try writer.writeBits(enc.bits[3], shift + 1);
-                    },
+                if (enc.bit_shift >= 15) {
+                    log.err(@src(), "Unexpected bit shift: {any}", .{enc});
+                    return HuffmanError.BadTreeStructure;
                 }
-                written_bits += enc.bit_shift;
+                // Write the translation to the output stream
+                try writer.writeBits(enc.bits, enc.bit_shift + 1);
+                written_bits += enc.bit_shift + 1;
             } else {
                 log.err(@src(), "Unexpected byte: 0x{x}", .{c});
                 return HuffmanError.UnexpectedCharacter;
@@ -383,18 +363,16 @@ pub const Huffman = struct {
         array: *std.ArrayList(Node),
         enc_map: *[]?NodeEncoding,
         index: usize,
-        node_bits: [4]u64,
-        bit_shift: u8,
+        bits: u16,
+        bit_shift: u4,
     ) !void {
         const left_child_index = array.items[index].left_child_index;
         const right_child_index = array.items[index].right_child_index;
-        // Create a mutable copy
-        var bits = .{
-            node_bits[0],
-            node_bits[1],
-            node_bits[2],
-            node_bits[3],
-        };
+
+        if (bit_shift >= 15) {
+            log.err(@src(), "Huffman tree too deep: node requires {} bits", .{bit_shift});
+            return HuffmanError.BadTreeStructure;
+        }
 
         if (left_child_index == null and right_child_index == null) {
             // Reached leaf
@@ -413,37 +391,26 @@ pub const Huffman = struct {
             }
             if (right_child_index) |child_index| {
                 // right: 1
-                const one: u64 = 1;
-                switch (bit_shift) {
-                    0...63 => {
-                        const shift: u6 = @intCast(bit_shift);
-                        const new_bit: u64 = one << shift;
-                        bits[0] = bits[0] | new_bit;
-                    },
-                    64...127 => {
-                        const shift: u6 = @intCast(bit_shift - 64);
-                        const new_bit: u64 = one << shift;
-                        bits[1] = bits[1] | new_bit;
-                    },
-                    128...191 => {
-                        const shift: u6 = @intCast(bit_shift - 128);
-                        const new_bit: u64 = one << shift;
-                        bits[2] = bits[2] | new_bit;
-                    },
-                    192...255 => {
-                        const shift: u6 = @intCast(bit_shift - 192);
-                        const new_bit: u64 = one << shift;
-                        bits[3] = bits[3] | new_bit;
-                    },
-                }
-                try walk_generate_translation(array, enc_map, child_index, bits, bit_shift + 1);
+                const one: u16 = 1;
+                const shift: u4 = @intCast(bit_shift);
+                const new_bit: u16 = one << shift;
+                try walk_generate_translation(
+                    array,
+                    enc_map,
+                    child_index,
+                    bits | new_bit,
+                    bit_shift + 1
+                );
             }
         }
     }
 
-    fn dump_tree(self: @This(), comptime level: u8, index: usize) void {
+    fn dump_tree(self: @This(), comptime level: u4, index: usize) void {
         // Compile time generated strings are built based on the level
-        if (level == 255) unreachable;
+        if (level >= 15) {
+            log.err(@src(), "Reached maximum depth: {d}", .{level});
+            return;
+        }
 
         if (index == self.array.items.len - 1) {
             log.debug(@src(), "complete tree node count: {}", .{self.array.items.len});
@@ -477,5 +444,4 @@ pub const Huffman = struct {
             }
         }
     }
-
 };
