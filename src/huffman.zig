@@ -133,7 +133,7 @@ pub const Huffman = struct {
         allocator: std.mem.Allocator,
         frequencies: *const std.AutoHashMap(u8, usize),
     ) !@This() {
-        log.debug(@src(), "frequencies:", .{});
+        log.debug(@src(), "Frequencies:", .{});
         util.dump_hashmap(usize, frequencies);
 
         // 2. Create a queue of nodes to place into the tree
@@ -159,7 +159,7 @@ pub const Huffman = struct {
             std.sort.insertion(Node, queue[0..index], {}, Node.less_than);
         }
 
-        log.debug(@src(), "initial node count: {}", .{queue_cnt});
+        log.debug(@src(), "Initial node count: {}", .{queue_cnt});
 
         // 3. Create the tree, we need to make sure that we do not grow
         // the tree deeper than 15 levels so that every leaf can be encoded
@@ -398,20 +398,20 @@ pub const Huffman = struct {
 
             if (self.enc_map[@intCast(c)]) |enc| {
                 if (enc.bit_shift >= 15) {
-                    log.err(@src(), "unexpected bit shift: {any}", .{enc});
+                    log.err(@src(), "Unexpected bit shift: {any}", .{enc});
                     return HuffmanError.BadTreeStructure;
                 }
                 // Write the translation to the output stream
                 try writer.writeBits(enc.bits, enc.bit_shift + 1);
                 written_bits += enc.bit_shift + 1;
             } else {
-                log.err(@src(), "unexpected byte: 0x{x}", .{c});
+                log.err(@src(), "Unexpected byte: 0x{x}", .{c});
                 return HuffmanError.UnexpectedCharacter;
             }
         }
 
         try writer.flushBits();
-        log.debug(@src(), "wrote {} bits [{} bytes]", .{written_bits, written_bits / 8});
+        log.debug(@src(), "Wrote {} bits [{} bytes]", .{written_bits, written_bits / 8});
     }
 
     pub fn decompress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
@@ -432,7 +432,7 @@ pub const Huffman = struct {
         // Decode the stream
         while (pos < end) {
             const char = self.walk_decode(self.array.items.len - 1, &reader, &pos) catch |err| {
-                log.err(@src(), "decoding error: {any}", .{err});
+                log.err(@src(), "Decoding error: {any}", .{err});
                 break;
             };
 
@@ -464,7 +464,7 @@ pub const Huffman = struct {
             if (self.array.items[index].char) |char| {
                 return char;
             } else {
-                log.err(@src(), "missing character from leaf node", .{});
+                log.err(@src(), "Missing character from leaf node", .{});
                 return HuffmanError.BadTreeStructure;
             }
 
@@ -500,7 +500,7 @@ pub const Huffman = struct {
         const right_child_index = array.items[index].right_child_index;
 
         if (bit_shift >= 15) {
-            log.err(@src(), "huffman tree too deep: node requires {} bits", .{bit_shift});
+            log.err(@src(), "Huffman tree too deep: node requires {} bits", .{bit_shift});
             return HuffmanError.BadTreeStructure;
         }
 
@@ -510,7 +510,7 @@ pub const Huffman = struct {
                 const enc = NodeEncoding { .bit_shift = bit_shift, .bits = bits };
                 enc_map.*[char] = enc;
             } else {
-                log.err(@src(), "missing character from leaf node", .{});
+                log.err(@src(), "Missing character from leaf node", .{});
                 return HuffmanError.BadTreeStructure;
             }
         } else {
@@ -538,12 +538,12 @@ pub const Huffman = struct {
     fn dump_tree(self: @This(), comptime level: u4, index: usize) void {
         // Compile time generated strings are built based on the level
         if (level >= 15) {
-            log.err(@src(), "reached maximum depth: {d}", .{level});
+            log.err(@src(), "Reached maximum depth: {d}", .{level});
             return;
         }
 
         if (index == self.array.items.len - 1) {
-            log.debug(@src(), "complete tree node count: {}", .{self.array.items.len});
+            log.debug(@src(), "Complete tree node count: {}", .{self.array.items.len});
             const node = self.array.items[index];
             node.dump(0, "root");
         }

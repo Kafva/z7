@@ -193,7 +193,7 @@ pub const Lz77 = struct {
     /// into the sliding window.
     fn window_start_index(self: @This(), write_index: usize, distance: u8) !usize {
         if (distance > self.window_length) {
-            log.err(@src(), "distance too large: {d} >= {d}", .{ distance, self.window_length });
+            log.err(@src(), "Distance too large: {d} >= {d}", .{ distance, self.window_length });
             return Lz77Error.InvalidDistance;
         }
 

@@ -64,7 +64,7 @@ pub fn main() !u8 {
         return 0;
     }
     log.enable_debug = opts[flag_v].value.active;
-    log.debug(@src(), "starting z7 {s}", .{build_options.version});
+    log.debug(@src(), "Starting z7 {s}", .{build_options.version});
 
     if (first_arg) |inputfile| {
         const flate = Flate {
@@ -78,7 +78,7 @@ pub fn main() !u8 {
             }
             else {
                 const file = std.fs.cwd().openFile(inputfile, .{}) catch |err| {
-                    log.err(@src(), "failed to open input file: {any}", .{err});
+                    log.err(@src(), "Failed to open input file: {any}", .{err});
                     return 1;
                 };
                 break :blk file;
@@ -89,9 +89,9 @@ pub fn main() !u8 {
         const outstream = open_output(allocator, inputfile) catch |err| {
             switch (err) {
                 Z7Error.InputFileMissingExtension =>
-                    log.err(@src(), "input file is missing .gz extension", .{}),
+                    log.err(@src(), "Input file is missing .gz extension", .{}),
                 else => {
-                    log.err(@src(), "failed to open output file: {any}", .{err});
+                    log.err(@src(), "Failed to open output file: {any}", .{err});
                 }
             }
             return 1;
@@ -99,10 +99,10 @@ pub fn main() !u8 {
         defer outstream.close();
 
         if (opts[flag_d].value.active) {
-            log.debug(@src(), "decompressing: {s}", .{inputfile});
+            log.debug(@src(), "Decompressing: {s}", .{inputfile});
             try flate.decompress(instream, outstream);
         } else {
-            log.debug(@src(), "compressing: {s}", .{inputfile});
+            log.debug(@src(), "Compressing: {s}", .{inputfile});
             try flate.compress(instream, outstream);
         }
     } else {
