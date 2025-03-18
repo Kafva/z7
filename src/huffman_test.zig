@@ -1,6 +1,7 @@
 const std = @import("std");
 const util = @import("util_test.zig");
 const Huffman = @import("huffman.zig").Huffman;
+const Node = @import("huffman.zig").Node;
 
 const max_size = 512*1024; // 0.5 MB
 
@@ -49,6 +50,36 @@ fn run_dir(dirpath: []const u8) !void {
 
     for (filepaths.items) |filepath| {
         try run_alloc(allocator, filepath);
+    }
+}
+
+test "Huffman node less than comparsion" {
+    const size = 20;
+    var arr: [size]Node = undefined;
+    var prng = std.Random.DefaultPrng.init(blk: {
+        var seed: u64 = undefined;
+        try std.posix.getrandom(std.mem.asBytes(&seed));
+        break :blk seed;
+    });
+    const random = prng.random();
+
+    for (0..size) |i| {
+       arr[i] = Node {
+            .char = null,
+            .level = random.int(u4) % 4,
+            .weight = random.int(usize) % 1000,
+            .left_child_index = undefined,
+            .right_child_index = undefined
+       };
+       std.sort.insertion(Node, arr[0..i+1], {}, Node.less_than);
+    }
+
+    for (0..size-1) |i| {
+        try std.testing.expect(arr[i].level <= arr[i+1].level);
+
+        if (arr[i].level == arr[i + 1].level) {
+            try std.testing.expect(arr[i].weight >= arr[i+1].weight);
+        }
     }
 }
 

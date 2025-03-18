@@ -6,7 +6,6 @@ const HuffmanError = error {
     UnexpectedCharacter,
     UnexpectedEncodedSymbol,
     BadTreeStructure,
-    InternalError,
     MaxDepthInsufficent,
 };
 
@@ -44,7 +43,7 @@ pub const Node = struct {
     left_child_index: ?usize,
     right_child_index: ?usize,
 
-    /// Priority sort comparison method:
+    /// Priority sort comparison method (ascending):
     ///
     /// First: Sort based on level (ascending, lowest first)
     /// Second: Sort based on weight (descending, highest first)
@@ -61,14 +60,18 @@ pub const Node = struct {
     ///
     /// When constructing the tree we want to pop items from the tail of the queue.
     /// We exhaust the highest remaning level with the lowest weights first.
-    pub fn prio(_:void, lhs: @This(), rhs: @This()) bool {
-        // Returns true if the item should be placed closer to the start of the array
+    /// Returns true if `lhs` is less than `rhs` and should be placed before it.
+    pub fn less_than(_:void, lhs: @This(), rhs: @This()) bool {
+        if (lhs.level < rhs.level) {
+            // Lower level, further in the front, always
+            return true;
+        }
         if (lhs.level == rhs.level) {
-            return lhs.weight > rhs.weight;
+            // Same level, return true if lhs weight is larger
+            return lhs.weight >= rhs.weight;
         }
-        else {
-            return lhs.level < rhs.level;
-        }
+        // Higher level, further back, always
+        return false;
     }
 
     pub fn format(
@@ -90,7 +93,7 @@ pub const Node = struct {
                                   .{self.level, self.weight, char});
             }
         } else {
-            return writer.print("{{ .weight = {d} }}", .{self.weight});
+            return writer.print("{{ .level = {d}, .weight = {d} }}", .{self.level, self.weight});
         }
     }
 
@@ -152,8 +155,8 @@ pub const Huffman = struct {
                 .right_child_index = undefined
             };
             // Sort in descending order with the largest node first
-            std.sort.insertion(Node, queue[0..index], {}, Node.prio);
             index += 1;
+            std.sort.insertion(Node, queue[0..index], {}, Node.less_than);
         }
 
         log.debug(@src(), "initial node count: {}", .{queue_cnt});
@@ -170,8 +173,14 @@ pub const Huffman = struct {
         //
         // Iterative approach, try to create a tree with all slots filled up to level 2
         // On failure, try again with all slots up to level 3, etc.
-        for (2..15) |i| {
-            construct_max_depth_tree(&queue, queue_cnt, &array, @truncate(i)) catch |e| {
+        for (2..16) |i| {
+            construct_max_depth_tree(
+                allocator,
+                &queue,
+                queue_cnt,
+                &array,
+                @truncate(i)
+            ) catch |e| {
                 if (e == HuffmanError.MaxDepthInsufficent) {
                     continue;
                 }
@@ -190,7 +199,8 @@ pub const Huffman = struct {
     /// exceed the provided `max_level`, returns an error if the provided
     /// `max_level` is insufficient.
     fn construct_max_depth_tree(
-        queue: *[]Node,
+        allocator: std.mem.Allocator,
+        queue_initial: *[]Node,
         queue_initial_cnt: usize,
         array: *std.ArrayList(Node),
         max_level: u4,
@@ -199,20 +209,28 @@ pub const Huffman = struct {
         var array_cnt: usize = 0;
         var filled_cnt: usize = 0;
         var current_level: u4 = max_level;
+        var queue = try allocator.alloc(Node, queue_initial_cnt);
+
+        // Start from an empty array
+        array.*.clearRetainingCapacity();
 
         // Let all nodes start at the bottom
         for (0..queue_initial_cnt) |i| {
-            queue.*[i].level = max_level;
-            std.debug.print("queue: {any}\n", .{queue.*[i]});
+            queue[i] = Node {
+                .char = queue_initial.*[i].char,
+                .level = max_level,
+                .weight = queue_initial.*[i].weight,
+                .left_child_index = undefined,
+                .right_child_index = undefined
+            };
         }
-
 
         while (queue_cnt > 0) {
             if (current_level == 0) {
                 if (queue_cnt > 1) {
                     log.debug(
                         @src(),
-                        "failed to construct {}-depth tree: {} nodes left",
+                        "Huffman tree depth of {} is insufficient: {} nodes left",
                         .{max_level, queue_cnt}
                     );
                     return HuffmanError.MaxDepthInsufficent;
@@ -222,7 +240,7 @@ pub const Huffman = struct {
             if (queue_cnt == 1) {
                 // OK: last node from the priority queue has already been given children,
                 // just save it and quit.
-                try array.*.append(queue.*[0]);
+                try array.*.append(queue[0]);
                 queue_cnt -= 1;
                 array_cnt += 1;
                 continue;
@@ -236,19 +254,12 @@ pub const Huffman = struct {
             }
 
             // Current level has not been filled, pick the two nodes with the lowest weight
-            // from the current level
-            const left_child = queue.*[queue_cnt - 2];
-            const right_child = queue.*[queue_cnt - 1];
+            // for the current level
+            var left_child = queue[queue_cnt - 2];
+            var right_child = queue[queue_cnt - 1];
 
-            // If the nodes are at a higher level than expected we have an internal error
-            if (left_child.level > current_level) {
-                log.err(@src(), "bad level of left node: {}", .{left_child.level});
-                return HuffmanError.InternalError;
-            }
-            if (right_child.level > current_level) {
-                log.err(@src(), "bad level of right node: {}", .{right_child.level});
-                return HuffmanError.InternalError;
-            }
+            left_child.level = current_level;
+            right_child.level = current_level;
 
             // Save the children from the queue into the backing array
             // XXX: the backing array is unsorted, the tree structure is derived from each `Node`
@@ -272,8 +283,8 @@ pub const Huffman = struct {
             // Insert the parent node into the priority queue, overwriting
             // one of the children and dropping the other
             queue_cnt -= 1;
-            queue.*[queue_cnt - 1] = parent_node;
-            std.sort.insertion(Node, queue.*[0..queue_cnt], {}, Node.prio);
+            queue[queue_cnt - 1] = parent_node;
+            std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.less_than);
         }
     }
 
