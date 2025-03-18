@@ -24,7 +24,7 @@ pub fn dump_hashmap(
             if (std.ascii.isPrint(key.*)) {
                 log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{key.*, key.*, enc});
             } else {
-                log.debug(@src(), "(0x{x})     -> {any}", .{key.*, enc});
+                log.debug(@src(), "(0x{x}) ' ' -> {any}", .{key.*, enc});
             }
         }
     }

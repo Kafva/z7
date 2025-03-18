@@ -91,9 +91,9 @@ test "Huffman on simple text" {
     try run("tests/testdata/helloworld.txt");
 }
 
-// test "Huffman on rfc1951.txt" {
-//     try run("tests/testdata/rfc1951.txt");
-// }
+test "Huffman on rfc1951.txt" {
+    try run("tests/testdata/rfc1951.txt");
+}
 
 // test "Huffman on 9001 repeated characters" {
 //     try run("tests/testdata/over_9000_a.txt");

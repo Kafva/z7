@@ -2,6 +2,8 @@ const std = @import("std");
 const util = @import("util.zig");
 const log = @import("log.zig");
 
+const color_base: u8 = 214;
+
 const HuffmanError = error {
     UnexpectedCharacter,
     UnexpectedEncodedSymbol,
@@ -99,7 +101,12 @@ pub const Node = struct {
 
     pub fn dump(self: @This(), comptime level: u4, pos: []const u8) void {
         const prefix = util.repeat('-', level) catch unreachable;
-        log.debug(@src(), "`{s}{s}: {any} [{d}]", .{prefix, pos, self, level});
+        const color: u8 = color_base + @as(u8, level);
+        log.debug(
+            @src(),
+            "`{s}{s}: \x1b[38;5;{d}m{any}\x1b[0m",
+            .{prefix, pos, color, self}
+        );
         std.heap.page_allocator.free(prefix);
     }
 
@@ -128,7 +135,7 @@ pub const Huffman = struct {
     /// Mappings from 1 byte symbols onto 256-bit encodings
     enc_map: []?NodeEncoding,
 
-    /// Initialize a Huffman tree from the input of the provided `reader`
+    /// Initialize a Huffman tree from the provided symbol `frequencies`
     pub fn init(
         allocator: std.mem.Allocator,
         frequencies: *const std.AutoHashMap(u8, usize),
@@ -181,11 +188,12 @@ pub const Huffman = struct {
                 &array,
                 @truncate(i)
             ) catch |e| {
-                if (e == HuffmanError.MaxDepthInsufficent) {
+                if (e == HuffmanError.MaxDepthInsufficent and i < 15) {
                     continue;
                 }
                 return e;
             };
+            log.debug(@src(), "Successfully constructed Huffman tree (maxdepth {})", .{i});
             break;
         }
 
@@ -195,8 +203,99 @@ pub const Huffman = struct {
         return @This(){ .array = array, .enc_map = enc_map };
     }
 
-    /// Construct a Huffman tree from `queue` into `array` which does not
-    /// exceed the provided `max_level`, returns an error if the provided
+    /// Count the occurrences of each byte in `instream`
+    pub fn get_frequencies(allocator: std.mem.Allocator, instream: std.fs.File) !std.AutoHashMap(u8, usize) {
+        var frequencies = std.AutoHashMap(u8, usize).init(allocator);
+        var cnt: usize = 0;
+        const reader = instream.reader();
+
+        while (true) {
+            const c = reader.readByte() catch {
+                break;
+            };
+
+            if (frequencies.get(c)) |weight| {
+                try frequencies.put(c, weight + 1);
+            } else {
+                try frequencies.put(c, 1);
+                cnt += 1;
+            }
+        }
+
+        return frequencies;
+    }
+
+    pub fn compress(
+        self: @This(),
+        instream: std.fs.File,
+        outstream: std.fs.File
+    ) !void {
+        if (self.array.items.len == 0) {
+            return;
+        }
+        var writer = std.io.bitWriter(.little, outstream.writer());
+        var written_bits: usize = 0;
+        const reader = instream.reader();
+
+        // Dump tree for debugging
+        self.dump_tree(0, self.array.items.len - 1);
+        self.dump_encodings();
+
+        while (true) {
+            const c = reader.readByte() catch {
+                break;
+            };
+
+            if (self.enc_map[@intCast(c)]) |enc| {
+                if (enc.bit_shift >= 15) {
+                    log.err(@src(), "Unexpected bit shift: {any}", .{enc});
+                    return HuffmanError.BadTreeStructure;
+                }
+                // Write the translation to the output stream
+                try writer.writeBits(enc.bits, enc.bit_shift + 1);
+                written_bits += enc.bit_shift + 1;
+            } else {
+                log.err(@src(), "Unexpected byte: 0x{x}", .{c});
+                return HuffmanError.UnexpectedCharacter;
+            }
+        }
+
+        try writer.flushBits();
+        log.debug(@src(), "Wrote {} bits [{} bytes]", .{written_bits, written_bits / 8});
+    }
+
+    pub fn decompress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
+        if (self.array.items.len == 0) {
+            return;
+        }
+        // The input stream position should point to the last input element
+        const end = (try instream.getPos()) * 8;
+        var pos: usize = 0;
+
+        // Start from the first element in both streams
+        try instream.seekTo(0);
+        try outstream.seekTo(0);
+
+        var reader = std.io.bitReader(.little, instream.reader());
+        var writer = outstream.writer();
+
+        // Decode the stream
+        while (pos < end) {
+            const char = self.walk_decode(self.array.items.len - 1, &reader, &pos) catch |err| {
+                log.err(@src(), "Decoding error: {any}", .{err});
+                break;
+            };
+
+            if (char) |c| {
+                try writer.writeByte(c);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Construct a Huffman tree from `queue_initial` into `array` which does
+    /// not exceed the provided `max_level`, returns an error if the provided
     /// `max_level` is insufficient.
     fn construct_max_depth_tree(
         allocator: std.mem.Allocator,
@@ -317,12 +416,6 @@ pub const Huffman = struct {
             }
         }
 
-        for (0..bit_length_counts.len) |i| {
-            if (bit_length_counts[i] != 0) {
-                log.debug(@src(), "bit_length_counts[{}] = {}", .{i, bit_length_counts[i]});
-            }
-        }
-
         // 2. For each bit length (up to the maximum we observed in step 1),
         // determine the starting code value.
         var next_code = [_]u16{0} ** 256;
@@ -333,9 +426,6 @@ pub const Huffman = struct {
             // Starting code is based of previous bit length code
             code = (code + bit_length_counts[i-1]) << 1;
             next_code[i] = code;
-            if (next_code[i] != 0) {
-                log.debug(@src(), "next_code[{}] = {}", .{i, next_code[i]});
-            }
         }
 
         // 3. Assign numerical values to all codes, using consecutive values for
@@ -348,98 +438,6 @@ pub const Huffman = struct {
                 };
                 enc_map.*[i] = new_enc;
                 next_code[enc.bit_shift] += 1;
-            }
-        }
-    }
-
-    /// Count the occurrences of each byte in `instream`
-    pub fn get_frequencies(allocator: std.mem.Allocator, instream: std.fs.File) !std.AutoHashMap(u8, usize) {
-        var frequencies = std.AutoHashMap(u8, usize).init(allocator);
-        var cnt: usize = 0;
-        const reader = instream.reader();
-
-        // 1. Calculate the frequencies for each character in the input stream.
-        while (true) {
-            const c = reader.readByte() catch {
-                break;
-            };
-
-            if (frequencies.get(c)) |weight| {
-                try frequencies.put(c, weight + 1);
-            } else {
-                try frequencies.put(c, 1);
-                cnt += 1;
-            }
-        }
-
-        return frequencies;
-    }
-
-    pub fn compress(
-        self: @This(),
-        instream: std.fs.File,
-        outstream: std.fs.File
-    ) !void {
-        if (self.array.items.len == 0) {
-            return;
-        }
-        var writer = std.io.bitWriter(.little, outstream.writer());
-        var written_bits: usize = 0;
-        const reader = instream.reader();
-
-        // Dump tree for debugging
-        self.dump_tree(0, self.array.items.len - 1);
-        self.dump_encodings();
-
-        while (true) {
-            const c = reader.readByte() catch {
-                break;
-            };
-
-            if (self.enc_map[@intCast(c)]) |enc| {
-                if (enc.bit_shift >= 15) {
-                    log.err(@src(), "Unexpected bit shift: {any}", .{enc});
-                    return HuffmanError.BadTreeStructure;
-                }
-                // Write the translation to the output stream
-                try writer.writeBits(enc.bits, enc.bit_shift + 1);
-                written_bits += enc.bit_shift + 1;
-            } else {
-                log.err(@src(), "Unexpected byte: 0x{x}", .{c});
-                return HuffmanError.UnexpectedCharacter;
-            }
-        }
-
-        try writer.flushBits();
-        log.debug(@src(), "Wrote {} bits [{} bytes]", .{written_bits, written_bits / 8});
-    }
-
-    pub fn decompress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
-        if (self.array.items.len == 0) {
-            return;
-        }
-        // The input stream position should point to the last input element
-        const end = (try instream.getPos()) * 8;
-        var pos: usize = 0;
-
-        // Start from the first element in both streams
-        try instream.seekTo(0);
-        try outstream.seekTo(0);
-
-        var reader = std.io.bitReader(.little, instream.reader());
-        var writer = outstream.writer();
-
-        // Decode the stream
-        while (pos < end) {
-            const char = self.walk_decode(self.array.items.len - 1, &reader, &pos) catch |err| {
-                log.err(@src(), "Decoding error: {any}", .{err});
-                break;
-            };
-
-            if (char) |c| {
-                try writer.writeByte(c);
-            } else {
-                break;
             }
         }
     }
@@ -566,10 +564,11 @@ pub const Huffman = struct {
         for (0..self.enc_map.len) |i| {
             const char: u8 = @truncate(i);
             if (self.enc_map[i]) |enc| {
+                const color: u8 = color_base + @as(u8, enc.bit_shift);
                 if (std.ascii.isPrint(char)) {
-                    log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{char, char, enc});
+                    log.debug(@src(), "(0x{x}) '{c}' -> \x1b[38;5;{d}m{any}\x1b[0m", .{char, char, color, enc});
                 } else {
-                    log.debug(@src(), "(0x{x})     -> {any}", .{char, enc});
+                    log.debug(@src(), "(0x{x}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m", .{char, color, enc});
                 }
             }
         }
