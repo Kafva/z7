@@ -40,37 +40,37 @@ pub const Node = struct {
     /// Only leaf nodes contain a character
     char: ?u8,
     freq: usize,
+    /// A lower weight has lower priority (minimum weight is 0).
     /// The maximum weight represents the maximum depth of the tree,
     /// a higher weight should be placed higher up in the tree.
     weight: u4,
     left_child_index: ?usize,
     right_child_index: ?usize,
 
-    /// Priority sort comparison method (ascending):
+    /// Priority sort comparison method (descending):
     ///
-    /// First: Sort based on weight (ascending, lowest first)
-    /// Second: Sort based on frequency (ascending, lowest first)
+    /// First: Sort based on weight (descending, greater first)
+    /// Second: Sort based on frequency (descending, greater first)
     /// Example:
-    ///
     /// [
-    ///     { .weight = 0, .freq = 1 },
-    ///     { .weight = 0, .freq = 2 },
-    ///     { .weight = 0, .freq = 3 },
-    ///     { .weight = 1, .freq = 1 },
-    ///     { .weight = 1, .freq = 2 },
     ///     { .weight = 1, .freq = 3 },
+    ///     { .weight = 1, .freq = 2 },
+    ///     { .weight = 1, .freq = 1 },
+    ///     { .weight = 0, .freq = 3 },
+    ///     { .weight = 0, .freq = 2 },
+    ///     { .weight = 0, .freq = 1 },
     /// ]
     ///
-    /// When constructing the tree we want to pop items from the head of the queue.
+    /// When constructing the tree we want to pop items from the *tail* of the queue.
     /// We exhaust the nodes with lowest remaining weight with the lowest frequency first.
-    /// Returns true if `lhs` is less than `rhs` and should be placed before it.
-    pub fn less_than(_:void, lhs: @This(), rhs: @This()) bool {
+    /// Returns true if `lhs` should be placed before `rhs`.
+    pub fn greater_than(_: void, lhs: @This(), rhs: @This()) bool {
         if (lhs.weight == rhs.weight) {
-            // Lower frequency further in the front
-            return lhs.freq < rhs.freq;
+            // Greater frequency further in the front
+            return lhs.freq > rhs.freq;
         }
         // Ignore frequency if the weights differ
-        return lhs.weight < rhs.weight;
+        return lhs.weight > rhs.weight;
     }
 
     pub fn format(
@@ -159,9 +159,9 @@ pub const Huffman = struct {
                 .left_child_index = undefined,
                 .right_child_index = undefined
             };
-            // Sort in ascending order with the lowest frequency+weight first
+            // Sort in descending order with the highest frequency+weight first
             index += 1;
-            std.sort.insertion(Node, queue[0..index], {}, Node.less_than);
+            std.sort.insertion(Node, queue[0..index], {}, Node.greater_than);
         }
 
         log.debug(@src(), "Initial node count: {}", .{queue_cnt});
@@ -319,7 +319,7 @@ pub const Huffman = struct {
         // Start from an empty array
         array.*.clearRetainingCapacity();
 
-        // Let all nodes start at the bottom
+        // Let all nodes start at the bottom (lowest possible weight value)
         for (0..queue_initial_cnt) |i| {
             queue[i] = Node {
                 .char = queue_initial.*[i].char,
@@ -360,10 +360,10 @@ pub const Huffman = struct {
 
             // Current depth has not been filled, pick the two nodes with the lowest frequency
             // for the current depth value
-            const left_child = queue[0];
-            const right_child = queue[1];
+            const left_child = queue[queue_cnt - 2];
+            const right_child = queue[queue_cnt - 1];
 
-            // The parent node will be one level higher than the children
+            // The parent node will be one level higher than the children (child weight + 1)
             // Pick the child with the weight closest to the top (max_depth)
             const parent_weight = if (left_child.weight > right_child.weight) left_child.weight + 1
                                  else right_child.weight + 1;
@@ -376,7 +376,7 @@ pub const Huffman = struct {
             filled_cnt += 2;
 
             // Create the parent node
-            // We always create parent node with both child positions filled,
+            // We always create parent nodes with both child positions filled,
             // the child pointers of this node will not change after creation.
             const parent_node = Node {
                 .char = undefined,
@@ -386,13 +386,11 @@ pub const Huffman = struct {
                 .right_child_index = array_cnt - 1
             };
 
-            // Overwrite one of the picked nodes with the parent
-            queue[0] = parent_node;
-            // Overwrite the other child by moving the tail node
-            // TODO: bad peformance
-            queue[1] = queue[queue_cnt - 1];
+            // Insert the parent node into the priority queue, overwriting
+            // one of the children and dropping the other
             queue_cnt -= 1;
-            std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.less_than);
+            queue[queue_cnt - 1] = parent_node;
+            std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.greater_than);
         }
     }
 

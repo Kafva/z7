@@ -53,7 +53,7 @@ fn run_dir(dirpath: []const u8) !void {
     }
 }
 
-test "Huffman node less than comparsion" {
+test "Huffman node sorting" {
     const size = 20;
     var arr: [size]Node = undefined;
     var prng = std.Random.DefaultPrng.init(blk: {
@@ -71,11 +71,11 @@ test "Huffman node less than comparsion" {
             .left_child_index = undefined,
             .right_child_index = undefined
        };
-       std.sort.insertion(Node, arr[0..i+1], {}, Node.less_than);
+       std.sort.insertion(Node, arr[0..i+1], {}, Node.greater_than);
     }
 
     for (0..size-1) |i| {
-        try std.testing.expect(arr[i].weight <= arr[i+1].weight);
+        try std.testing.expect(arr[i].weight >= arr[i+1].weight);
 
         if (arr[i].weight == arr[i + 1].weight) {
             try std.testing.expect(arr[i].freq >= arr[i+1].freq);
@@ -95,18 +95,18 @@ test "Huffman on rfc1951.txt" {
     try run("tests/testdata/rfc1951.txt");
 }
 
-// test "Huffman on 9001 repeated characters" {
-//     try run("tests/testdata/over_9000_a.txt");
-// }
+test "Huffman on 9001 repeated characters" {
+    try run("tests/testdata/over_9000_a.txt");
+}
 
 // test "Huffman on random data" {
 //     try run(util.random_label);
 // }
-
+// 
 // test "Huffman on fuzzing testdata from zig stdlib" {
 //     try run_dir("tests/testdata/zig/fuzz");
 // }
-
+// 
 // test "Huffman on block writer testdata from zig stdlib" {
 //     try run_dir("tests/testdata/zig/block_writer");
 // }
