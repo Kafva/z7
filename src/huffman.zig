@@ -39,40 +39,41 @@ const NodeEncoding = struct {
 pub const Node = struct {
     /// Only leaf nodes contain a character
     char: ?u8,
-    weight: usize,
-    /// Level in the tree, root node is at depth 0
-    depth: u4,
+    freq: usize,
+    /// The maximum weight represents the maximum depth of the tree,
+    /// a lower weight should be placed higher up in the tree.
+    weight: u4,
     left_child_index: ?usize,
     right_child_index: ?usize,
 
     /// Priority sort comparison method (ascending):
     ///
-    /// First: Sort based on depth (ascending, lowest first)
-    /// Second: Sort based on weight (descending, highest first)
+    /// First: Sort based on weight (descending, highest first)
+    /// Second: Sort based on frequency (descending, highest first)
     /// Example:
     ///
     /// [
-    ///     { .depth = 0, .weight = 3 },
-    ///     { .depth = 0, .weight = 2 },
-    ///     { .depth = 0, .weight = 1 },
-    ///     { .depth = 1, .weight = 3 },
-    ///     { .depth = 1, .weight = 2 },
-    ///     { .depth = 1, .weight = 1 },
+    ///     { .weight = 0, .freq = 3 },
+    ///     { .weight = 0, .freq = 2 },
+    ///     { .weight = 0, .freq = 1 },
+    ///     { .weight = 1, .freq = 3 },
+    ///     { .weight = 1, .freq = 2 },
+    ///     { .weight = 1, .freq = 1 },
     /// ]
     ///
     /// When constructing the tree we want to pop items from the tail of the queue.
-    /// We exhaust the highest remaning depth with the lowest weights first.
+    /// We exhaust the highest remaning weight with the lowest weights first.
     /// Returns true if `lhs` is less than `rhs` and should be placed before it.
     pub fn less_than(_:void, lhs: @This(), rhs: @This()) bool {
-        if (lhs.depth < rhs.depth) {
-            // Lower depth, further in the front, always
+        if (lhs.weight < rhs.weight) {
+            // Lower weight, further in the front, always
             return true;
         }
-        if (lhs.depth == rhs.depth) {
-            // Same depth, return true if lhs weight is larger
-            return lhs.weight >= rhs.weight;
+        if (lhs.weight == rhs.weight) {
+            // Same weight, return true if lhs frequency is larger
+            return lhs.freq >= rhs.freq;
         }
-        // Higher depth, further back, always
+        // Higher weight, further back, always
         return false;
     }
 
@@ -88,24 +89,25 @@ pub const Node = struct {
 
         if (self.char) |char| {
             if (std.ascii.isPrint(char) and char != '\n') {
-                return writer.print("{{ .depth = {d}, .weight = {d}, .char = '{c}' }}",
-                                  .{self.depth, self.weight, char});
+                return writer.print("{{ .weight = {d}, .freq = {d}, .char = '{c}' }}",
+                                  .{self.weight, self.freq, char});
             } else {
-                return writer.print("{{ .depth = {d}, .weight = {d}, .char = 0x{x} }}",
-                                  .{self.depth, self.weight, char});
+                return writer.print("{{ .weight = {d}, .freq = {d}, .char = 0x{x} }}",
+                                  .{self.weight, self.freq, char});
             }
         } else {
-            return writer.print("{{ .depth = {d}, .weight = {d} }}", .{self.depth, self.weight});
+            return writer.print("{{ .weight = {d}, .freq = {d} }}", .{self.weight, self.freq});
         }
     }
 
-    pub fn dump(self: @This(), comptime depth: u4, pos: []const u8) void {
-        const prefix = util.repeat('-', depth) catch unreachable;
-        const color: u8 = color_base + @as(u8, depth);
+    pub fn dump(self: @This(), comptime weight: u4, pos: []const u8) void {
+        const prefix = util.repeat('-', weight) catch unreachable;
+        const side_color: u8 = if (std.mem.eql(u8, "1", pos)) 37 else 97;
+        const color: u8 = color_base + @as(u8, weight);
         log.debug(
             @src(),
-            "`{s}{s}: \x1b[38;5;{d}m{any}\x1b[0m",
-            .{prefix, pos, color, self}
+            "\x1b[{d}m`{s}{s}\x1b[0m: \x1b[38;5;{d}m{any}\x1b[0m",
+            .{side_color, prefix, pos, color, self}
         );
         std.heap.page_allocator.free(prefix);
     }
@@ -153,11 +155,11 @@ pub const Huffman = struct {
         var keys = frequencies.*.keyIterator();
         var index: usize = 0;
         while (keys.next()) |key| {
-            const weight = frequencies.*.get(key.*).?;
+            const freq = frequencies.*.get(key.*).?;
             queue[index] = Node {
                 .char = key.*,
-                .depth = 15, // placeholder
-                .weight = weight,
+                .weight = 15, // placeholder
+                .freq = freq,
                 .left_child_index = undefined,
                 .right_child_index = undefined
             };
@@ -222,8 +224,8 @@ pub const Huffman = struct {
                 break;
             };
 
-            if (frequencies.get(c)) |weight| {
-                try frequencies.put(c, weight + 1);
+            if (frequencies.get(c)) |freq| {
+                try frequencies.put(c, freq + 1);
             } else {
                 try frequencies.put(c, 1);
                 cnt += 1;
@@ -325,8 +327,8 @@ pub const Huffman = struct {
         for (0..queue_initial_cnt) |i| {
             queue[i] = Node {
                 .char = queue_initial.*[i].char,
-                .depth = max_depth,
-                .weight = queue_initial.*[i].weight,
+                .weight = max_depth,
+                .freq = queue_initial.*[i].freq,
                 .left_child_index = undefined,
                 .right_child_index = undefined
             };
@@ -360,13 +362,15 @@ pub const Huffman = struct {
                 continue;
             }
 
-            // Current depth has not been filled, pick the two nodes with the lowest weight
-            // for the current depth
-            var left_child = queue[queue_cnt - 2];
-            var right_child = queue[queue_cnt - 1];
+            // Current depth has not been filled, pick the two nodes with the lowest frequency
+            // for the current depth value
+            const left_child = queue[queue_cnt - 2];
+            const right_child = queue[queue_cnt - 1];
 
-            left_child.depth = current_depth;
-            right_child.depth = current_depth;
+            // The parent node will be one level higher than the children
+            // Pick the child with the weight closest to the top (0)
+            const parent_weight = if (left_child.weight < right_child.weight) left_child.weight - 1
+                                 else right_child.weight - 1;
 
             // Save the children from the queue into the backing array
             // XXX: the backing array is unsorted, the tree structure is derived from each `Node`
@@ -380,9 +384,8 @@ pub const Huffman = struct {
             // the child pointers of this node will not change after creation.
             const parent_node = Node {
                 .char = undefined,
-                .weight = left_child.weight + right_child.weight,
-                // The parent will be one depth higher than the children
-                .depth = current_depth - 1,
+                .freq = left_child.freq + right_child.freq,
+                .weight = parent_weight,
                 .left_child_index = array_cnt - 2,
                 .right_child_index = array_cnt - 1
             };
