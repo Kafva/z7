@@ -66,7 +66,7 @@ test "Huffman node less than comparsion" {
     for (0..size) |i| {
        arr[i] = Node {
             .char = null,
-            .level = random.int(u4) % 4,
+            .depth = random.int(u4) % 4,
             .weight = random.int(usize) % 1000,
             .left_child_index = undefined,
             .right_child_index = undefined
@@ -75,9 +75,9 @@ test "Huffman node less than comparsion" {
     }
 
     for (0..size-1) |i| {
-        try std.testing.expect(arr[i].level <= arr[i+1].level);
+        try std.testing.expect(arr[i].depth <= arr[i+1].depth);
 
-        if (arr[i].level == arr[i + 1].level) {
+        if (arr[i].depth == arr[i + 1].depth) {
             try std.testing.expect(arr[i].weight >= arr[i+1].weight);
         }
     }

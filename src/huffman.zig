@@ -40,39 +40,39 @@ pub const Node = struct {
     /// Only leaf nodes contain a character
     char: ?u8,
     weight: usize,
-    /// Level in the tree, root node is at level 0
-    level: u4,
+    /// Level in the tree, root node is at depth 0
+    depth: u4,
     left_child_index: ?usize,
     right_child_index: ?usize,
 
     /// Priority sort comparison method (ascending):
     ///
-    /// First: Sort based on level (ascending, lowest first)
+    /// First: Sort based on depth (ascending, lowest first)
     /// Second: Sort based on weight (descending, highest first)
     /// Example:
     ///
     /// [
-    ///     { .level = 0, .weight = 3 },
-    ///     { .level = 0, .weight = 2 },
-    ///     { .level = 0, .weight = 1 },
-    ///     { .level = 1, .weight = 3 },
-    ///     { .level = 1, .weight = 2 },
-    ///     { .level = 1, .weight = 1 },
+    ///     { .depth = 0, .weight = 3 },
+    ///     { .depth = 0, .weight = 2 },
+    ///     { .depth = 0, .weight = 1 },
+    ///     { .depth = 1, .weight = 3 },
+    ///     { .depth = 1, .weight = 2 },
+    ///     { .depth = 1, .weight = 1 },
     /// ]
     ///
     /// When constructing the tree we want to pop items from the tail of the queue.
-    /// We exhaust the highest remaning level with the lowest weights first.
+    /// We exhaust the highest remaning depth with the lowest weights first.
     /// Returns true if `lhs` is less than `rhs` and should be placed before it.
     pub fn less_than(_:void, lhs: @This(), rhs: @This()) bool {
-        if (lhs.level < rhs.level) {
-            // Lower level, further in the front, always
+        if (lhs.depth < rhs.depth) {
+            // Lower depth, further in the front, always
             return true;
         }
-        if (lhs.level == rhs.level) {
-            // Same level, return true if lhs weight is larger
+        if (lhs.depth == rhs.depth) {
+            // Same depth, return true if lhs weight is larger
             return lhs.weight >= rhs.weight;
         }
-        // Higher level, further back, always
+        // Higher depth, further back, always
         return false;
     }
 
@@ -88,20 +88,20 @@ pub const Node = struct {
 
         if (self.char) |char| {
             if (std.ascii.isPrint(char) and char != '\n') {
-                return writer.print("{{ .level = {d}, .weight = {d}, .char = '{c}' }}",
-                                  .{self.level, self.weight, char});
+                return writer.print("{{ .depth = {d}, .weight = {d}, .char = '{c}' }}",
+                                  .{self.depth, self.weight, char});
             } else {
-                return writer.print("{{ .level = {d}, .weight = {d}, .char = 0x{x} }}",
-                                  .{self.level, self.weight, char});
+                return writer.print("{{ .depth = {d}, .weight = {d}, .char = 0x{x} }}",
+                                  .{self.depth, self.weight, char});
             }
         } else {
-            return writer.print("{{ .level = {d}, .weight = {d} }}", .{self.level, self.weight});
+            return writer.print("{{ .depth = {d}, .weight = {d} }}", .{self.depth, self.weight});
         }
     }
 
-    pub fn dump(self: @This(), comptime level: u4, pos: []const u8) void {
-        const prefix = util.repeat('-', level) catch unreachable;
-        const color: u8 = color_base + @as(u8, level);
+    pub fn dump(self: @This(), comptime depth: u4, pos: []const u8) void {
+        const prefix = util.repeat('-', depth) catch unreachable;
+        const color: u8 = color_base + @as(u8, depth);
         log.debug(
             @src(),
             "`{s}{s}: \x1b[38;5;{d}m{any}\x1b[0m",
@@ -156,7 +156,7 @@ pub const Huffman = struct {
             const weight = frequencies.*.get(key.*).?;
             queue[index] = Node {
                 .char = key.*,
-                .level = 15, // placeholder
+                .depth = 15, // placeholder
                 .weight = weight,
                 .left_child_index = undefined,
                 .right_child_index = undefined
@@ -178,9 +178,17 @@ pub const Huffman = struct {
         // ...
         // Level 15: 2^15 nodes
         //
-        // Iterative approach, try to create a tree with all slots filled up to level 2
-        // On failure, try again with all slots up to level 3, etc.
-        for (2..16) |i| {
+        // Iterative approach, try to create a tree with all slots filled up to depth x
+        // On failure, try again with all slots up to depth x+1, etc.
+        const maxdepth_start = blk: {
+            if (queue_cnt == 0) {
+                break :blk 0;
+            }
+            // log2(queue_count) + 1 will give us the maxdepth at which all of our nodes
+            // fit on the lowest depth, we start from one depth before this.
+            break :blk std.math.log2(queue_cnt);
+        };
+        for (maxdepth_start..16) |i| {
             construct_max_depth_tree(
                 allocator,
                 &queue,
@@ -295,19 +303,19 @@ pub const Huffman = struct {
     }
 
     /// Construct a Huffman tree from `queue_initial` into `array` which does
-    /// not exceed the provided `max_level`, returns an error if the provided
-    /// `max_level` is insufficient.
+    /// not exceed the provided `max_depth`, returns an error if the provided
+    /// `max_depth` is insufficient.
     fn construct_max_depth_tree(
         allocator: std.mem.Allocator,
         queue_initial: *[]Node,
         queue_initial_cnt: usize,
         array: *std.ArrayList(Node),
-        max_level: u4,
+        max_depth: u4,
     ) !void {
         var queue_cnt: usize = queue_initial_cnt;
         var array_cnt: usize = 0;
         var filled_cnt: usize = 0;
-        var current_level: u4 = max_level;
+        var current_depth: u4 = max_depth;
         var queue = try allocator.alloc(Node, queue_initial_cnt);
 
         // Start from an empty array
@@ -317,7 +325,7 @@ pub const Huffman = struct {
         for (0..queue_initial_cnt) |i| {
             queue[i] = Node {
                 .char = queue_initial.*[i].char,
-                .level = max_level,
+                .depth = max_depth,
                 .weight = queue_initial.*[i].weight,
                 .left_child_index = undefined,
                 .right_child_index = undefined
@@ -325,12 +333,12 @@ pub const Huffman = struct {
         }
 
         while (queue_cnt > 0) {
-            if (current_level == 0) {
+            if (current_depth == 0) {
                 if (queue_cnt > 1) {
                     log.debug(
                         @src(),
                         "Huffman tree depth of {} is insufficient: {} nodes left",
-                        .{max_level, queue_cnt}
+                        .{max_depth, queue_cnt}
                     );
                     return HuffmanError.MaxDepthInsufficent;
                 }
@@ -345,20 +353,20 @@ pub const Huffman = struct {
                 continue;
             }
 
-            if (filled_cnt == std.math.pow(usize, 2, current_level)) {
-                // OK: current level has been filled
+            if (filled_cnt == std.math.pow(usize, 2, current_depth)) {
+                // OK: current depth has been filled
                 filled_cnt = 0;
-                current_level -= 1;
+                current_depth -= 1;
                 continue;
             }
 
-            // Current level has not been filled, pick the two nodes with the lowest weight
-            // for the current level
+            // Current depth has not been filled, pick the two nodes with the lowest weight
+            // for the current depth
             var left_child = queue[queue_cnt - 2];
             var right_child = queue[queue_cnt - 1];
 
-            left_child.level = current_level;
-            right_child.level = current_level;
+            left_child.depth = current_depth;
+            right_child.depth = current_depth;
 
             // Save the children from the queue into the backing array
             // XXX: the backing array is unsorted, the tree structure is derived from each `Node`
@@ -373,8 +381,8 @@ pub const Huffman = struct {
             const parent_node = Node {
                 .char = undefined,
                 .weight = left_child.weight + right_child.weight,
-                // The parent will be one level higher than the children
-                .level = current_level - 1,
+                // The parent will be one depth higher than the children
+                .depth = current_depth - 1,
                 .left_child_index = array_cnt - 2,
                 .right_child_index = array_cnt - 1
             };
@@ -533,10 +541,10 @@ pub const Huffman = struct {
         }
     }
 
-    fn dump_tree(self: @This(), comptime level: u4, index: usize) void {
-        // Compile time generated strings are built based on the level
-        if (level >= 15) {
-            log.err(@src(), "Reached maximum depth: {d}", .{level});
+    fn dump_tree(self: @This(), comptime depth: u4, index: usize) void {
+        // Compile time generated strings are built based on the depth
+        if (depth >= 15) {
+            log.err(@src(), "Reached maximum depth: {d}", .{depth});
             return;
         }
 
@@ -548,13 +556,13 @@ pub const Huffman = struct {
 
         if (self.array.items[index].left_child_index) |child_index| {
             const node = self.array.items[child_index];
-            node.dump(level + 1, "0");
-            self.dump_tree(level + 1, child_index);
+            node.dump(depth + 1, "0");
+            self.dump_tree(depth + 1, child_index);
         }
         if (self.array.items[index].right_child_index) |child_index| {
             const node = self.array.items[child_index];
-            node.dump(level + 1, "1");
-            self.dump_tree(level + 1, child_index);
+            node.dump(depth + 1, "1");
+            self.dump_tree(depth + 1, child_index);
         }
     }
 
