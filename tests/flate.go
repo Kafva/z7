@@ -7,7 +7,6 @@ import (
     "bytes"
     "compress/flate"
     "compress/gzip"
-    "fmt"
     "io"
     "os"
 )
@@ -15,33 +14,33 @@ import (
 //export DeflateHuffmanOnly
 func DeflateHuffmanOnly(inputfile string, outputfile string) int64 {
     // Open input file
-	in, err := os.Open(inputfile)
-	if err != nil {
-		fmt.Printf("Error opening '%s': %v\n", inputfile, err)
-		return -1
-	}
-	defer in.Close()
+    in, err := os.Open(inputfile)
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
+    defer in.Close()
 
     // Open output file
-	out, err := os.Create(outputfile)
-	if err != nil {
-		fmt.Printf("Error opening '%s': %v\n", outputfile, err)
-		return -1
-	}
-	defer out.Close()
+    out, err := os.Create(outputfile)
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
+    defer out.Close()
     // Wrap output file in flate writer
     writer, err := flate.NewWriter(out, flate.HuffmanOnly)
     if err != nil {
-		fmt.Printf("Error creating writer: %v\n", err)
-		return -1
+        println(err.Error())
+        return -1
     }
 
     // Write input file via flate writer to output file
     written, err := io.Copy(writer, in)
-	if err != nil {
-		fmt.Printf("Error deflating '%s': %v\n", inputfile, err)
-		return -1
-	}
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
 
     return written
 }
@@ -49,29 +48,29 @@ func DeflateHuffmanOnly(inputfile string, outputfile string) int64 {
 //export InflateHuffmanOnly
 func InflateHuffmanOnly(inputfile string, outputfile string) int64 {
     // Open input file
-	in, err := os.Open(inputfile)
-	if err != nil {
-		fmt.Printf("Error opening '%s': %v\n", inputfile, err)
-		return -1
-	}
-	defer in.Close()
+    in, err := os.Open(inputfile)
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
+    defer in.Close()
     // Wrap input file in flate reader
     reader := flate.NewReader(in)
 
     // Open output file
-	out, err := os.Create(outputfile)
-	if err != nil {
-		fmt.Printf("Error opening '%s': %v\n", outputfile, err)
-		return -1
-	}
-	defer out.Close()
+    out, err := os.Create(outputfile)
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
+    defer out.Close()
 
     // Write input file via flate reader to output file
     written, err := io.Copy(out, reader)
-	if err != nil {
-		fmt.Printf("Error inflating '%s': %v\n", inputfile, err)
-		return -1
-	}
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
 
     return written
 }
@@ -83,13 +82,13 @@ func InflateGzip(input []uint8, output []uint8) int {
 
     _, err = buf.Write(input)
     if err != nil {
-        fmt.Printf("write: %+v\n", err);
+        println(err.Error())
         return -1
     }
 
     reader, err := gzip.NewReader(&buf)
     if err != nil {
-        fmt.Printf("reader: %+v\n", err);
+        println(err.Error())
         return -1
     }
     defer reader.Close()
@@ -97,7 +96,7 @@ func InflateGzip(input []uint8, output []uint8) int {
     for {
         n, err = reader.Read(output[n:]);
         if err != nil && err != io.EOF {
-            fmt.Printf("read: %+v\n", err);
+            println(err.Error())
             return -1
         }
         if err == io.EOF {
@@ -112,7 +111,7 @@ func InflateGzip(input []uint8, output []uint8) int {
 func loadFromFile(path string) ([]byte, bool) {
     out, err := os.ReadFile(path)
     if err != nil {
-        fmt.Printf("Error reading: '%s'\n", path)
+        println(err.Error())
         return nil, false
     }
     return out, true

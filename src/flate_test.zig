@@ -26,33 +26,33 @@ test "Reference implementation ok" {
     const in = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
     const in_size = (try in.stat()).size;
 
-    const decompressed = try tmp.dir.createFile("decompressed.bin", .{ .read = true });
-    decompressed.close();
-    const decompressed_names = [_][]u8 {try tmp.parent_dir.realpath(), @constCast("decompressed.bin")};
-    const decompressed_path = try std.fs.path.join(allocator, &decompressed_names);
-    std.debug.print("x: {s}\n", .{decompressed_path});
-    const decompressed_path_s = libflate.GoString{
-        .p = @ptrCast(decompressed_path),
-        .n = @intCast(decompressed_path.len)
-    };
-
+    // Compress
+    const compressed_path = try allocator.alloc(u8, 512);
     const compressed = try tmp.dir.createFile("compressed.bin", .{ .read = true });
     compressed.close();
-    const compressed_names = [_][]u8 {try tmp.parent_dir.realpath(), @constCast("compressed.bin")};
-    const compressed_path = try std.fs.path.join(allocator, &compressed_names);
-    std.debug.print("y: {s}\n", .{compressed_path});
+    _ = try tmp.dir.realpath("compressed.bin", compressed_path);
+    std.debug.print("compressed_path: {s}\n", .{compressed_path});
     const compressed_path_s = libflate.GoString{
-        .p = @ptrCast(compressed_path),
+        .p = compressed_path.ptr,
         .n = @intCast(compressed_path.len)
     };
 
-    // Compress
     const compressed_len = libflate.DeflateHuffmanOnly(inputfile_s, compressed_path_s);
     try std.testing.expect(compressed_len > 0);
 
     try util.log_result("go/flate", inputfile, in_size, @intCast(compressed_len));
 
     // Decompress
+    const decompressed_path = try allocator.alloc(u8, 512);
+    const decompressed = try tmp.dir.createFile("decompressed.bin", .{ .read = true });
+    decompressed.close();
+    _ = try tmp.dir.realpath("decompressed.bin", decompressed_path);
+    std.debug.print("decompressed_path: {s}\n", .{decompressed_path});
+    const decompressed_path_s = libflate.GoString{
+        .p = decompressed_path.ptr,
+        .n = @intCast(decompressed_path.len)
+    };
+
     const decompressed_len = libflate.InflateHuffmanOnly(compressed_path_s, decompressed_path_s);
     try std.testing.expect(decompressed_len > 0);
     log.warn(@src(), "l: {d}", .{decompressed_len});
