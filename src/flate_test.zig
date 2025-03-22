@@ -17,7 +17,6 @@ test "Reference implementation ok" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const null_terminator = [_]u8 {0};
     const inputfile = "tests/testdata/rfc1951.txt";
     const inputfile_s = libflate.GoString{
         .p = inputfile,
@@ -30,14 +29,9 @@ test "Reference implementation ok" {
     in.close();
 
     // Compress
-    var compressed_path = [_]u8{0} ** 512;
     const compressed = try tmp.dir.createFile("compressed.bin", .{ .read = true });
-    defer compressed.close();
-    _ = try tmp.dir.realpath("compressed.bin", @ptrCast(&compressed_path));
-    const compressed_path_s = libflate.GoString{
-        .p = @ptrCast(&compressed_path),
-        .n = @intCast(std.mem.indexOf(u8, &compressed_path, &null_terminator).?)
-    };
+    compressed.close();
+    const compressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, "compressed.bin");
 
     const compressed_len = libflate.DeflateHuffmanOnly(inputfile_s, compressed_path_s);
     try std.testing.expect(compressed_len > 0);
@@ -45,14 +39,9 @@ test "Reference implementation ok" {
     try util.log_result("go/flate", inputfile, in_size, @intCast(compressed_len));
 
     // Decompress
-    var decompressed_path = [_]u8{0} ** 512;
     const decompressed = try tmp.dir.createFile("decompressed.bin", .{ .read = true });
     defer decompressed.close();
-    _ = try tmp.dir.realpath("decompressed.bin", @ptrCast(&decompressed_path));
-    const decompressed_path_s = libflate.GoString{
-        .p = @ptrCast(&decompressed_path),
-        .n = @intCast(std.mem.indexOf(u8, &decompressed_path, &null_terminator).?)
-    };
+    const decompressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, "decompressed.bin");
 
     const decompressed_len = libflate.InflateHuffmanOnly(compressed_path_s, decompressed_path_s);
     try std.testing.expect(decompressed_len > 0);

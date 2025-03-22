@@ -2,6 +2,10 @@ const std = @import("std");
 const log = @import("log.zig");
 const build_options = @import("build_options");
 
+const libflate = @cImport({
+    @cInclude("libflate.h");
+});
+
 pub const random_label = "RANDOM";
 const max_size = 512*1024; // 0.5 MB
 
@@ -46,6 +50,29 @@ pub fn list_files(
     }
 
     return list;
+}
+
+/// Create a GoString for `filename` under `tmp.dir`
+pub fn go_str_tmp_filepath(
+    allocator: std.mem.Allocator,
+    tmp: *std.testing.TmpDir,
+    filename: []const u8,
+) !libflate.GoString {
+    const null_terminator = [_]u8 {0};
+    const buf = try allocator.alloc(u8, 512);
+    for (0..512) |i| {
+        buf[i] = 0;
+    }
+
+    _ = try tmp.dir.realpath(filename, buf);
+
+    // Make sure to exclude everything after the first \0 in the
+    // byte array from the length.
+    const len = std.mem.indexOf(u8, buf, &null_terminator).?;
+    return libflate.GoString{
+        .p = buf.ptr,
+        .n = @intCast(len)
+    };
 }
 
 pub fn log_result(
@@ -106,4 +133,3 @@ fn read_random(
 
     return try tmp.dir.openFile("random.bin", .{ .mode = .read_only });
 }
-
