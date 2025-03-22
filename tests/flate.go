@@ -22,7 +22,7 @@ func DeflateHuffmanOnly(inputfile string, outputfile string) int64 {
     defer in.Close()
 
     // Open output file
-    out, err := os.Create(outputfile)
+    out, err := os.OpenFile(outputfile, os.O_WRONLY|os.O_TRUNC, 0644)
     if err != nil {
         println(err.Error())
         return -1
@@ -36,13 +36,25 @@ func DeflateHuffmanOnly(inputfile string, outputfile string) int64 {
     }
 
     // Write input file via flate writer to output file
-    written, err := io.Copy(writer, in)
+    _, err = io.Copy(writer, in)
+
     if err != nil {
         println(err.Error())
         return -1
     }
 
-    return written
+    writer.Flush()
+
+    // The number of "written" bytes will be equal to the bytes in the input file,
+    // not the resulting size of the compressed file, use Stat() to get the
+    // actual size.
+    info, err := out.Stat()
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
+
+    return info.Size()
 }
 
 //export InflateHuffmanOnly
@@ -54,11 +66,12 @@ func InflateHuffmanOnly(inputfile string, outputfile string) int64 {
         return -1
     }
     defer in.Close()
+
     // Wrap input file in flate reader
     reader := flate.NewReader(in)
 
     // Open output file
-    out, err := os.Create(outputfile)
+    out, err := os.OpenFile(outputfile, os.O_WRONLY|os.O_TRUNC, 0644)
     if err != nil {
         println(err.Error())
         return -1
@@ -66,15 +79,28 @@ func InflateHuffmanOnly(inputfile string, outputfile string) int64 {
     defer out.Close()
 
     // Write input file via flate reader to output file
-    written, err := io.Copy(out, reader)
+    for {
+        _, err := io.Copy(out, reader)
+
+        if err != nil {
+            if err == io.EOF || err == io.ErrUnexpectedEOF {
+                break
+            }
+            println(err.Error())
+            return -1
+        }
+    }
+
+    info, err := out.Stat()
     if err != nil {
         println(err.Error())
         return -1
     }
 
-    return written
+    return info.Size()
 }
 
+// TODO: filepath parameters
 func InflateGzip(input []uint8, output []uint8) int {
     var buf bytes.Buffer
     var n = 0
