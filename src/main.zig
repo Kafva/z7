@@ -69,8 +69,6 @@ pub fn main() !u8 {
     if (first_arg) |inputfile| {
         const flate = Flate {
             .allocator = allocator,
-            .lookahead_length = 32,
-            .window_length = 128,
         };
         const instream = blk: {
             if (std.mem.eql(u8, inputfile, "-")) {

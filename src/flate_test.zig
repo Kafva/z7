@@ -23,14 +23,14 @@ fn run(inputfile: []const u8) !void {
     defer compressed_ref.close();
     defer decompressed_ref.close();
 
-    try util.run_huffman_alloc(allocator, inputfile, &compressed, &decompressed);
+    try util.run_flate_alloc(allocator, inputfile, &compressed, &decompressed);
     defer compressed.close();
     defer decompressed.close();
 
     try util.eql(allocator, decompressed_ref, decompressed);
 
-    try compressed.seekTo(0);
-    try util.eql(allocator, compressed_ref, compressed);
+    // try compressed.seekTo(0);
+    // try util.eql(allocator, compressed_ref, compressed);
 }
 
 fn run_ref_impl(

@@ -1,4 +1,6 @@
 const std = @import("std");
+const log = @import("log.zig");
+const Huffman = @import("huffman.zig").Huffman;
 
 /// gzip is just a file format.
 /// gzip: https://www.ietf.org/rfc/rfc1952.txt
@@ -89,20 +91,33 @@ const std = @import("std");
 ///
 ///
 pub const Flate = struct {
-    window_length: usize,
-    lookahead_length: usize,
-    allocator: std.mem.Allocator,
-
-    pub fn compress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
+    pub fn compress(
+        self: @This(),
+        allocator: std.mem.Allocator,
+        instream: std.fs.File,
+        outstream: std.fs.File,
+    ) !Huffman {
         _ = self;
-        _ = instream;
-        _ = outstream;
+        // Pass over input stream to calculate frequencies
+        var freq = try Huffman.get_frequencies(allocator, instream);
+        defer freq.deinit();
+        const huffman = try Huffman.init(allocator, &freq);
+
+        // Reset input stream for second pass
+        try instream.seekTo(0);
+        try huffman.compress(instream, outstream);
+
+        return huffman;
     }
 
-    pub fn decompress(self: @This(), instream: std.fs.File, outstream: std.fs.File) !void {
+    pub fn decompress(
+        self: @This(),
+        huffman: Huffman,
+        instream: std.fs.File,
+        outstream: std.fs.File,
+    ) !void {
         _ = self;
-        _ = instream;
-        _ = outstream;
+        try huffman.decompress(instream, outstream);
     }
 
 };

@@ -210,7 +210,10 @@ pub const Huffman = struct {
     }
 
     /// Count the occurrences of each byte in `instream`
-    pub fn get_frequencies(allocator: std.mem.Allocator, instream: std.fs.File) !std.AutoHashMap(u8, usize) {
+    pub fn get_frequencies(
+        allocator: std.mem.Allocator,
+        instream: std.fs.File,
+    ) !std.AutoHashMap(u8, usize) {
         var frequencies = std.AutoHashMap(u8, usize).init(allocator);
         var cnt: usize = 0;
         const reader = instream.reader();
