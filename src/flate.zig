@@ -1,7 +1,3 @@
-const std = @import("std");
-const log = @import("log.zig");
-const Huffman = @import("huffman.zig").Huffman;
-
 /// gzip is just a file format.
 /// gzip: https://www.ietf.org/rfc/rfc1952.txt
 ///
@@ -90,35 +86,167 @@ const Huffman = @import("huffman.zig").Huffman;
 ///                  encoded using the literal/length Huffman code
 ///
 ///
+const std = @import("std");
+const log = @import("log.zig");
+const Huffman = @import("huffman.zig").Huffman;
+
+const FlateError = error {
+    UnexpectedBlockYype,
+};
+
+const FlateBlockType = enum(u2) {
+    NO_COMPRESSION = 0b00,
+    FIXED_HUFFMAN = 0b01,
+    DYNAMIC_HUFFMAN = 0b10,
+    RESERVD = 0b11,
+};
+
 pub const Flate = struct {
     pub fn compress(
-        self: @This(),
         allocator: std.mem.Allocator,
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !Huffman {
-        _ = self;
+        const block_size = 4096;
+        const block_type = FlateBlockType.NO_COMPRESSION;
+
         // Pass over input stream to calculate frequencies
         var freq = try Huffman.get_frequencies(allocator, instream);
         defer freq.deinit();
         const huffman = try Huffman.init(allocator, &freq);
 
+        var writer = std.io.bitWriter(.little, outstream.writer());
+
+        const total_bytes = try instream.getPos();
+
         // Reset input stream for second pass
         try instream.seekTo(0);
-        try huffman.compress(instream, outstream);
+
+        const reader = instream.reader();
+
+        var done_bytes: usize = 0;
+
+        while (done_bytes < total_bytes) {
+            // Write BFINAL
+            const last_block = done_bytes + block_size >= total_bytes;
+            if (last_block) {
+                try writer.writeBits(@as(u1, 1), 1);
+            }
+            else {
+                try writer.writeBits(@as(u1, 0), 1);
+            }
+
+            // Write BTYPE
+            try writer.writeBits(@intFromEnum(block_type), 2);
+
+            // Fill up to next byte boundary
+            try writer.writeBits(@as(u5, 0), 5);
+
+            switch (block_type) {
+                FlateBlockType.NO_COMPRESSION => {
+                    // Write length of bytes
+                    const len: usize = if (last_block) total_bytes - done_bytes else block_size;
+
+                    if (len > block_size) unreachable;
+                    const blen: u16 = @truncate(len);
+
+                    try writer.writeBits(blen, 16);
+                    try writer.writeBits(~blen, 16);
+
+                    // Write bytes unmodified to output stream for this block
+                    for (0..block_size) |_| {
+                        const b = reader.readByte() catch {
+                            break;
+                        };
+                        try writer.writeBits(b, 8);
+                    }
+                },
+                FlateBlockType.DYNAMIC_HUFFMAN => {
+                    // Write compressed block
+                    try huffman.compress(instream, outstream, block_size);
+                },
+                FlateBlockType.FIXED_HUFFMAN => {
+
+                },
+                else => {
+                    log.err(@src(), "Invalid deflate block type {b}", .{block_type});
+                    return FlateError.UnexpectedBlockYype;
+                }
+            }
+
+            done_bytes += block_size;
+        }
+
 
         return huffman;
     }
 
     pub fn decompress(
-        self: @This(),
         huffman: Huffman,
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !void {
-        _ = self;
-        try huffman.decompress(instream, outstream);
-    }
+        // The input stream position should point to the last input element
+        const total_bits = (try instream.getPos()) * 8;
 
+        // Start from the first element in both streams
+        try instream.seekTo(0);
+        try outstream.seekTo(0);
+
+        var reader = std.io.bitReader(.little, instream.reader());
+        var writer = outstream.writer();
+
+        var read_bits: usize = 0;
+        var last_block = false;
+
+        // Decode the stream
+        while (read_bits < total_bits) {
+            const bfinal = reader.readBitsNoEof(u1, 1) catch {
+                return;
+            };
+            read_bits += 1;
+
+            if (bfinal == 1) {
+                last_block = true;
+            }
+
+            const bits = reader.readBitsNoEof(u2, 1) catch {
+                return;
+            };
+            read_bits += 2;
+
+            _ = reader.readBitsNoEof(u5, 5) catch {
+                return;
+            };
+            read_bits += 5;
+
+            const btype: FlateBlockType = @enumFromInt(bits);
+            switch (btype) {
+                FlateBlockType.NO_COMPRESSION => {
+                    // Read block length
+                    const block_size = try reader.readBitsNoEof(u16, 16);
+                    // Skip over ones-complement of length
+                    _ = try reader.readBitsNoEof(u16, 16);
+                    // Write bytes as-is to output stream
+                    for (0..block_size) |_| {
+                        const b = reader.readBitsNoEof(u8, 8) catch {
+                            return;
+                        };
+                        read_bits += 8;
+                        try writer.writeByte(b);
+                    }
+                },
+                FlateBlockType.DYNAMIC_HUFFMAN => {
+                    try huffman.decompress(instream, outstream);
+                },
+                FlateBlockType.FIXED_HUFFMAN => {
+                },
+                else => {
+                    log.err(@src(), "Invalid inflate block type {b}", .{bits});
+                    return FlateError.UnexpectedBlockYype;
+                }
+            }
+        }
+    }
 };
 

@@ -237,7 +237,8 @@ pub const Huffman = struct {
     pub fn compress(
         self: @This(),
         instream: std.fs.File,
-        outstream: std.fs.File
+        outstream: std.fs.File,
+        max_length: usize,
     ) !void {
         if (self.array.items.len == 0) {
             return;
@@ -250,7 +251,7 @@ pub const Huffman = struct {
         self.dump_tree(0, self.array.items.len - 1);
         self.dump_encodings();
 
-        while (true) {
+        for (0..max_length) |_| {
             const c = reader.readByte() catch {
                 break;
             };

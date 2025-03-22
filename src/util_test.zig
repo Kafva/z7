@@ -54,7 +54,7 @@ pub fn run_huffman_alloc(
 
     // Reset input stream for second pass
     try in.seekTo(0);
-    try huffman.compress(in, compressed.*);
+    try huffman.compress(in, compressed.*, std.math.maxInt(usize));
     try log_result("huffman", inputfile, in_size, try compressed.getPos());
 
     try huffman.decompress(compressed.*, decompressed.*);
@@ -78,12 +78,11 @@ pub fn run_flate_alloc(
     try setup(allocator, &tmp, inputfile, &in, &in_size, compressed, decompressed);
     defer in.close();
 
-    const flate = Flate {};
-    const huffman = try flate.compress(allocator, in, compressed.*);
+    const huffman = try Flate.compress(allocator, in, compressed.*);
 
     try log_result("flate", inputfile, in_size, try compressed.getPos());
 
-    try flate.decompress(huffman, compressed.*, decompressed.*);
+    try Flate.decompress(huffman, compressed.*, decompressed.*);
 
     // Verify correct decoding
     try eql(allocator, in, decompressed.*);
