@@ -56,6 +56,19 @@ fn check_deflate(inputfile: []const u8) !void {
     try util.eql(allocator, decompressed_ref, decompressed);
 }
 
+fn check_flate(inputfile: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var compressed: std.fs.File = undefined;
+    var decompressed: std.fs.File = undefined;
+
+    try util.run_flate_alloc(allocator, inputfile, &compressed, &decompressed);
+    compressed.close();
+    decompressed.close();
+}
+
 fn run_ref_deflate(
     allocator: std.mem.Allocator,
     inputfile: []const u8,
@@ -147,15 +160,14 @@ test "Flate reference implementation ok" {
     try check_reference("tests/testdata/helloworld.txt");
 }
 
-// test "Flate no compression single block" {
-//     try check_deflate("tests/testdata/helloworld.txt");
-// }
+test "Flate reference implementation simple text" {
+    try check_reference("tests/testdata/flate_test.txt");
+}
 
-// test "Huffman only deflate simple text" {
-//     try run("tests/testdata/flate_test.txt");
-// }
+test "Flate single block" {
+    try check_flate("tests/testdata/helloworld.txt");
+}
 
-// test "Huffman only deflate" {
-//     try run("tests/testdata/rfc1951.txt");
-// }
-
+test "Flate simple text" {
+    try check_flate("tests/testdata/flate_test.txt");
+}
