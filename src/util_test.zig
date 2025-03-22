@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = @import("log.zig");
 const build_options = @import("build_options");
+const Huffman = @import("huffman.zig").Huffman;
 
 const libflate = @cImport({
     @cInclude("libflate.h");
@@ -29,6 +30,36 @@ pub fn setup(
         }
     };
     in_size.* = (try in.stat()).size;
+}
+
+pub fn run_huffman_alloc(
+    allocator: std.mem.Allocator,
+    inputfile: []const u8,
+    compressed: *std.fs.File,
+    decompressed: *std.fs.File,
+) !void {
+    var in: std.fs.File = undefined;
+    var in_size: usize = undefined;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try setup(allocator, &tmp, inputfile, &in, &in_size, compressed, decompressed);
+    defer in.close();
+
+    var freq = try Huffman.get_frequencies(allocator, in);
+    defer freq.deinit();
+    const huffman = try Huffman.init(allocator, &freq);
+
+    // Reset input stream for second pass
+    try in.seekTo(0);
+    try huffman.compress(in, compressed.*);
+    try log_result("huffman", inputfile, in_size, try compressed.getPos());
+
+    try huffman.decompress(compressed.*, decompressed.*);
+
+    // Verify correct decoding
+    try eql(allocator, in, decompressed.*);
 }
 
 pub fn list_files(

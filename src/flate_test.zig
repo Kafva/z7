@@ -9,17 +9,43 @@ const Huffman = @import("huffman.zig").Huffman;
 
 const max_size = 40*1024;
 
-test "Reference implementation ok" {
+fn run(inputfile: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    var compressed: std.fs.File = undefined;
+    var decompressed: std.fs.File = undefined;
+    var compressed_ref: std.fs.File = undefined;
+    var decompressed_ref: std.fs.File = undefined;
+
+    try run_ref_impl(allocator, inputfile, &compressed_ref, &decompressed_ref);
+    defer compressed_ref.close();
+    defer decompressed_ref.close();
+
+    try util.run_huffman_alloc(allocator, inputfile, &compressed, &decompressed);
+    defer compressed.close();
+    defer decompressed.close();
+
+    try util.eql(allocator, decompressed_ref, decompressed);
+
+    try compressed.seekTo(0);
+    try util.eql(allocator, compressed_ref, compressed);
+}
+
+fn run_ref_impl(
+    allocator: std.mem.Allocator,
+    inputfile: []const u8,
+    compressed: *std.fs.File,
+    decompressed: *std.fs.File,
+) !void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const inputfile = "tests/testdata/rfc1951.txt";
+    const compressed_name = "c.bin";
+    const decompressed_name = "d.bin";
     const inputfile_s = libflate.GoString{
-        .p = inputfile,
+        .p = inputfile.ptr,
         .n = @intCast(inputfile.len)
     };
 
@@ -29,9 +55,8 @@ test "Reference implementation ok" {
     in.close();
 
     // Compress
-    const compressed = try tmp.dir.createFile("compressed.bin", .{ .read = true });
-    compressed.close();
-    const compressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, "compressed.bin");
+    compressed.* = try tmp.dir.createFile(compressed_name, .{ .read = true });
+    const compressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, compressed_name);
 
     const compressed_len = libflate.DeflateHuffmanOnly(inputfile_s, compressed_path_s);
     try std.testing.expect(compressed_len > 0);
@@ -39,9 +64,8 @@ test "Reference implementation ok" {
     try util.log_result("go/flate", inputfile, in_size, @intCast(compressed_len));
 
     // Decompress
-    const decompressed = try tmp.dir.createFile("decompressed.bin", .{ .read = true });
-    defer decompressed.close();
-    const decompressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, "decompressed.bin");
+    decompressed.* = try tmp.dir.createFile(decompressed_name, .{ .read = true });
+    const decompressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, decompressed_name);
 
     const decompressed_len = libflate.InflateHuffmanOnly(compressed_path_s, decompressed_path_s);
     try std.testing.expect(decompressed_len > 0);
@@ -57,67 +81,11 @@ test "Reference implementation ok" {
     );
 }
 
+test "Huffman only deflate simple text" {
+    try run("tests/testdata/flate_test.txt");
+}
+
 // test "Huffman only deflate" {
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-//     defer arena.deinit();
-//     const allocator = arena.allocator();
-
-//     // py -c 'for i in list("Hello World"): print(f"{ord(i)} ", end="")'; echo
-//     const inputfile = "tests/testdata/rfc1951.txt";
-//     var compressed: std.fs.File = undefined;
-//     var in: std.fs.File = undefined;
-//     var in_size: usize = undefined;
-
-//     var tmp = std.testing.tmpDir(.{});
-//     defer tmp.cleanup();
-
-//     in = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
-//     in_size = (try in.stat()).size;
-//     compressed = try tmp.dir.createFile("compressed.bin", .{ .read = true });
-//     defer in.close();
-//     defer compressed.close();
-
-//     var freq = try Huffman.get_frequencies(allocator, in);
-//     defer freq.deinit();
-//     const huffman = try Huffman.init(allocator, &freq);
-
-//     // Reset input stream for second pass
-//     try in.seekTo(0);
-//     try huffman.compress(in, compressed);
-//     try util.log_result("huffman", inputfile, in_size, try compressed.getPos());
-
-//     try compressed.seekTo(0);
-//     const z7_bytes = try compressed.readToEndAlloc(allocator, max_size);
-//     log.debug(@src(), "z7: {any}", .{z7_bytes[0..64]});
-
-
-//     // Reset input stream to read into array for reference implementation
-//     try in.seekTo(0);
-//     const bytes = try in.readToEndAlloc(allocator, max_size);
-//     var input_data = [_]libflate.GoUint8{0} ** max_size;
-//     for (0..bytes.len) |i| {
-//         input_data[i] = bytes[i];
-//     }
-
-//     var compressed_data = [_]libflate.GoUint8{0} ** max_size;
-//     var compressed_len: libflate.GoInt = -1;
-//     const inputsize: libflate.GoInt = @intCast(bytes.len);
-
-//     // zig fmt: off
-//     const input = libflate.GoSlice{
-//         .data = @ptrCast(@constCast(&input_data)),
-//         .len = input_data.len,
-//         .cap = input_data.len
-//     };
-//     const compressed_ref = libflate.GoSlice{
-//         .data = @ptrCast(@constCast(&compressed_data)),
-//         .len = compressed_data.len,
-//         .cap = compressed_data.len
-//     };
-//     // zig fmt: on
-
-//     // Compress
-//     compressed_len = libflate.DeflateHuffmanOnly(input, inputsize,  compressed_ref);
-//     log.debug(@src(), "go: {any}", .{compressed_data[0..64]});
+//     try run("tests/testdata/rfc1951.txt");
 // }
 

@@ -1,0 +1,1 @@
+A canonical Huffman code is a particular type of Huffman code with unique properties which allow it to be described in a very compact manner. Rather than storing the structure of the code tree explicitly, canonical Huffman codes are ordered in such a way that it suffices to only store the lengths of the codewords, which reduces the overhead of the codebook.
