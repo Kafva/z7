@@ -90,6 +90,12 @@ const std = @import("std");
 const log = @import("log.zig");
 const Huffman = @import("huffman.zig").Huffman;
 
+const FlateCodeword = struct {
+    length: u8,
+    distance: u16,
+    char: u8,
+};
+
 const FlateError = error {
     UnexpectedBlockType,
 };
@@ -98,7 +104,12 @@ const FlateBlockType = enum(u2) {
     NO_COMPRESSION = 0b00,
     FIXED_HUFFMAN = 0b01,
     DYNAMIC_HUFFMAN = 0b10,
-    RESERVD = 0b11,
+    RESERVED = 0b11,
+};
+
+const FlateContext = struct {
+    sliding_window: std.RingBuffer,
+    lookahead: []u8
 };
 
 pub const Flate = struct {
@@ -108,62 +119,211 @@ pub const Flate = struct {
     lookahead_length: usize,
 
 
+    fn compress_block_no_compression(
+        self: @This(),
+        reader: anytype,
+        bit_writer: anytype,
+
+    ) !void {
+        // Write length of bytes
+        const len: usize = if (last_block) (total_bits - done_bits)/8 else self.block_size;
+
+        if (len > self.block_size) unreachable;
+        const blen: u16 = @truncate(len);
+
+        try writer.writeBits(blen, 16);
+        try writer.writeBits(~blen, 16);
+
+        // Write bytes unmodified to output stream for this block
+        for (0..self.block_size) |_| {
+            const b = reader.readByte() catch {
+                break;
+            };
+            try bit_writer.writeBits(b, 8);
+        }
+    }
     pub fn compress(
         self: @This(),
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !void {
-        var done_bytes: usize = 0;
-        const block_type = FlateBlockType.NO_COMPRESSION;
+        var ctx = FlateContext {
+            // Initialize sliding window for backreferences
+            .sliding_window = try std.RingBuffer.init(self.allocator, self.window_length),
+            .lookahead = try self.allocator.alloc(u8, self.lookahead_length),
+        };
+        defer ctx.sliding_window.deinit(self.allocator);
 
-        // Pass over input stream to calculate frequencies
-        var freq = try Huffman.get_frequencies(self.allocator, instream);
-        defer freq.deinit();
-        const huffman = try Huffman.init(self.allocator, &freq);
-        const total_bytes = try instream.getPos();
-        // Reset input stream to the beginning
-        try instream.seekTo(0);
+        while (try self.compress_block(ctx, instream, outstream)) {}
+    }
 
-        var writer = std.io.bitWriter(.little, outstream.writer());
+    /// Super basic block type decision, if there is at least one character
+    /// with more than 3 occurences, use dynamic huffman.
+    fn compress_block_type_decision(
+        self: @This(),
+        freqs: std.AutoHashMap(u8, usize),
+    ) !FlateBlockType {
+        _ = self;
+        var keys = freqs.keyIterator();
+        while (keys.next()) |key| {
+            const freq = freqs.get(key.*).?;
+            if (freq > 3) {
+                return FlateBlockType.DYNAMIC_HUFFMAN;
+            }
+        }
+        return FlateBlockType.NO_COMPRESSION;
+    }
+
+    /// 1. Calculate the frequencies for the next X bytes in the inpustream
+    /// 2. Decide which block type compression to use
+    /// 3. Write BFINAL + BTYPE
+    /// 4. Write the data:
+    /// 4a. No compression
+    ///     Save the next X bytes into the sliding window and dump them as-is
+    ///     to the output stream
+    /// 4b. Fixed huffman encoding
+    ///     Read the next `lookahead_length` bytes and create a `FlateCodeword`.
+    ///     Write the huffman encoded version of the `FlateCodeword` to the output stream
+    ///     Continue doing this until we have read X bytes from the input.
+    ///     Write the end-of-block marker.
+    /// 4c. Dynamic huffman encoding
+    ///     Write the serialised version of the huffman tree for this block to the output stream.
+    ///     < Same as 3b. >
+    /// 5. Continue to next block.
+    fn compress_block(
+        self: @This(),
+        ctx: FlateContext,
+        instream: std.fs.File,
+        outstream: std.fs.File,
+    ) !bool {
+        // Pass over input stream to calculate frequencies (WRONG)
+        // We should calculate the frequency upon the lz77 codewords for this block instead!
+        var block_read_bytes = 0;
+        var freqs = try Huffman.get_frequencies(
+            self.allocator,
+            instream,
+            self.block_size,
+            &block_read_bytes
+        );
+        defer freqs.deinit();
+        // Reset input stream to the start of the block
+        try instream.seekBy(-1 * block_read_bytes);
+
+        const block_type = try self.compress_block_type_decision(freqs);
+
+        var bit_writer = std.io.bitWriter(.little, outstream.writer());
         const reader = instream.reader();
 
-        while (done_bytes < total_bytes) {
-            // Write BFINAL
-            const last_block = done_bytes + self.block_size >= total_bytes;
-            if (last_block) {
-                try writer.writeBits(@as(u1, 1), 1);
-            }
-            else {
-                try writer.writeBits(@as(u1, 0), 1);
-            }
+        // Number of bits from the input stream that have been procssed
+        var done_bits: usize = 0;
+        // Number of bits written to the output stream so far
+        var written_bits: usize = 0;
+
+        while (done_bits < (block_read_bytes / 8)) {
+            // Write BFINAL (TODO always set to 0 for now)
+            try bit_writer.writeBits(@as(u1, 0), 0);
+            written_bits += 1;
 
             // Write BTYPE
-            try writer.writeBits(@intFromEnum(block_type), 2);
+            try bit_writer.writeBits(@intFromEnum(block_type), 2);
+            written_bits += 2;
 
             // Fill up to next byte boundary
-            try writer.writeBits(@as(u5, 0), 5);
+            const left_to_boundary: u3 = (written_bits) % 8;
+            if (left_to_boundary != 0) {
+                try bit_writer.writeBits(@as(u3, 0), left_to_boundary);
+            }
+
+            // Read `win_len` bytes
+
+            // Read in the first byte
+            lookahead[0] = reader.readByte() catch {
+                return;
+            };
+
+            // The current number of matches within the lookahead
+            var match_cnt: u8 = 0;
+            // Max number of matches in the lookahead this iteration
+            // XXX: The byte at the `longest_match_cnt` index is not part
+            // of the match!
+            var longest_match_cnt: u8 = 0;
+            var longest_match_distance: u8 = 0;
+
+            // Look for matches in the sliding_window
+            const win_len: u8 = @truncate(sliding_window.len());
+            for (0..win_len) |i| {
+                const ring_index = (sliding_window.read_index + i) % self.window_length;
+                if (lookahead[match_cnt] != sliding_window.data[ring_index]) {
+                    // Reset and start matching from the beginning of the
+                    // lookahead again.
+                    match_cnt = 0;
+                    continue;
+                }
+
+                match_cnt += 1;
+
+                if (match_cnt <= longest_match_cnt) {
+                    continue;
+                }
+
+                // Update the longest match
+                longest_match_cnt = match_cnt;
+                const win_index: u8 = @truncate(i);
+                longest_match_distance = (win_len - win_index) + (match_cnt - 1);
+
+                if (longest_match_cnt == self.lookahead_length) {
+                    // Lookahead is filled
+                    break;
+                }
+
+                // When `match_cnt` exceeds `longest_match_cant` we
+                // need to feed another byte into the lookahead.
+                lookahead[longest_match_cnt] = reader.readByte() catch {
+                    done_bits = total_bits;
+                    break;
+                };
+            }
+
+            // Update the sliding window
+            const end = if (longest_match_cnt == 0) 1 else longest_match_cnt;
+            for (0..end) |i| {
+                try self.window_write(&sliding_window, lookahead[i]);
+            }
+
+            // The `char` is only used when length <= 1
+            const char_index = if (longest_match_cnt <= 1) 0 else longest_match_cnt - 1;
+
+            // Write codeword to output stream
+            const codeword = FlateCodeword {
+                .length = longest_match_cnt,
+                .distance = longest_match_distance,
+                .char = lookahead[char_index],
+            };
+
+            log.debug(@src(), "code: {any}", .{codeword});
+
+            // Set starting byte for next iteration
+            if (longest_match_cnt == 0 or
+                longest_match_cnt == self.lookahead_length)
+            {
+                // We need a new byte
+                lookahead[0] = reader.readByte() catch {
+                    done_bits = total_bits;
+                    break;
+                };
+            } else {
+                // The `next_char` should be passed to the next iteration
+                lookahead[0] = lookahead[longest_match_cnt];
+            }
+
 
             switch (block_type) {
                 FlateBlockType.NO_COMPRESSION => {
-                    // Write length of bytes
-                    const len: usize = if (last_block) total_bytes - done_bytes else self.block_size;
-
-                    if (len > self.block_size) unreachable;
-                    const blen: u16 = @truncate(len);
-
-                    try writer.writeBits(blen, 16);
-                    try writer.writeBits(~blen, 16);
-
-                    // Write bytes unmodified to output stream for this block
-                    for (0..self.block_size) |_| {
-                        const b = reader.readByte() catch {
-                            break;
-                        };
-                        try writer.writeBits(b, 8);
-                    }
+                    try self.compress_block_no_compression(reader, bit_writer);
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
                     // Write compressed block
+                    const huffman = try Huffman.init(self.allocator, &freq);
                     try huffman.compress(instream, outstream, self.block_size);
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
@@ -175,8 +335,16 @@ pub const Flate = struct {
                 }
             }
 
-            done_bytes += self.block_size;
+            done_bits += self.block_size;
         }
+    }
+
+    fn window_write(self: @This(), window: *std.RingBuffer, c: u8) !void {
+        _ = self;
+        if (window.isFull()) {
+            _ = window.read();
+        }
+        try window.write(c);
     }
 
     pub fn decompress(

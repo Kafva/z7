@@ -10,7 +10,7 @@ const Flate = @import("flate.zig").Flate;
 
 const max_size = 40*1024;
 
-/// Compress and decompress with z7 and reference implementation, compare 
+/// Compress and decompress with z7 and reference implementation, compare
 /// compressed and decompressed output between them.
 fn check_reference(inputfile: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -22,7 +22,7 @@ fn check_reference(inputfile: []const u8) !void {
     var compressed_ref: std.fs.File = undefined;
     var decompressed_ref: std.fs.File = undefined;
 
-    try util.run_flate_alloc(allocator, inputfile, &compressed, &decompressed);
+    try util.run_alloc(allocator, inputfile, &compressed, &decompressed);
     defer compressed.close();
     defer decompressed.close();
 
@@ -45,7 +45,7 @@ fn check_deflate(inputfile: []const u8) !void {
     var decompressed: std.fs.File = undefined;
     var decompressed_ref: std.fs.File = undefined;
 
-    try util.run_flate_alloc(allocator, inputfile, &compressed, &decompressed);
+    try run_alloc(allocator, inputfile, &compressed, &decompressed);
     defer compressed.close();
     defer decompressed.close();
 
@@ -65,12 +65,12 @@ fn check_flate(inputfile: []const u8) !void {
     var compressed: std.fs.File = undefined;
     var decompressed: std.fs.File = undefined;
 
-    try run_flate_alloc(allocator, inputfile, &compressed, &decompressed);
+    try run_alloc(allocator, inputfile, &compressed, &decompressed);
     compressed.close();
     decompressed.close();
 }
 
-fn run_flate_alloc(
+fn run_alloc(
     allocator: std.mem.Allocator,
     inputfile: []const u8,
     compressed: *std.fs.File,
@@ -85,11 +85,11 @@ fn run_flate_alloc(
     try util.setup(allocator, &tmp, inputfile, &in, &in_size, compressed, decompressed);
     defer in.close();
 
-    const flate = Flate { 
+    const flate = Flate {
         .allocator = allocator,
         .lookahead_length = 8,
         .window_length = 64,
-        .block_size = 4096 
+        .block_size = 4096
     };
 
     try flate.compress(in, compressed.*);
