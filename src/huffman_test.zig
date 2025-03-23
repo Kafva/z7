@@ -15,7 +15,28 @@ fn run(inputfile: []const u8) !void {
 fn run_alloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
     var compressed: std.fs.File = undefined;
     var decompressed: std.fs.File = undefined;
-    try util.run_huffman_alloc(allocator, inputfile, &compressed, &decompressed);
+    var in: std.fs.File = undefined;
+    var in_size: usize = undefined;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.setup(allocator, &tmp, inputfile, &in, &in_size, &compressed, &decompressed);
+    defer in.close();
+
+    var freq = try Huffman.get_frequencies(allocator, in);
+    defer freq.deinit();
+    const huffman = try Huffman.init(allocator, &freq);
+
+    // Reset input stream for second pass
+    try in.seekTo(0);
+    try huffman.compress(in, compressed, std.math.maxInt(usize));
+    try util.log_result("huffman", inputfile, in_size, try compressed.getPos());
+
+    try huffman.decompress(compressed, decompressed);
+
+    // Verify correct decoding
+    try util.eql(allocator, in, decompressed);
 }
 
 fn run_dir(dirpath: []const u8) !void {

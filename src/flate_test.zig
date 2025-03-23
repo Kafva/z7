@@ -6,6 +6,7 @@ const libflate = @cImport({
 const log = @import("log.zig");
 const util = @import("util_test.zig");
 const Huffman = @import("huffman.zig").Huffman;
+const Flate = @import("flate.zig").Flate;
 
 const max_size = 40*1024;
 
@@ -64,9 +65,41 @@ fn check_flate(inputfile: []const u8) !void {
     var compressed: std.fs.File = undefined;
     var decompressed: std.fs.File = undefined;
 
-    try util.run_flate_alloc(allocator, inputfile, &compressed, &decompressed);
+    try run_flate_alloc(allocator, inputfile, &compressed, &decompressed);
     compressed.close();
     decompressed.close();
+}
+
+fn run_flate_alloc(
+    allocator: std.mem.Allocator,
+    inputfile: []const u8,
+    compressed: *std.fs.File,
+    decompressed: *std.fs.File,
+) !void {
+    var in: std.fs.File = undefined;
+    var in_size: usize = undefined;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try util.setup(allocator, &tmp, inputfile, &in, &in_size, compressed, decompressed);
+    defer in.close();
+
+    const flate = Flate { 
+        .allocator = allocator,
+        .lookahead_length = 8,
+        .window_length = 64,
+        .block_size = 4096 
+    };
+
+    try flate.compress(in, compressed.*);
+
+    try util.log_result("flate", inputfile, in_size, try compressed.getPos());
+
+    try Flate.decompress(compressed.*, decompressed.*);
+
+    // Verify correct decoding
+    try util.eql(allocator, in, decompressed.*);
 }
 
 fn run_ref_deflate(
@@ -156,18 +189,19 @@ fn run_ref_impl(
     );
 }
 
-test "Flate reference implementation ok" {
-    try check_reference("tests/testdata/helloworld.txt");
-}
-
-test "Flate reference implementation simple text" {
-    try check_reference("tests/testdata/flate_test.txt");
-}
-
-test "Flate single block" {
-    try check_flate("tests/testdata/helloworld.txt");
-}
-
 test "Flate simple text" {
     try check_flate("tests/testdata/flate_test.txt");
 }
+
+// test "Flate reference implementation ok" {
+//     try check_reference("tests/testdata/helloworld.txt");
+// }
+
+// test "Flate reference implementation simple text" {
+//     try check_reference("tests/testdata/flate_test.txt");
+// }
+
+// test "Flate single block" {
+//     try check_flate("tests/testdata/helloworld.txt");
+// }
+

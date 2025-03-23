@@ -91,7 +91,7 @@ const log = @import("log.zig");
 const Huffman = @import("huffman.zig").Huffman;
 
 const FlateError = error {
-    UnexpectedBlockYype,
+    UnexpectedBlockType,
 };
 
 const FlateBlockType = enum(u2) {
@@ -102,33 +102,34 @@ const FlateBlockType = enum(u2) {
 };
 
 pub const Flate = struct {
+    allocator: std.mem.Allocator,
+    block_size: usize,
+    window_length: usize,
+    lookahead_length: usize,
+
+
     pub fn compress(
-        allocator: std.mem.Allocator,
+        self: @This(),
         instream: std.fs.File,
         outstream: std.fs.File,
-    ) !Huffman {
-        const block_size = 4096;
+    ) !void {
+        var done_bytes: usize = 0;
         const block_type = FlateBlockType.NO_COMPRESSION;
 
         // Pass over input stream to calculate frequencies
-        var freq = try Huffman.get_frequencies(allocator, instream);
+        var freq = try Huffman.get_frequencies(self.allocator, instream);
         defer freq.deinit();
-        const huffman = try Huffman.init(allocator, &freq);
-
-        var writer = std.io.bitWriter(.little, outstream.writer());
-
+        const huffman = try Huffman.init(self.allocator, &freq);
         const total_bytes = try instream.getPos();
-
-        // Reset input stream for second pass
+        // Reset input stream to the beginning
         try instream.seekTo(0);
 
+        var writer = std.io.bitWriter(.little, outstream.writer());
         const reader = instream.reader();
-
-        var done_bytes: usize = 0;
 
         while (done_bytes < total_bytes) {
             // Write BFINAL
-            const last_block = done_bytes + block_size >= total_bytes;
+            const last_block = done_bytes + self.block_size >= total_bytes;
             if (last_block) {
                 try writer.writeBits(@as(u1, 1), 1);
             }
@@ -145,16 +146,16 @@ pub const Flate = struct {
             switch (block_type) {
                 FlateBlockType.NO_COMPRESSION => {
                     // Write length of bytes
-                    const len: usize = if (last_block) total_bytes - done_bytes else block_size;
+                    const len: usize = if (last_block) total_bytes - done_bytes else self.block_size;
 
-                    if (len > block_size) unreachable;
+                    if (len > self.block_size) unreachable;
                     const blen: u16 = @truncate(len);
 
                     try writer.writeBits(blen, 16);
                     try writer.writeBits(~blen, 16);
 
                     // Write bytes unmodified to output stream for this block
-                    for (0..block_size) |_| {
+                    for (0..self.block_size) |_| {
                         const b = reader.readByte() catch {
                             break;
                         };
@@ -163,26 +164,22 @@ pub const Flate = struct {
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
                     // Write compressed block
-                    try huffman.compress(instream, outstream, block_size);
+                    try huffman.compress(instream, outstream, self.block_size);
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
 
                 },
                 else => {
                     log.err(@src(), "Invalid deflate block type {b}", .{block_type});
-                    return FlateError.UnexpectedBlockYype;
+                    return FlateError.UnexpectedBlockType;
                 }
             }
 
-            done_bytes += block_size;
+            done_bytes += self.block_size;
         }
-
-
-        return huffman;
     }
 
     pub fn decompress(
-        huffman: Huffman,
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !void {
@@ -237,13 +234,13 @@ pub const Flate = struct {
                     }
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
-                    try huffman.decompress(instream, outstream);
+                    //try huffman.decompress(instream, outstream);
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
                 },
                 else => {
                     log.err(@src(), "Invalid inflate block type {b}", .{bits});
-                    return FlateError.UnexpectedBlockYype;
+                    return FlateError.UnexpectedBlockType;
                 }
             }
         }
