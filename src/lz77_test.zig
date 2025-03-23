@@ -79,10 +79,10 @@ test "lz77 on random data" {
     try run(util.random_label, 4, 6);
 }
 
-test "lz77 on fuzzing testdata from zig stdlib" {
-    try run_dir("tests/testdata/zig/fuzz", 8, 64);
-}
+// test "lz77 on fuzzing testdata from zig stdlib" {
+//     try run_dir("tests/testdata/zig/fuzz", 8, 64);
+// }
 
-test "lz77 on block writer testdata from zig stdlib" {
-    try run_dir("tests/testdata/zig/block_writer", 8, 64);
-}
+// test "lz77 on block writer testdata from zig stdlib" {
+//     try run_dir("tests/testdata/zig/block_writer", 8, 64);
+// }

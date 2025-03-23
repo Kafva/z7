@@ -213,18 +213,15 @@ pub const Huffman = struct {
     pub fn get_frequencies(
         allocator: std.mem.Allocator,
         instream: std.fs.File,
-        size: usize,
-        read_bytes: *usize,
     ) !std.AutoHashMap(u8, usize) {
         var frequencies = std.AutoHashMap(u8, usize).init(allocator);
         var cnt: usize = 0;
         const reader = instream.reader();
 
-        for (0..size) |_| {
+        while (true) {
             const c = reader.readByte() catch {
                 break;
             };
-            read_bytes.* += 1;
 
             if (frequencies.get(c)) |freq| {
                 try frequencies.put(c, freq + 1);
