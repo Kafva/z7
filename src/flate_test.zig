@@ -37,8 +37,6 @@ fn run_alloc(
 
     const flate = Flate {
         .allocator = allocator,
-        .lookahead_length = 8,
-        .window_length = 64,
         .block_size = 4096
     };
 
@@ -53,5 +51,5 @@ fn run_alloc(
 }
 
 test "Flate simple text" {
-    //try check_flate("tests/testdata/flate_test.txt");
+    try check_flate("tests/testdata/flate_test.txt");
 }
