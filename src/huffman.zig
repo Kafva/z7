@@ -107,23 +107,6 @@ pub const Node = struct {
         );
         std.heap.page_allocator.free(prefix);
     }
-
-    /// Calculate how many child levels are below the current node recursively
-    pub fn levels_below(self: @This(), array: *const []Node) u4 {
-        var child_levels_left = 0;
-        var child_levels_right = 0;
-
-        if (self.left_child_index) |idx| {
-            child_levels_left += array.*[idx].levels_below(array);
-        }
-        if (self.right_child_index) |idx| {
-            child_levels_right += array.*[idx].levels_below(array);
-        }
-
-        // Pick the largest side
-        return if (child_levels_right > child_levels_left) child_levels_right
-               else child_levels_left;
-    }
 };
 
 pub const Huffman = struct {

@@ -7,11 +7,8 @@ pub const Lz77Error = error{
 };
 
 const Codeword = struct {
-    /// XXX: Limit to u7 for now
     length: u8,
-    /// XXX: Limit to u8 for now
     distance: u8,
-    /// Raw character to write
     char: u8,
 };
 

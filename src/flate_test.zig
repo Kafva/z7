@@ -37,19 +37,19 @@ fn run_alloc(
 
     const flate = Flate {
         .allocator = allocator,
-        .block_size = 4096
     };
 
     try flate.compress(in, compressed.*);
 
     try util.log_result("flate", inputfile, in_size, try compressed.getPos());
 
-    try Flate.decompress(compressed.*, decompressed.*);
+    try flate.decompress(compressed.*, decompressed.*);
 
     // Verify correct decoding
     try util.eql(allocator, in, decompressed.*);
 }
 
 test "Flate simple text" {
-    try check_flate("tests/testdata/flate_test.txt");
+    //try check_flate("tests/testdata/flate_test.txt");
+    try check_flate("tests/testdata/simple.txt");
 }

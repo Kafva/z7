@@ -10,10 +10,36 @@ const Token = struct {
     distance: u16,
     /// If a raw character has been set, ignore the length/distance values.
     char: ?u8,
+
+    pub fn format(
+        self: *const @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype
+    ) !void {
+        if (fmt.len != 0) {
+            return std.fmt.invalidFmtError(fmt, self);
+        }
+
+        if (self.char) |char| {
+            if (std.ascii.isPrint(char) and char != '\n') {
+                return writer.print("{{ .length = {d}, .distance = {d}, .char = '{c}' }}",
+                                  .{self.length, self.distance, char});
+            } else {
+                return writer.print("{{ .length = {d}, .distance = {d}, .char = 0x{x} }}",
+                                  .{self.length, self.distance, char});
+            }
+        } else {
+            return writer.print("{{ .length = {d}, .distance = {d} }}", .{self.length, self.distance});
+        }
+    }
 };
 
 const FlateError = error {
+    NotImplemented,
     UnexpectedBlockType,
+    UnexpectedEof,
+    InvalidLiteralLength,
     MissingTokenLiteral,
 };
 
@@ -24,18 +50,29 @@ const FlateBlockType = enum(u2) {
     RESERVED = 0b11,
 };
 
-const FlateContext = struct {
-    sliding_window: std.RingBuffer,
-    lookahead: []u8,
+const CompressContext = struct {
     /// The current type of block to write
     block_type: FlateBlockType,
     writer: std.io.AnyWriter,
     reader: std.io.AnyReader,
+    written_bits: usize,
+    sliding_window: std.RingBuffer,
+    lookahead: []u8,
+};
+
+const DecompressContext = struct {
+    /// The current type of block to decode
+    block_type: FlateBlockType,
+    writer: std.io.AnyWriter,
+    reader: std.io.AnyReader,
+    written_bits: usize,
+    read_bits: usize,
+    /// Cache of the last 32K read bytes to support backreferences
+    sliding_window: std.RingBuffer,
 };
 
 pub const Flate = struct {
     allocator: std.mem.Allocator,
-    block_size: usize,
 
     const lookahead_length: usize = 258;
     const window_length: usize = std.math.pow(usize, 2, 15);
@@ -94,12 +131,22 @@ pub const Flate = struct {
         };
     }
 
-    fn write_token(ctx: FlateContext, token: Token) !void {
-        var le_writer = std.io.bitWriter(.little, ctx.writer);
+    fn write_bits(
+        ctx: *CompressContext,
+        comptime endian: std.builtin.Endian,
+        value: anytype,
+        num_bits: u16,
+    ) !void {
+        var bit_writer = std.io.bitWriter(endian, ctx.*.writer);
+        try bit_writer.writeBits(value, num_bits);
+        ctx.*.written_bits += num_bits;
+    }
+
+    fn write_token(ctx: *CompressContext, token: Token) !void {
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 if (token.char) |c| {
-                    try le_writer.writeBits(c, 8);
+                    try Flate.write_bits(ctx, .little, c, 8);
                 }
                 else {
                     return FlateError.MissingTokenLiteral;
@@ -115,17 +162,21 @@ pub const Flate = struct {
                     // 144 - 255     9          110010000 through
                     //                          111111111
                     if (char < 144) {
-                        try le_writer.writeBits(0b0011_0000 + char, 8);
+                        try Flate.write_bits(ctx, .little, 0b0011_0000 + char, 8);
                     }
                     else {
-                        try le_writer.writeBits(0b1_1001_0000 + @as(u9, char), 9);
+                        try Flate.write_bits(ctx, .little, 0b1_1001_0000 + @as(u9, char), 9);
                     }
                 }
                 else {
-                    // Translate the length to the corresponding code
+                    // Lookup the encoding for the token length
                     const r = Flate.lookup_length(token.length);
-                    if (r[0] < 256 or r[0] > 285) unreachable;
+                    if (r[0] < 256 or r[0] > 285) {
+                        return FlateError.InvalidLiteralLength;
+                    }
 
+                    // Translate the length to the corresponding code
+                    //
                     // 256 - 279     7          000_0000 through
                     //                          001_0111
                     // 280 - 287     8          1100_0000 through
@@ -133,20 +184,25 @@ pub const Flate = struct {
                     if (r[0] < 280) {
                         // Write the huffman encoding of 'Code'
                         const hcode: u7 = @truncate(r[0] - 256);
-                        try le_writer.writeBits(0b000_0000 + hcode, 7);
+                        try Flate.write_bits(ctx, .little, 0b000_0000 + hcode, 7);
                     }
                     else {
                         const hcode: u8 = @truncate(r[0] - 280);
-                        try le_writer.writeBits(0b1100_0000 + hcode, 8);
+                        try Flate.write_bits(ctx, .little, 0b1100_0000 + hcode, 8);
                     }
 
                     // Write the 'Extra Bits'
                     if (r[1] != 0) {
-                        try le_writer.writeBits(token.length - r[2], r[1]);
+                        try Flate.write_bits(ctx, .little, token.length - r[2], r[1]);
                     }
                 }
             },
-            else => unreachable,
+            FlateBlockType.DYNAMIC_HUFFMAN => {
+                return FlateError.NotImplemented;
+            },
+            else => {
+                return FlateError.UnexpectedBlockType;
+            }
         }
     }
 
@@ -156,13 +212,14 @@ pub const Flate = struct {
         outstream: std.fs.File,
     ) !void {
         var done = false;
-        var ctx = FlateContext {
-            // Initialize sliding window for backreferences
-            .sliding_window = try std.RingBuffer.init(self.allocator, Flate.window_length),
-            .lookahead = try self.allocator.alloc(u8, Flate.lookahead_length),
+        var ctx = CompressContext {
             .block_type = FlateBlockType.FIXED_HUFFMAN,
             .writer = outstream.writer().any(),
             .reader = instream.reader().any(),
+            .written_bits = 0,
+            // Initialize sliding window for backreferences
+            .sliding_window = try std.RingBuffer.init(self.allocator, Flate.window_length),
+            .lookahead = try self.allocator.alloc(u8, Flate.lookahead_length),
         };
         defer ctx.sliding_window.deinit(self.allocator);
 
@@ -223,8 +280,10 @@ pub const Flate = struct {
                 try Flate.window_write(&ctx.sliding_window, ctx.lookahead[i]);
             }
 
+            if (ctx.block_type == FlateBlockType.NO_COMPRESSION or 
+                longest_match_length <= 3) {
+                // TODO write block headers
 
-            if (longest_match_length <= 3) {
                 // Prefer raw characters when the match length is <= 3
                 for (0..longest_match_length) |i| {
                     const token = Token {
@@ -232,12 +291,18 @@ pub const Flate = struct {
                         .length = 0,
                         .distance = 0
                     };
-                    log.debug(@src(), "token: {any}", .{token});
-                    try Flate.write_token(ctx, token);
+                    log.debug(@src(), "token(literal): {any}", .{token});
+                    try Flate.write_token(&ctx, token);
                 }
             }
             else {
-                // TODO
+                const token = Token {
+                    .char = null,
+                    .length = longest_match_length,
+                    .distance = longest_match_distance
+                };
+                log.debug(@src(), "token(ref    ): {any}", .{token});
+                try Flate.write_token(&ctx, token);
             }
 
             // Set starting byte for next iteration
@@ -259,6 +324,7 @@ pub const Flate = struct {
         // writes are done.
         var le_writer = std.io.bitWriter(.little, ctx.writer);
         try le_writer.flushBits();
+        log.debug(@src(), "Wrote {} bits [{} bytes]", .{ctx.written_bits, ctx.written_bits / 8});
     }
 
     fn window_write(window: *std.RingBuffer, c: u8) !void {
@@ -268,71 +334,120 @@ pub const Flate = struct {
         try window.write(c);
     }
 
+    fn read_bits(
+        ctx: *DecompressContext,
+        comptime endian: std.builtin.Endian,
+        comptime T: type,
+        num_bits: u16,
+    ) !T {
+        var bit_reader = std.io.bitReader(endian, ctx.*.reader);
+        const bits = bit_reader.readBitsNoEof(T, num_bits) catch |e| {
+            return e;
+        };
+        ctx.*.read_bits += num_bits;
+
+        return bits;
+    }
+
     pub fn decompress(
+        self: @This(),
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !void {
-        // The input stream position should point to the last input element
-        const total_bits = (try instream.getPos()) * 8;
+        var done = false;
+        var ctx = DecompressContext {
+            .block_type = FlateBlockType.NO_COMPRESSION,
+            .writer = outstream.writer().any(),
+            .reader = instream.reader().any(),
+            .written_bits = 0,
+            .read_bits = 0,
+            .sliding_window = try std.RingBuffer.init(self.allocator, Flate.window_length)
+        };
+        defer ctx.sliding_window.deinit(self.allocator);
 
-        // Start from the first element in both streams
+        // Make sure to start from the beginning in both streams
         try instream.seekTo(0);
         try outstream.seekTo(0);
 
-        var reader = std.io.bitReader(.little, instream.reader());
-        const writer = outstream.writer();
-
-        var read_bits: usize = 0;
-        var last_block = false;
-
         // Decode the stream
-        while (read_bits < total_bits) {
-            const bfinal = reader.readBitsNoEof(u1, 1) catch {
+        while (!done) {
+            const bfinal = Flate.read_bits(&ctx, .little, u1, 1) catch {
                 return;
             };
-            read_bits += 1;
 
             if (bfinal == 1) {
-                last_block = true;
+                log.debug(@src(), "End-of-stream marker found", .{});
+                done = true;
             }
 
-            const bits = reader.readBitsNoEof(u2, 1) catch {
-                return;
+            const bits = Flate.read_bits(&ctx, .little, u2, 2) catch {
+                return FlateError.UnexpectedEof;
             };
-            read_bits += 2;
 
-            _ = reader.readBitsNoEof(u5, 5) catch {
-                return;
-            };
-            read_bits += 5;
 
-            const btype: FlateBlockType = @enumFromInt(bits);
-            switch (btype) {
+            // Read up to the next byte boundary
+            while (ctx.read_bits % 8 != 0) {
+                _ = Flate.read_bits(&ctx, .little, u1, 1) catch {
+                    return FlateError.UnexpectedEof;
+                };
+            }
+
+            ctx.block_type = @enumFromInt(bits);
+            log.debug(@src(), "Decoding 0b{b} block", .{bits});
+            switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
                     // Read block length
-                    const block_size = try reader.readBitsNoEof(u16, 16);
+                    const block_size = try Flate.read_bits(&ctx, .little, u16, 16);
                     // Skip over ones-complement of length
-                    _ = try reader.readBitsNoEof(u16, 16);
+                    _ = try Flate.read_bits(&ctx, .little, u16, 16);
                     // Write bytes as-is to output stream
                     for (0..block_size) |_| {
-                        const b = reader.readBitsNoEof(u8, 8) catch {
-                            return;
+                        const b = Flate.read_bits(&ctx, .little, u8, 8) catch {
+                            return FlateError.UnexpectedEof;
                         };
-                        read_bits += 8;
-                        try writer.writeByte(b);
+                        try Flate.window_write(&ctx.sliding_window, b);
+                        try ctx.writer.writeByte(b);
                     }
                 },
-                FlateBlockType.DYNAMIC_HUFFMAN => {
-                    //try huffman.decompress(instream, outstream);
-                },
                 FlateBlockType.FIXED_HUFFMAN => {
+                    // loop (until end of block code recognized)
+                    //    decode literal/length value from input stream
+                    //    if value < 256
+                    //       copy value (literal byte) to output stream
+                    //    otherwise
+                    //       if value = end of block (256)
+                    //          break from loop
+                    //       otherwise (value = 257..285)
+                    //          decode distance from input stream
+
+                    //          move backwards distance bytes in the output
+                    //          stream, and copy length bytes from this
+                    //          position to the output stream.
+                    // end loop
+
+
+                    // while (true) {
+                    //     const bit = Flate.read_bits(&ctx, .little, u1, 1) catch {
+                    //         return FlateError.UnexpectedEof;
+                    //     };
+
+                    //     try Flate.window_write(&ctx.*.sliding_window, b);
+                    // }
+                    return FlateError.NotImplemented;
+                },
+                FlateBlockType.DYNAMIC_HUFFMAN => {
+                    return FlateError.NotImplemented;
                 },
                 else => {
-                    log.err(@src(), "Invalid inflate block type {b}", .{bits});
                     return FlateError.UnexpectedBlockType;
                 }
             }
         }
+
+        var le_writer = std.io.bitWriter(.little, ctx.writer);
+        try le_writer.flushBits();
+        log.debug(@src(), "Read {} bits [{} bytes]", .{ctx.read_bits, ctx.read_bits / 8});
+        log.debug(@src(), "Wrote {} bits [{} bytes]", .{ctx.written_bits, ctx.written_bits / 8});
     }
 };
 
