@@ -65,12 +65,14 @@ pub const Node = struct {
     /// We exhaust the nodes with lowest remaining weight with the lowest frequency first.
     /// Returns true if `lhs` should be placed before `rhs`.
     pub fn greater_than(_: void, lhs: @This(), rhs: @This()) bool {
+        // If a the lhs node has the same values as the rhs, move it up as more recent,
+        // this is needed for the fixed huffman construction to be correct.
         if (lhs.weight == rhs.weight) {
             // Greater frequency further in the front
-            return lhs.freq > rhs.freq;
+            return lhs.freq >= rhs.freq;
         }
         // Ignore frequency if the weights differ
-        return lhs.weight > rhs.weight;
+        return lhs.weight >= rhs.weight;
     }
 
     pub fn format(
@@ -192,6 +194,18 @@ pub const Huffman = struct {
         return @This(){ .array = array, .enc_map = enc_map };
     }
 
+
+    // fn construct_fixed_tree(
+    //     allocator: std.mem.Allocator,
+    //     queue_initial: *[]Node,
+    //     queue_initial_cnt: usize,
+    //     array: *std.ArrayList(Node),
+    // ) !void {
+    //     // Pop the last two elements from the queue (largest weight)
+    //     // and create a new parent node, insert it back into the queue with a lower weight
+    // }
+
+
     /// Count the occurrences of each byte in `instream`
     pub fn get_frequencies(
         allocator: std.mem.Allocator,
@@ -286,6 +300,8 @@ pub const Huffman = struct {
             }
         }
     }
+
+
 
     /// Construct a Huffman tree from `queue_initial` into `array` which does
     /// not exceed the provided `max_depth`, returns an error if the provided

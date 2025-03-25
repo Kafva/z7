@@ -41,6 +41,7 @@ const FlateError = error {
     UnexpectedEof,
     InvalidLiteralLength,
     MissingTokenLiteral,
+    UndecodableBitStream,
 };
 
 const FlateBlockType = enum(u2) {
@@ -129,6 +130,40 @@ pub const Flate = struct {
             258 => .{ 285, 0, 258 },
             else => unreachable,
         };
+    }
+
+    /// Create a hashmap from each code onto a literal.
+    /// Read 7 bits and check for a match, if none, try 8 bits and then 9 bits.
+    ///
+    /// Lit Value    Bits        Codes
+    /// ---------    ----        -----
+    ///   0 - 143     8          00110000 through
+    ///                          10111111
+    /// 144 - 255     9          110010000 through
+    ///                          111111111
+    /// 256 - 279     7          0000000 through
+    ///                          0010111
+    /// 280 - 287     8          11000000 through
+    ///                          11000111
+    fn fixed_huffman_decoding_map(self: @This()) !std.AutoHashMap(u16, u16) {
+        var huffman_map = std.AutoHashMap(u16, u16).init(self.allocator);
+        for (0..144) |c| {
+            const i: u16 = @intCast(c);
+            try huffman_map.put(i, 0b0011_0000 + i);
+        }
+        for (144..256) |c| {
+            const i: u16 = @intCast(c);
+            try huffman_map.put(i, 0b1_1001_0000 + i);
+        }
+        for (256..280) |c| {
+            const i: u16 = @intCast(c);
+            try huffman_map.put(i, 0b000_0000 + i);
+        }
+        for (280..288) |c| {
+            const i: u16 = @intCast(c);
+            try huffman_map.put(i, 0b1100_0000 + i);
+        }
+        return huffman_map;
     }
 
     fn write_bits(
@@ -222,6 +257,7 @@ pub const Flate = struct {
             .lookahead = try self.allocator.alloc(u8, Flate.lookahead_length),
         };
         defer ctx.sliding_window.deinit(self.allocator);
+
 
         ctx.lookahead[0] = ctx.reader.readByte() catch {
             return;
@@ -355,6 +391,7 @@ pub const Flate = struct {
         outstream: std.fs.File,
     ) !void {
         var done = false;
+        const decoding_map = try self.fixed_huffman_decoding_map();
         var ctx = DecompressContext {
             .block_type = FlateBlockType.NO_COMPRESSION,
             .writer = outstream.writer().any(),
@@ -410,30 +447,57 @@ pub const Flate = struct {
                     }
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
-                    // loop (until end of block code recognized)
-                    //    decode literal/length value from input stream
-                    //    if value < 256
-                    //       copy value (literal byte) to output stream
-                    //    otherwise
-                    //       if value = end of block (256)
-                    //          break from loop
-                    //       otherwise (value = 257..285)
-                    //          decode distance from input stream
+                    while (true) {
+                        const b = blk: {
+                            const initial_bits = Flate.read_bits(&ctx, .little, u7, 7) catch {
+                                return FlateError.UnexpectedEof;
+                            };
 
-                    //          move backwards distance bytes in the output
-                    //          stream, and copy length bytes from this
-                    //          position to the output stream.
-                    // end loop
+                            var key: u16 = @as(u16, initial_bits);
+                            if (decoding_map.get(key)) |char| {
+                                break :blk char;
+                            }
 
+                            // Read one more bit and try the 8-bit value
+                            var bit = Flate.read_bits(&ctx, .little, u1, 1) catch {
+                                return FlateError.UnexpectedEof;
+                            };
+                            key |= if (bit == 0) 0 else 0b1000_0000;
 
-                    // while (true) {
-                    //     const bit = Flate.read_bits(&ctx, .little, u1, 1) catch {
-                    //         return FlateError.UnexpectedEof;
-                    //     };
+                            if (decoding_map.get(key)) |char| {
+                                break :blk char;
+                            }
 
-                    //     try Flate.window_write(&ctx.*.sliding_window, b);
-                    // }
-                    return FlateError.NotImplemented;
+                            // Read one more bit and try the 9-bit value
+                            bit = Flate.read_bits(&ctx, .little, u1, 1) catch {
+                                return FlateError.UnexpectedEof;
+                            };
+                            key |= if (bit == 0) 0 else 0b1_0000_0000;
+
+                            if (decoding_map.get(key)) |char| {
+                                break :blk char;
+                            }
+
+                            return FlateError.UndecodableBitStream;
+                        };
+
+                        if (b < 256) {
+                            const c: u8 = @truncate(b);
+                            try ctx.writer.writeByte(c);
+                            try Flate.window_write(&ctx.sliding_window, c);
+                            log.debug(@src(), "literal: {c}", .{c});
+                        }
+                        else if (b == 256) {
+                            log.debug(@src(), "End-of-block marker found", .{});
+                            break;
+                        }
+                        else if (b < 285) {
+                            log.debug(@src(), "backref: {d}", .{b});
+                        }
+                        else {
+                            return FlateError.InvalidLiteralLength;
+                        }
+                    }
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
                     return FlateError.NotImplemented;
