@@ -153,7 +153,7 @@ pub const Flate = struct {
     ///                          0010111
     /// 280 - 287     8          11000000 through
     ///                          11000111
-    fn fixed_huffman_decoding_map(self: @This()) !std.AutoHashMap(u16, u16) {
+    fn fixed_decoding_map(self: @This()) !std.AutoHashMap(u16, u16) {
         var huffman_map = std.AutoHashMap(u16, u16).init(self.allocator);
         for (0..144) |c| {
             const i: u16 = @intCast(c);
@@ -197,6 +197,7 @@ pub const Flate = struct {
     ) !void {
         var bit_writer = std.io.bitWriter(endian, ctx.*.writer);
         try bit_writer.writeBits(value, num_bits);
+        // log.debug(@src(), "Wrote {d} bits", .{num_bits});
         ctx.*.written_bits += num_bits;
     }
 
@@ -282,10 +283,14 @@ pub const Flate = struct {
         };
         defer ctx.sliding_window.deinit(self.allocator);
 
-
         ctx.lookahead[0] = Flate.read_byte(&ctx) catch {
             return;
         };
+
+        // Write block header
+        try Flate.write_bits(&ctx, .little, @as(u1, 1), 1); // XXX bfinal
+        try Flate.write_bits(&ctx, .little, @as(u2, @intFromEnum(ctx.block_type)), 2);
+        try Flate.write_bits(&ctx, .little, @as(u5, 0), 5);
 
         while (!done) {
             // The current number of matches within the lookahead
@@ -310,6 +315,8 @@ pub const Flate = struct {
 
                 match_cnt += 1;
 
+                // When `match_cnt` exceeds `longest_match_cant` we
+                // need to feed another byte into the lookahead.
                 if (match_cnt <= longest_match_length) {
                     continue;
                 }
@@ -319,17 +326,16 @@ pub const Flate = struct {
                 const win_idx: u16 = @truncate(i);
                 longest_match_distance = (win_len - win_idx) + (match_cnt - 1);
 
-                if (longest_match_length == Flate.lookahead_length) {
+                if (longest_match_length == win_len) {
                     // Lookahead is filled
                     break;
                 }
 
-                // When `match_cnt` exceeds `longest_match_cant` we
-                // need to feed another byte into the lookahead.
                 ctx.lookahead[longest_match_length] = Flate.read_byte(&ctx) catch {
                     done = true;
                     break;
                 };
+                log.debug(@src(), "Extending lookahead {d} item(s)", .{longest_match_length});
             }
 
             // Update the sliding window with the longest match
@@ -343,7 +349,7 @@ pub const Flate = struct {
 
             if (longest_match_length <= 3) {
                 // Prefer raw characters when the match length is <= 3
-                for (0..longest_match_length) |i| {
+                for (0..end) |i| {
                     const token = Token {
                         .char = ctx.lookahead[i],
                         .length = 0,
@@ -389,6 +395,7 @@ pub const Flate = struct {
         if (window.isFull()) {
             _ = window.read();
         }
+        log.debug(@src(), "Window write: 0x{x}", .{c});
         try window.write(c);
     }
 
@@ -413,7 +420,6 @@ pub const Flate = struct {
         outstream: std.fs.File,
     ) !void {
         var done = false;
-        const decoding_map = try self.fixed_huffman_decoding_map();
         var ctx = DecompressContext {
             .block_type = FlateBlockType.NO_COMPRESSION,
             .writer = outstream.writer().any(),
@@ -469,57 +475,7 @@ pub const Flate = struct {
                     }
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
-                    while (true) {
-                        const b = blk: {
-                            const bits = Flate.read_bits(&ctx, .little, u7, 7) catch {
-                                return FlateError.UnexpectedEof;
-                            };
-
-                            var key: u16 = @as(u16, bits);
-                            if (decoding_map.get(key)) |char| {
-                                break :blk char;
-                            }
-
-                            // Read one more bit and try the 8-bit value
-                            var bit = Flate.read_bits(&ctx, .little, u1, 1) catch {
-                                return FlateError.UnexpectedEof;
-                            };
-                            key |= if (bit == 0) 0 else 0b1000_0000;
-
-                            if (decoding_map.get(key)) |char| {
-                                break :blk char;
-                            }
-
-                            // Read one more bit and try the 9-bit value
-                            bit = Flate.read_bits(&ctx, .little, u1, 1) catch {
-                                return FlateError.UnexpectedEof;
-                            };
-                            key |= if (bit == 0) 0 else 0b1_0000_0000;
-
-                            if (decoding_map.get(key)) |char| {
-                                break :blk char;
-                            }
-
-                            return FlateError.UndecodableBitStream;
-                        };
-
-                        if (b < 256) {
-                            const c: u8 = @truncate(b);
-                            try ctx.writer.writeByte(c);
-                            try Flate.window_write(&ctx.sliding_window, c);
-                            log.debug(@src(), "literal: {c}", .{c});
-                        }
-                        else if (b == 256) {
-                            log.debug(@src(), "End-of-block marker found", .{});
-                            break;
-                        }
-                        else if (b < 285) {
-                            log.debug(@src(), "backref: {d}", .{b});
-                        }
-                        else {
-                            return FlateError.InvalidLiteralLength;
-                        }
-                    }
+                    return self.decompress_fixed_code(&ctx);
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
                     return FlateError.NotImplemented;
@@ -534,6 +490,65 @@ pub const Flate = struct {
         try le_writer.flushBits();
         log.debug(@src(), "Read {} bits [{} bytes]", .{ctx.read_bits, ctx.read_bits / 8});
         log.debug(@src(), "Wrote {} bits [{} bytes]", .{ctx.written_bits, ctx.written_bits / 8});
+    }
+
+    fn decompress_fixed_code(
+        self: @This(),
+        ctx: *DecompressContext,
+    ) !void {
+        const decoding_map = try self.fixed_decoding_map();
+        while (true) {
+            const b = blk: {
+                var key = Flate.read_bits(ctx, .little, u16, 7) catch {
+                    return FlateError.UnexpectedEof;
+                };
+
+                if (decoding_map.get(key)) |char| {
+                    log.debug(@src(), "Read 7-bit: '0x{d}'", .{char});
+                    break :blk char;
+                }
+
+                // Read one more bit and try the 8-bit value
+                var bit = Flate.read_bits(ctx, .little, u1, 1) catch {
+                    return FlateError.UnexpectedEof;
+                };
+                key |= if (bit == 0) 0 else 0b1000_0000;
+
+                if (decoding_map.get(key)) |char| {
+                    break :blk char;
+                }
+
+                // Read one more bit and try the 9-bit value
+                bit = Flate.read_bits(ctx, .little, u1, 1) catch {
+                    return FlateError.UnexpectedEof;
+                };
+                key |= if (bit == 0) 0 else 0b1_0000_0000;
+
+                if (decoding_map.get(key)) |char| {
+                    break :blk char;
+                }
+
+                return FlateError.UndecodableBitStream;
+            };
+
+            if (b < 256) {
+                const c: u8 = @truncate(b);
+                try ctx.*.writer.writeByte(c);
+                try Flate.window_write(&ctx.sliding_window, c);
+                log.debug(@src(), "literal: {c}", .{c});
+            }
+            else if (b == 256) {
+                log.debug(@src(), "End-of-block marker found", .{});
+                break;
+            }
+            else if (b < 285) {
+                log.debug(@src(), "backref: {d}", .{b});
+            }
+            else {
+                return FlateError.InvalidLiteralLength;
+            }
+        }
+
     }
 };
 

@@ -30,7 +30,7 @@ fn run_alloc(
     var in_size: usize = undefined;
 
     var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    //defer tmp.cleanup();
 
     try util.setup(
         allocator,
