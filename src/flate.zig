@@ -23,14 +23,21 @@ const Token = struct {
 
         if (self.char) |char| {
             if (std.ascii.isPrint(char) and char != '\n') {
-                return writer.print("{{ .length = {d}, .distance = {d}, .char = '{c}' }}",
-                                  .{self.length, self.distance, char});
+                return writer.print(
+                    "{{ .length = {d}, .distance = {d}, .char = '{c}' }}",
+                    .{self.length, self.distance, char}
+                );
             } else {
-                return writer.print("{{ .length = {d}, .distance = {d}, .char = 0x{x} }}",
-                                  .{self.length, self.distance, char});
+                return writer.print(
+                    "{{ .length = {d}, .distance = {d}, .char = 0x{x} }}",
+                    .{self.length, self.distance, char}
+                );
             }
         } else {
-            return writer.print("{{ .length = {d}, .distance = {d} }}", .{self.length, self.distance});
+            return writer.print(
+                "{{ .length = {d}, .distance = {d} }}",
+                .{self.length, self.distance}
+            );
         }
     }
 };
@@ -57,6 +64,7 @@ const CompressContext = struct {
     writer: std.io.AnyWriter,
     reader: std.io.AnyReader,
     written_bits: usize,
+    read_bits: usize,
     sliding_window: std.RingBuffer,
     lookahead: []u8,
 };
@@ -166,6 +174,21 @@ pub const Flate = struct {
         return huffman_map;
     }
 
+    fn read_byte(ctx: *CompressContext) !u8 {
+        const b = try ctx.*.reader.readByte();
+        
+        ctx.*.read_bits += 8;
+        const byte_cnt: usize = @truncate(ctx.*.read_bits / 8);
+
+        if (std.ascii.isPrint(b) and b != '\n') {
+            log.debug(@src(), "Read: '{c}' [{d}]", .{b, byte_cnt});
+        } else {
+            log.debug(@src(), "Read: '0x{x}' [{d}]", .{b, byte_cnt});
+        }
+
+        return b;
+    }
+
     fn write_bits(
         ctx: *CompressContext,
         comptime endian: std.builtin.Endian,
@@ -252,6 +275,7 @@ pub const Flate = struct {
             .writer = outstream.writer().any(),
             .reader = instream.reader().any(),
             .written_bits = 0,
+            .read_bits = 0,
             // Initialize sliding window for backreferences
             .sliding_window = try std.RingBuffer.init(self.allocator, Flate.window_length),
             .lookahead = try self.allocator.alloc(u8, Flate.lookahead_length),
@@ -259,7 +283,7 @@ pub const Flate = struct {
         defer ctx.sliding_window.deinit(self.allocator);
 
 
-        ctx.lookahead[0] = ctx.reader.readByte() catch {
+        ctx.lookahead[0] = Flate.read_byte(&ctx) catch {
             return;
         };
 
@@ -273,9 +297,10 @@ pub const Flate = struct {
             var longest_match_distance: u16 = 0;
 
             // Look for matches in the sliding_window
-            const win_len: u8 = @truncate(ctx.sliding_window.len());
+            const win_len: u16 = @truncate(ctx.sliding_window.len());
             for (0..win_len) |i| {
-                const ring_index = (ctx.sliding_window.read_index + i) % Flate.window_length;
+                const ring_index = (ctx.sliding_window.read_index + i) % 
+                                   Flate.window_length;
                 if (ctx.lookahead[match_cnt] != ctx.sliding_window.data[ring_index]) {
                     // Reset and start matching from the beginning of the
                     // lookahead again.
@@ -291,8 +316,8 @@ pub const Flate = struct {
 
                 // Update the longest match
                 longest_match_length = match_cnt;
-                const win_index: u8 = @truncate(i);
-                longest_match_distance = (win_len - win_index) + (match_cnt - 1);
+                const win_idx: u16 = @truncate(i);
+                longest_match_distance = (win_len - win_idx) + (match_cnt - 1);
 
                 if (longest_match_length == Flate.lookahead_length) {
                     // Lookahead is filled
@@ -301,7 +326,7 @@ pub const Flate = struct {
 
                 // When `match_cnt` exceeds `longest_match_cant` we
                 // need to feed another byte into the lookahead.
-                ctx.lookahead[longest_match_length] = ctx.reader.readByte() catch {
+                ctx.lookahead[longest_match_length] = Flate.read_byte(&ctx) catch {
                     done = true;
                     break;
                 };
@@ -316,10 +341,7 @@ pub const Flate = struct {
                 try Flate.window_write(&ctx.sliding_window, ctx.lookahead[i]);
             }
 
-            if (ctx.block_type == FlateBlockType.NO_COMPRESSION or 
-                longest_match_length <= 3) {
-                // TODO write block headers
-
+            if (longest_match_length <= 3) {
                 // Prefer raw characters when the match length is <= 3
                 for (0..longest_match_length) |i| {
                     const token = Token {
@@ -346,7 +368,7 @@ pub const Flate = struct {
                 longest_match_length == Flate.lookahead_length)
             {
                 // We need a new byte
-                ctx.lookahead[0] = ctx.reader.readByte() catch {
+                ctx.lookahead[0] = Flate.read_byte(&ctx) catch {
                     done = true;
                     break;
                 };
@@ -417,7 +439,7 @@ pub const Flate = struct {
                 done = true;
             }
 
-            const bits = Flate.read_bits(&ctx, .little, u2, 2) catch {
+            const block_type_bits = Flate.read_bits(&ctx, .little, u2, 2) catch {
                 return FlateError.UnexpectedEof;
             };
 
@@ -429,8 +451,8 @@ pub const Flate = struct {
                 };
             }
 
-            ctx.block_type = @enumFromInt(bits);
-            log.debug(@src(), "Decoding 0b{b} block", .{bits});
+            ctx.block_type = @enumFromInt(block_type_bits);
+            log.debug(@src(), "Decoding 0b{b} block", .{block_type_bits});
             switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
                     // Read block length
@@ -449,11 +471,11 @@ pub const Flate = struct {
                 FlateBlockType.FIXED_HUFFMAN => {
                     while (true) {
                         const b = blk: {
-                            const initial_bits = Flate.read_bits(&ctx, .little, u7, 7) catch {
+                            const bits = Flate.read_bits(&ctx, .little, u7, 7) catch {
                                 return FlateError.UnexpectedEof;
                             };
 
-                            var key: u16 = @as(u16, initial_bits);
+                            var key: u16 = @as(u16, bits);
                             if (decoding_map.get(key)) |char| {
                                 break :blk char;
                             }

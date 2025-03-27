@@ -32,7 +32,15 @@ fn run_alloc(
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try util.setup(allocator, &tmp, inputfile, &in, &in_size, compressed, decompressed);
+    try util.setup(
+        allocator,
+        &tmp,
+        inputfile,
+        &in,
+        &in_size,
+        compressed,
+        decompressed
+    );
     defer in.close();
 
     const flate = Flate {
@@ -51,5 +59,5 @@ fn run_alloc(
 
 test "Flate simple text" {
     //try check_flate("tests/testdata/flate_test.txt");
-    try check_flate("tests/testdata/simple.txt");
+    try check_flate("tests/testdata/helloworld.txt");
 }
