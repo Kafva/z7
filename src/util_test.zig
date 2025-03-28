@@ -86,6 +86,7 @@ pub fn log_result(
         return;
     }
 
+    const istty = std.io.getStdErr().isTty();
     const filename = std.fs.path.basename(inputfile);
     var k: f64 = undefined;
     var sign: []const u8 = undefined;
@@ -96,15 +97,16 @@ pub fn log_result(
     }
     else if (new_size > in_size) {
         k = @floatFromInt(new_size - in_size);
-        sign = "\x1b[91m+";
+        sign = if (istty) "\x1b[91m+" else "+";
     } else {
         k = @floatFromInt(in_size - new_size);
-        sign = "\x1b[92m-";
+        sign = if (istty) "\x1b[92m-" else "-";
     }
     const m: f64 = @floatFromInt(in_size);
     const percent = if (m == 0) 0.0 else 100 * (k / m);
-    std.debug.print("{d:<7} -> {d:<7} ({s}{d:5.1}\x1b[0m %) [{s}({s})]\n",
-                    .{in_size, new_size, sign, percent, name, filename});
+    const ansi_post = if (istty) "\x1b[0m" else "";
+    std.debug.print("{d:<7} -> {d:<7} ({s}{d:5.1}{s} %) [{s}({s})]\n",
+                    .{in_size, new_size, sign, percent, ansi_post, name, filename});
 }
 
 pub fn eql(allocator: std.mem.Allocator, lhs: std.fs.File, rhs: std.fs.File) !void {
