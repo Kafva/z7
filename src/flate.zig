@@ -202,12 +202,13 @@ pub const Flate = struct {
     }
 
     fn write_bits(
+        T: type,
         ctx: *CompressContext,
-        value: anytype,
+        value: T,
         num_bits: u16,
     ) !void {
         try ctx.bit_writer.writeBits(value, num_bits);
-        log.debug(@src(), "Output write: 0b{b} ({d}) [{d} bits]", .{value, value, num_bits});
+        Flate.print_bits(T, "Output write", value, num_bits);
         ctx.*.written_bits += num_bits;
     }
 
@@ -215,7 +216,7 @@ pub const Flate = struct {
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 if (token.char) |c| {
-                    try Flate.write_bits(ctx, c, 8);
+                    try Flate.write_bits(u8, ctx, c, 8);
                 }
                 else {
                     return FlateError.MissingTokenLiteral;
@@ -231,10 +232,10 @@ pub const Flate = struct {
                     // 144 - 255     9          110010000 through
                     //                          111111111
                     if (char < 144) {
-                        try Flate.write_bits(ctx, 0b0011_0000 + char, 8);
+                        try Flate.write_bits(u8, ctx, 0b0011_0000 + char, 8);
                     }
                     else {
-                        try Flate.write_bits(ctx, 0b1_1001_0000 + @as(u9, char), 9);
+                        try Flate.write_bits(u9, ctx, 0b1_1001_0000 + @as(u9, char), 9);
                     }
                 }
                 else {
@@ -253,16 +254,16 @@ pub const Flate = struct {
                     if (r[0] < 280) {
                         // Write the huffman encoding of 'Code'
                         const hcode: u7 = @truncate(r[0] - 256);
-                        try Flate.write_bits(ctx, 0b000_0000 + hcode, 7);
+                        try Flate.write_bits(u7, ctx, 0b000_0000 + hcode, 7);
                     }
                     else {
                         const hcode: u8 = @truncate(r[0] - 280);
-                        try Flate.write_bits(ctx, 0b1100_0000 + hcode, 8);
+                        try Flate.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
                     }
 
                     // Write the 'Extra Bits'
                     if (r[1] != 0) {
-                        try Flate.write_bits(ctx, token.length - r[2], r[1]);
+                        try Flate.write_bits(u16, ctx, token.length - r[2], r[1]);
                     }
                 }
             },
@@ -299,9 +300,9 @@ pub const Flate = struct {
         };
 
         // Write block header
-        try Flate.write_bits(&ctx, @as(u1, 1), 1); // XXX bfinal
-        try Flate.write_bits(&ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
-        try Flate.write_bits(&ctx, @as(u5, 0), 5);
+        try Flate.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
+        try Flate.write_bits(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
+        try Flate.write_bits(u5, &ctx, @as(u5, 0), 5);
 
         while (!done) {
             // The current number of matches within the lookahead
@@ -396,7 +397,7 @@ pub const Flate = struct {
         }
 
         // End-of-block marker (with static huffman encoding: 0000_000 -> 256)
-        try Flate.write_bits(&ctx, @as(u7, 0), 7);
+        try Flate.write_bits(u7, &ctx, @as(u7, 0), 7);
 
         // Incomplete bytes will be padded when flushing, wait until all
         // writes are done.
@@ -421,6 +422,34 @@ pub const Flate = struct {
         try window.write(c);
     }
 
+    fn print_bits(
+        comptime T: type,
+        comptime prefix: []const u8,
+        bits: T,
+        num_bits: usize,
+    ) void {
+        switch (num_bits) {
+            7 => 
+                log.debug(
+                    @src(),
+                    "{s}: 0b{b:0>7} ({d}) [{d} bits]",
+                    .{prefix, bits, bits, num_bits}
+                ),
+            8 => 
+                log.debug(
+                    @src(),
+                    "{s}: 0b{b:0>8} ({d}) [{d} bits]",
+                    .{prefix, bits, bits, num_bits}
+                ),
+            else => 
+                log.debug(
+                    @src(),
+                    "{s}: 0b{b} ({d}) [{d} bits]",
+                    .{prefix, bits, bits, num_bits}
+                ),
+        }
+    }
+
     fn read_bits(
         ctx: *DecompressContext,
         comptime T: type,
@@ -430,26 +459,7 @@ pub const Flate = struct {
             return e;
         };
 
-        switch (num_bits) {
-            7 => 
-                log.debug(
-                    @src(),
-                    "Input read: 0b{b:0>7} ({d}) [{d} bits]",
-                    .{bits, bits, num_bits}
-                ),
-            8 => 
-                log.debug(
-                    @src(),
-                    "Input read: 0b{b:0>8} ({d}) [{d} bits]",
-                    .{bits, bits, num_bits}
-                ),
-            else => 
-                log.debug(
-                    @src(),
-                    "Input read: 0b{b} ({d}) [{d} bits]",
-                    .{bits, bits, num_bits}
-                ),
-        }
+        Flate.print_bits(T, "Input read", bits, num_bits);
         
         ctx.*.processed_bits += num_bits;
 

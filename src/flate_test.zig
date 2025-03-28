@@ -61,3 +61,4 @@ test "Flate simple text" {
     try check_flate("tests/testdata/flate_test.txt");
     //try check_flate("tests/testdata/helloworld.txt");
 }
+
