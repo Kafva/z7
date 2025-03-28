@@ -1,6 +1,8 @@
 const std = @import("std");
 const log = @import("log.zig");
+const util = @import("util.zig");
 
+const writer_endian = std.builtin.Endian.big;
 
 const Token = struct {
     /// Valid matches are between (3..258) characters long, i.e. we acutally
@@ -61,10 +63,10 @@ const FlateBlockType = enum(u2) {
 const CompressContext = struct {
     /// The current type of block to write
     block_type: FlateBlockType,
-    writer: std.io.AnyWriter,
+    bit_writer: std.io.BitWriter(writer_endian, std.io.AnyWriter),
     reader: std.io.AnyReader,
     written_bits: usize,
-    read_bits: usize,
+    processed_bits: usize,
     sliding_window: std.RingBuffer,
     lookahead: []u8,
 };
@@ -73,9 +75,9 @@ const DecompressContext = struct {
     /// The current type of block to decode
     block_type: FlateBlockType,
     writer: std.io.AnyWriter,
-    reader: std.io.AnyReader,
+    bit_reader: std.io.BitReader(writer_endian, std.io.AnyReader),
     written_bits: usize,
-    read_bits: usize,
+    processed_bits: usize,
     /// Cache of the last 32K read bytes to support backreferences
     sliding_window: std.RingBuffer,
 };
@@ -140,8 +142,10 @@ pub const Flate = struct {
         };
     }
 
-    /// Create a hashmap from each code onto a literal.
-    /// Read 7 bits and check for a match, if none, try 8 bits and then 9 bits.
+    /// Create a hashmap from each huffman code onto a literal.
+    /// We need a separate map for each bit-length,
+    ///  0b0111100 [7] ~= 0b00111100 [8]
+    /// Same numerical value, but not the same bit-stream.
     ///
     /// Lit Value    Bits        Codes
     /// ---------    ----        -----
@@ -153,23 +157,32 @@ pub const Flate = struct {
     ///                          0010111
     /// 280 - 287     8          11000000 through
     ///                          11000111
-    fn fixed_decoding_map(self: @This()) !std.AutoHashMap(u16, u16) {
+    fn fixed_decoding_map(self: @This(), num_bits: u8) !std.AutoHashMap(u16, u16) {
         var huffman_map = std.AutoHashMap(u16, u16).init(self.allocator);
-        for (0..144) |c| {
-            const i: u16 = @intCast(c);
-            try huffman_map.put(i, 0b0011_0000 + i);
-        }
-        for (144..256) |c| {
-            const i: u16 = @intCast(c);
-            try huffman_map.put(i, 0b1_1001_0000 + i);
-        }
-        for (256..280) |c| {
-            const i: u16 = @intCast(c);
-            try huffman_map.put(i, 0b000_0000 + i);
-        }
-        for (280..288) |c| {
-            const i: u16 = @intCast(c);
-            try huffman_map.put(i, 0b1100_0000 + i);
+        switch (num_bits) {
+            7 => {
+                for (0..(280-256)) |c| {
+                    const i: u16 = @intCast(c);
+                    try huffman_map.putNoClobber(0b000_0000 + i, 256 + i);
+                }
+            },
+            8 => {
+                for (0..(144-0)) |c| {
+                    const i: u16 = @intCast(c);
+                    try huffman_map.putNoClobber(0b0011_0000 + i, 0 + i);
+                }
+                for (0..(288-280)) |c| {
+                    const i: u16 = @intCast(c);
+                    try huffman_map.putNoClobber(0b1100_0000 + i, 280 + i);
+                }
+            },
+            9 => {
+                for (0..(256-144)) |c| {
+                    const i: u16 = @intCast(c);
+                    try huffman_map.putNoClobber(0b1_1001_0000 + i, 144 + i);
+                }
+            },
+            else => unreachable,
         }
         return huffman_map;
     }
@@ -177,13 +190,12 @@ pub const Flate = struct {
     fn read_byte(ctx: *CompressContext) !u8 {
         const b = try ctx.*.reader.readByte();
         
-        ctx.*.read_bits += 8;
-        const byte_cnt: usize = @truncate(ctx.*.read_bits / 8);
+        ctx.*.processed_bits += 8;
 
         if (std.ascii.isPrint(b) and b != '\n') {
-            log.debug(@src(), "Read: '{c}' [{d}]", .{b, byte_cnt});
+            log.debug(@src(), "Input read: '{c}'", .{b});
         } else {
-            log.debug(@src(), "Read: '0x{x}' [{d}]", .{b, byte_cnt});
+            log.debug(@src(), "Input read: '0x{x}'", .{b});
         }
 
         return b;
@@ -191,13 +203,11 @@ pub const Flate = struct {
 
     fn write_bits(
         ctx: *CompressContext,
-        comptime endian: std.builtin.Endian,
         value: anytype,
         num_bits: u16,
     ) !void {
-        var bit_writer = std.io.bitWriter(endian, ctx.*.writer);
-        try bit_writer.writeBits(value, num_bits);
-        // log.debug(@src(), "Wrote {d} bits", .{num_bits});
+        try ctx.bit_writer.writeBits(value, num_bits);
+        log.debug(@src(), "Output write: 0b{b} ({d}) [{d} bits]", .{value, value, num_bits});
         ctx.*.written_bits += num_bits;
     }
 
@@ -205,7 +215,7 @@ pub const Flate = struct {
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 if (token.char) |c| {
-                    try Flate.write_bits(ctx, .little, c, 8);
+                    try Flate.write_bits(ctx, c, 8);
                 }
                 else {
                     return FlateError.MissingTokenLiteral;
@@ -221,10 +231,10 @@ pub const Flate = struct {
                     // 144 - 255     9          110010000 through
                     //                          111111111
                     if (char < 144) {
-                        try Flate.write_bits(ctx, .little, 0b0011_0000 + char, 8);
+                        try Flate.write_bits(ctx, 0b0011_0000 + char, 8);
                     }
                     else {
-                        try Flate.write_bits(ctx, .little, 0b1_1001_0000 + @as(u9, char), 9);
+                        try Flate.write_bits(ctx, 0b1_1001_0000 + @as(u9, char), 9);
                     }
                 }
                 else {
@@ -243,16 +253,16 @@ pub const Flate = struct {
                     if (r[0] < 280) {
                         // Write the huffman encoding of 'Code'
                         const hcode: u7 = @truncate(r[0] - 256);
-                        try Flate.write_bits(ctx, .little, 0b000_0000 + hcode, 7);
+                        try Flate.write_bits(ctx, 0b000_0000 + hcode, 7);
                     }
                     else {
                         const hcode: u8 = @truncate(r[0] - 280);
-                        try Flate.write_bits(ctx, .little, 0b1100_0000 + hcode, 8);
+                        try Flate.write_bits(ctx, 0b1100_0000 + hcode, 8);
                     }
 
                     // Write the 'Extra Bits'
                     if (r[1] != 0) {
-                        try Flate.write_bits(ctx, .little, token.length - r[2], r[1]);
+                        try Flate.write_bits(ctx, token.length - r[2], r[1]);
                     }
                 }
             },
@@ -273,10 +283,11 @@ pub const Flate = struct {
         var done = false;
         var ctx = CompressContext {
             .block_type = FlateBlockType.FIXED_HUFFMAN,
-            .writer = outstream.writer().any(),
+            // XXX: Big-endian order bits need to be manually converted
+            .bit_writer = std.io.bitWriter(writer_endian, outstream.writer().any()),
             .reader = instream.reader().any(),
             .written_bits = 0,
-            .read_bits = 0,
+            .processed_bits = 0,
             // Initialize sliding window for backreferences
             .sliding_window = try std.RingBuffer.init(self.allocator, Flate.window_length),
             .lookahead = try self.allocator.alloc(u8, Flate.lookahead_length),
@@ -288,9 +299,9 @@ pub const Flate = struct {
         };
 
         // Write block header
-        try Flate.write_bits(&ctx, .little, @as(u1, 1), 1); // XXX bfinal
-        try Flate.write_bits(&ctx, .little, @as(u2, @intFromEnum(ctx.block_type)), 2);
-        try Flate.write_bits(&ctx, .little, @as(u5, 0), 5);
+        try Flate.write_bits(&ctx, @as(u1, 1), 1); // XXX bfinal
+        try Flate.write_bits(&ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
+        try Flate.write_bits(&ctx, @as(u5, 0), 5);
 
         while (!done) {
             // The current number of matches within the lookahead
@@ -384,32 +395,64 @@ pub const Flate = struct {
             }
         }
 
+        // End-of-block marker (with static huffman encoding: 0000_000 -> 256)
+        try Flate.write_bits(&ctx, @as(u7, 0), 7);
+
         // Incomplete bytes will be padded when flushing, wait until all
         // writes are done.
-        var le_writer = std.io.bitWriter(.little, ctx.writer);
-        try le_writer.flushBits();
-        log.debug(@src(), "Wrote {} bits [{} bytes]", .{ctx.written_bits, ctx.written_bits / 8});
+        try ctx.bit_writer.flushBits();
+        log.debug(
+            @src(),
+            "Compression done: {} [{} bytes] -> {} bits [{} bytes]",
+            .{ctx.processed_bits, ctx.processed_bits / 8, 
+              ctx.written_bits, ctx.written_bits / 8}
+        );
+
     }
 
     fn window_write(window: *std.RingBuffer, c: u8) !void {
         if (window.isFull()) {
             _ = window.read();
         }
-        log.debug(@src(), "Window write: 0x{x}", .{c});
+        if (std.ascii.isPrint(c) and c != '\n') {
+            log.debug(@src(), "Window write: '{c}'", .{c});
+        } else {
+            log.debug(@src(), "Window write: '0x{x}'", .{c});
+        }
         try window.write(c);
     }
 
     fn read_bits(
         ctx: *DecompressContext,
-        comptime endian: std.builtin.Endian,
         comptime T: type,
         num_bits: u16,
     ) !T {
-        var bit_reader = std.io.bitReader(endian, ctx.*.reader);
-        const bits = bit_reader.readBitsNoEof(T, num_bits) catch |e| {
+        const bits = ctx.*.bit_reader.readBitsNoEof(T, num_bits) catch |e| {
             return e;
         };
-        ctx.*.read_bits += num_bits;
+
+        switch (num_bits) {
+            7 => 
+                log.debug(
+                    @src(),
+                    "Input read: 0b{b:0>7} ({d}) [{d} bits]",
+                    .{bits, bits, num_bits}
+                ),
+            8 => 
+                log.debug(
+                    @src(),
+                    "Input read: 0b{b:0>8} ({d}) [{d} bits]",
+                    .{bits, bits, num_bits}
+                ),
+            else => 
+                log.debug(
+                    @src(),
+                    "Input read: 0b{b} ({d}) [{d} bits]",
+                    .{bits, bits, num_bits}
+                ),
+        }
+        
+        ctx.*.processed_bits += num_bits;
 
         return bits;
     }
@@ -423,9 +466,9 @@ pub const Flate = struct {
         var ctx = DecompressContext {
             .block_type = FlateBlockType.NO_COMPRESSION,
             .writer = outstream.writer().any(),
-            .reader = instream.reader().any(),
+            .bit_reader = std.io.bitReader(writer_endian, instream.reader().any()),
             .written_bits = 0,
-            .read_bits = 0,
+            .processed_bits = 0,
             .sliding_window = try std.RingBuffer.init(self.allocator, Flate.window_length)
         };
         defer ctx.sliding_window.deinit(self.allocator);
@@ -436,7 +479,7 @@ pub const Flate = struct {
 
         // Decode the stream
         while (!done) {
-            const bfinal = Flate.read_bits(&ctx, .little, u1, 1) catch {
+            const bfinal = Flate.read_bits(&ctx, u1, 1) catch {
                 return;
             };
 
@@ -445,29 +488,29 @@ pub const Flate = struct {
                 done = true;
             }
 
-            const block_type_bits = Flate.read_bits(&ctx, .little, u2, 2) catch {
+            const block_type_bits = Flate.read_bits(&ctx, u2, 2) catch {
                 return FlateError.UnexpectedEof;
             };
 
 
             // Read up to the next byte boundary
-            while (ctx.read_bits % 8 != 0) {
-                _ = Flate.read_bits(&ctx, .little, u1, 1) catch {
+            while (ctx.processed_bits % 8 != 0) {
+                _ = Flate.read_bits(&ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
             }
 
             ctx.block_type = @enumFromInt(block_type_bits);
-            log.debug(@src(), "Decoding 0b{b} block", .{block_type_bits});
+            log.debug(@src(), "Decoding type-{d} block", .{block_type_bits});
             switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
                     // Read block length
-                    const block_size = try Flate.read_bits(&ctx, .little, u16, 16);
+                    const block_size = try Flate.read_bits(&ctx, u16, 16);
                     // Skip over ones-complement of length
-                    _ = try Flate.read_bits(&ctx, .little, u16, 16);
+                    _ = try Flate.read_bits(&ctx, u16, 16);
                     // Write bytes as-is to output stream
                     for (0..block_size) |_| {
-                        const b = Flate.read_bits(&ctx, .little, u8, 8) catch {
+                        const b = Flate.read_bits(&ctx, u8, 8) catch {
                             return FlateError.UnexpectedEof;
                         };
                         try Flate.window_write(&ctx.sliding_window, b);
@@ -486,45 +529,50 @@ pub const Flate = struct {
             }
         }
 
-        var le_writer = std.io.bitWriter(.little, ctx.writer);
-        try le_writer.flushBits();
-        log.debug(@src(), "Read {} bits [{} bytes]", .{ctx.read_bits, ctx.read_bits / 8});
-        log.debug(@src(), "Wrote {} bits [{} bytes]", .{ctx.written_bits, ctx.written_bits / 8});
+        log.debug(
+            @src(),
+            "Decompression done: {} [{} bytes] -> {} bits [{} bytes]",
+            .{ctx.processed_bits, ctx.processed_bits / 8, 
+              ctx.written_bits, ctx.written_bits / 8}
+        );
     }
 
     fn decompress_fixed_code(
         self: @This(),
         ctx: *DecompressContext,
     ) !void {
-        const decoding_map = try self.fixed_decoding_map();
+        const seven_bit_decode = try self.fixed_decoding_map(7);
+        const eight_bit_decode = try self.fixed_decoding_map(8);
+        const nine_bit_decode = try self.fixed_decoding_map(9);
         while (true) {
             const b = blk: {
-                var key = Flate.read_bits(ctx, .little, u16, 7) catch {
+                var key = Flate.read_bits(ctx, u16, 7) catch {
                     return FlateError.UnexpectedEof;
                 };
 
-                if (decoding_map.get(key)) |char| {
-                    log.debug(@src(), "Read 7-bit: '0x{d}'", .{char});
+                if (seven_bit_decode.get(key)) |char| {
                     break :blk char;
                 }
 
                 // Read one more bit and try the 8-bit value
-                var bit = Flate.read_bits(ctx, .little, u1, 1) catch {
+                //  0b0111100 [7 bits] -> 0b0111100(x) [8 bits]
+                var bit = Flate.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
-                key |= if (bit == 0) 0 else 0b1000_0000;
+                key = (key << 1) | @as(u16, bit);
 
-                if (decoding_map.get(key)) |char| {
+                if (eight_bit_decode.get(key)) |char| {
                     break :blk char;
                 }
 
                 // Read one more bit and try the 9-bit value
-                bit = Flate.read_bits(ctx, .little, u1, 1) catch {
+                //  0b01111001 [8 bits] -> 0b01111001(x) [9 bits]
+                bit = Flate.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
-                key |= if (bit == 0) 0 else 0b1_0000_0000;
+                key = (key << 1) | @as(u16, bit);
 
-                if (decoding_map.get(key)) |char| {
+                if (nine_bit_decode.get(key)) |char| {
                     break :blk char;
                 }
 
@@ -533,9 +581,8 @@ pub const Flate = struct {
 
             if (b < 256) {
                 const c: u8 = @truncate(b);
-                try ctx.*.writer.writeByte(c);
                 try Flate.window_write(&ctx.sliding_window, c);
-                log.debug(@src(), "literal: {c}", .{c});
+                try ctx.*.writer.writeByte(c);
             }
             else if (b == 256) {
                 log.debug(@src(), "End-of-block marker found", .{});

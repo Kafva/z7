@@ -15,17 +15,14 @@ pub fn repeat(comptime c: u8, comptime count: u8) ![]const u8 {
 }
 
 pub fn dump_hashmap(
+    comptime Key: type,
     comptime Value: type,
-    map: *const std.AutoHashMap(u8, Value),
+    map: *const std.AutoHashMap(Key, Value),
 ) void {
     var keys = map.keyIterator();
     while (keys.next()) |key| {
         if (map.get(key.*)) |enc| {
-            if (std.ascii.isPrint(key.*)) {
-                log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{key.*, key.*, enc});
-            } else {
-                log.debug(@src(), "(0x{x}) ' ' -> {any}", .{key.*, enc});
-            }
+            log.debug(@src(), "0b{b} ({d}) -> {any}", .{key.*, key.*, enc});
         }
     }
 }
