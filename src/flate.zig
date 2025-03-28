@@ -88,7 +88,7 @@ pub const Flate = struct {
     const lookahead_length: usize = 258;
     const window_length: usize = std.math.pow(usize, 2, 15);
 
-    /// Map a match length onto a `{ encoded_value, bit_count, range_start }`
+    /// Map a match length onto a `{ code, bit_count, range_start }`
     /// tuple. The end of the range is given from `range_start + 2**bit_count`.
     ///      Extra               Extra               Extra
     /// Code Bits Length(s) Code Bits Lengths   Code Bits Length(s)
@@ -138,6 +138,56 @@ pub const Flate = struct {
             195...226 => .{ 283, 5, 195 },
             227...257 => .{ 284, 5, 227 },
             258 => .{ 285, 0, 258 },
+            else => unreachable,
+        };
+    }
+
+    /// Map a distance onto a `{ code, bit_count, range_start }`
+    ///      Extra           Extra               Extra
+    /// Code Bits Dist  Code Bits   Dist     Code Bits Distance
+    /// ---- ---- ----  ---- ----  ------    ---- ---- --------
+    ///   0   0    1     10   4     33-48    20    9   1025-1536
+    ///   1   0    2     11   4     49-64    21    9   1537-2048
+    ///   2   0    3     12   5     65-96    22   10   2049-3072
+    ///   3   0    4     13   5     97-128   23   10   3073-4096
+    ///   4   1   5,6    14   6    129-192   24   11   4097-6144
+    ///   5   1   7,8    15   6    193-256   25   11   6145-8192
+    ///   6   2   9-12   16   7    257-384   26   12  8193-12288
+    ///   7   2  13-16   17   7    385-512   27   12 12289-16384
+    ///   8   3  17-24   18   8    513-768   28   13 16385-24576
+    ///   9   3  25-32   19   8   769-1024   29   13 24577-32768
+    fn lookup_distance(distance: u16) [3]u16 {
+        return switch (distance) {
+            1 => .{0, 0, 1},
+            2 => .{1, 0, 2},
+            3 => .{2, 0, 3},
+            4 => .{3, 0, 4},
+            5...6 => .{4, 1, 5},
+            7...8 => .{5, 1, 7},
+            9...12 => .{6, 2, 9},
+            13...16 => .{7, 2, 13},
+            17...24 => .{8, 3, 17},
+            25...32 => .{9, 3, 25},
+            33...48 => .{10, 4, 33},
+            49...64 => .{11, 4, 49},
+            65...96 => .{12, 5, 65},
+            97...128 => .{13, 5, 97},
+            129...192 => .{14, 6, 129},
+            193...256 => .{15, 6, 193},
+            257...384 => .{16, 7, 257},
+            385...512 => .{17, 7, 385},
+            513...768 => .{18, 8, 513},
+            769...1024 => .{19, 8, 769},
+            1025...1536 => .{20, 9, 1025},
+            1537...2048 => .{21, 9, 1537},
+            2049...3072 => .{22, 10, 2049},
+            3073...4096 => .{23, 10, 3073},
+            4097...6144 => .{24, 11, 4097},
+            6145...8192 => .{25, 11, 6145},
+            8193...12288 => .{26, 12, 8193},
+            12289...16384 => .{27, 12, 12289},
+            16385...24576 => .{28, 13, 16385},
+            24577...32768 => .{29, 13, 24577},
             else => unreachable,
         };
     }
@@ -261,10 +311,15 @@ pub const Flate = struct {
                         try Flate.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
                     }
 
-                    // Write the 'Extra Bits'
+                    // Write the 'Extra Bits', i.e. the offset that indicate
+                    // the exact offset to use in the range.
                     if (r[1] != 0) {
                         try Flate.write_bits(u16, ctx, token.length - r[2], r[1]);
                     }
+
+                    // TODO: Write the distance encoding
+                    //const d = Flate.lookup_distance(token.distance);
+                    //try Flate.write_bits(u16, ctx, d[1], d[1]);
                 }
             },
             FlateBlockType.DYNAMIC_HUFFMAN => {
@@ -599,6 +654,7 @@ pub const Flate = struct {
             }
             else if (b < 285) {
                 log.debug(@src(), "backref: {d}", .{b});
+                // Decode 
             }
             else {
                 return FlateError.InvalidLiteralLength;
