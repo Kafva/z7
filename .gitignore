@@ -19,6 +19,7 @@ build
 *.rej
 tags
 .tags
+*.log
 
 # Zig
 zig-cache

@@ -9,19 +9,42 @@ fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const ansi_color = comptime switch (level) {
-        .debug => "\x1b[34m",
-        .info => "\x1b[32m",
-        .warn => "\x1b[33m",
-        .err => "\x1b[31m",
-    };
+    if (std.io.getStdErr().isTty()) {
+        const ansi_color = comptime switch (level) {
+            .debug => "\x1b[34m",
+            .info => "\x1b[32m",
+            .warn => "\x1b[33m",
+            .err => "\x1b[31m",
+        };
+        log_write(level, src, ansi_color, "\x1b[0m", format, args);
+    }
+    else {
+        log_write(level, src, "", "", format, args);
+    }
+}
+
+fn log_write(
+    comptime level: std.log.Level,
+    comptime src: std.builtin.SourceLocation,
+    comptime ansi_pre: []const u8,
+    comptime ansi_post: []const u8,
+    comptime format: []const u8,
+    args: anytype,
+) void {
     const level_text = comptime level.asText();
 
     std.debug.lockStdErr();
     defer std.debug.unlockStdErr();
-    const stderr = std.io.getStdErr().writer();
-    const fmt = std.fmt.comptimePrint("{s}{s}\x1b[0m: [{s}:{any}] {s}\n", .{ ansi_color, level_text, src.file, src.line, format });
-    nosuspend stderr.print(fmt, args) catch return;
+    const writer = std.io.getStdErr().writer();
+    const fmt = std.fmt.comptimePrint("{s}{s}{s}: [{s}:{any}] {s}\n", .{
+        ansi_pre,
+        level_text,
+        ansi_post,
+        src.file,
+        src.line,
+        format
+    });
+    nosuspend writer.print(fmt, args) catch return;
 }
 
 pub fn debug(

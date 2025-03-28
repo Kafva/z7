@@ -407,7 +407,6 @@ pub const Flate = struct {
             .{ctx.processed_bits, ctx.processed_bits / 8, 
               ctx.written_bits, ctx.written_bits / 8}
         );
-
     }
 
     fn window_write(window: *std.RingBuffer, c: u8) !void {
@@ -595,7 +594,6 @@ pub const Flate = struct {
                 return FlateError.InvalidLiteralLength;
             }
         }
-
     }
 };
 
