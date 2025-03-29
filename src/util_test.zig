@@ -110,6 +110,8 @@ pub fn log_result(
 }
 
 pub fn eql(allocator: std.mem.Allocator, lhs: std.fs.File, rhs: std.fs.File) !void {
+    try lhs.seekTo(0);
+    try rhs.seekTo(0);
     const lhs_data = try lhs.readToEndAlloc(allocator, max_size);
     const rhs_data = try rhs.readToEndAlloc(allocator, max_size);
     try std.testing.expectEqualSlices(u8, lhs_data, rhs_data);
