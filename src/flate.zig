@@ -111,6 +111,52 @@ const Token = struct {
         };
     }
 
+    /// The inverse of `lookup_length`, fetch the `TokenEncoding` for a given
+    /// length 'Code'.
+    pub fn from_length_code(length_code: u5) TokenEncoding {
+        const r: [2]u16 = switch (length_code) {
+            257 => .{ 0, 3 },
+            258 => .{ 0, 4 },
+            259 => .{ 0, 5 },
+            260 => .{ 0, 6 },
+            261 => .{ 0, 7 },
+            262 => .{ 0, 8 },
+            263 => .{ 0, 9 },
+            264 => .{ 0, 10 },
+            265 => .{ 1, 11 },
+            265 => .{ 1, 12 },
+            266 => .{ 1, 13 },
+            266 => .{ 1, 14 },
+            267 => .{ 1, 15 },
+            267 => .{ 1, 16 },
+            268 => .{ 1, 17 },
+            268 => .{ 1, 18 },
+            269 => .{ 2, 19 },
+            270 => .{ 2, 23 },
+            271 => .{ 2, 27 },
+            272 => .{ 2, 31 },
+            273 => .{ 3, 35 },
+            274 => .{ 3, 43 },
+            275 => .{ 3, 51 },
+            276 => .{ 3, 59 },
+            277 => .{ 4, 67 },
+            278 => .{ 4, 83 },
+            279 => .{ 4, 99 },
+            280 => .{ 4, 115 },
+            281 => .{ 5, 131 },
+            282 => .{ 5, 163 },
+            283 => .{ 5, 195 },
+            284 => .{ 5, 227 },
+            285 => .{ 0, 258 },
+            else => unreachable,
+        };
+        return TokenEncoding {
+            .code = length_code,
+            .bit_count = @truncate(r[0]),
+            .range_start = r[1]
+        };
+    }
+
     /// Map a distance onto a `TokenEncoding`
     ///      Extra           Extra               Extra
     /// Code Bits Dist  Code Bits   Dist     Code Bits Distance
@@ -226,7 +272,10 @@ pub const Flate = struct {
     ///                          0010111
     /// 280 - 287     8          11000000 through
     ///                          11000111
-    fn fixed_decoding_map(self: @This(), num_bits: u8) !std.AutoHashMap(u16, u16) {
+    fn fixed_literal_length_decoding(
+        self: @This(),
+        num_bits: u8,
+    ) !std.AutoHashMap(u16, u16) {
         var huffman_map = std.AutoHashMap(u16, u16).init(self.allocator);
         switch (num_bits) {
             7 => {
@@ -258,7 +307,7 @@ pub const Flate = struct {
 
     fn read_byte(ctx: *CompressContext) !u8 {
         const b = try ctx.*.reader.readByte();
-        
+
         ctx.*.processed_bits += 8;
 
         if (std.ascii.isPrint(b) and b != '\n') {
@@ -406,7 +455,7 @@ pub const Flate = struct {
             // Look for matches in the sliding_window
             const win_len: u16 = @truncate(ctx.sliding_window.len());
             for (0..win_len) |i| {
-                const ring_index = (ctx.sliding_window.read_index + i) % 
+                const ring_index = (ctx.sliding_window.read_index + i) %
                                    Flate.window_length;
                 if (ctx.lookahead[match_cnt] != ctx.sliding_window.data[ring_index]) {
                     // Reset and start matching from the beginning of the
@@ -495,7 +544,7 @@ pub const Flate = struct {
         log.debug(
             @src(),
             "Compression done: {} [{} bytes] -> {} bits [{} bytes]",
-            .{ctx.processed_bits, ctx.processed_bits / 8, 
+            .{ctx.processed_bits, ctx.processed_bits / 8,
               ctx.written_bits, ctx.written_bits / 8}
         );
     }
@@ -519,19 +568,19 @@ pub const Flate = struct {
         num_bits: usize,
     ) void {
         switch (num_bits) {
-            7 => 
+            7 =>
                 log.debug(
                     @src(),
                     "{s}: 0b{b:0>7} ({d}) [{d} bits]",
                     .{prefix, bits, bits, num_bits}
                 ),
-            8 => 
+            8 =>
                 log.debug(
                     @src(),
                     "{s}: 0b{b:0>8} ({d}) [{d} bits]",
                     .{prefix, bits, bits, num_bits}
                 ),
-            else => 
+            else =>
                 log.debug(
                     @src(),
                     "{s}: 0b{b} ({d}) [{d} bits]",
@@ -550,7 +599,7 @@ pub const Flate = struct {
         };
 
         Flate.print_bits(T, "Input read", bits, num_bits);
-        
+
         ctx.*.processed_bits += num_bits;
 
         return bits;
@@ -631,7 +680,7 @@ pub const Flate = struct {
         log.debug(
             @src(),
             "Decompression done: {} [{} bytes] -> {} bits [{} bytes]",
-            .{ctx.processed_bits, ctx.processed_bits / 8, 
+            .{ctx.processed_bits, ctx.processed_bits / 8,
               ctx.written_bits, ctx.written_bits / 8}
         );
     }
@@ -640,9 +689,9 @@ pub const Flate = struct {
         self: @This(),
         ctx: *DecompressContext,
     ) !void {
-        const seven_bit_decode = try self.fixed_decoding_map(7);
-        const eight_bit_decode = try self.fixed_decoding_map(8);
-        const nine_bit_decode = try self.fixed_decoding_map(9);
+        const seven_bit_decode = try self.fixed_literal_length_decoding(7);
+        const eight_bit_decode = try self.fixed_literal_length_decoding(8);
+        const nine_bit_decode = try self.fixed_literal_length_decoding(9);
         while (true) {
             const b = blk: {
                 var key = Flate.read_bits(ctx, u16, 7) catch {
@@ -690,8 +739,13 @@ pub const Flate = struct {
             else if (b < 285) {
                 log.debug(@src(), "backref: {d}", .{b});
 
+                // Map the code symbol to the actual length
+                const enc = from_length_code(TODO);
+
                 // 1. Decode the length
                 // 2. Decode the extra bits of the length
+                // 3. Decode the distance
+                // 4. Decode the extra bits of the distance
             }
             else {
                 return FlateError.InvalidLiteralLength;
