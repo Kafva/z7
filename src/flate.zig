@@ -11,7 +11,93 @@ const TokenEncoding = struct {
     bit_count: u8,
     /// The start of the length or distance range for this token, the range ends
     /// at `range_start + 2**bit_count`.
-    range_start: u16
+    range_start: u16,
+
+    /// The inverse of `lookup_length`, fetch the `TokenEncoding` for a given
+    /// length 'Code'.
+    pub fn from_length_code(length_code: u16) TokenEncoding {
+        const r: [2]u16 = switch (length_code) {
+            257 => .{ 0, 3 },
+            258 => .{ 0, 4 },
+            259 => .{ 0, 5 },
+            260 => .{ 0, 6 },
+            261 => .{ 0, 7 },
+            262 => .{ 0, 8 },
+            263 => .{ 0, 9 },
+            264 => .{ 0, 10 },
+            265 => .{ 1, 11 },
+            266 => .{ 1, 13 },
+            267 => .{ 1, 15 },
+            268 => .{ 1, 17 },
+            269 => .{ 2, 19 },
+            270 => .{ 2, 23 },
+            271 => .{ 2, 27 },
+            272 => .{ 2, 31 },
+            273 => .{ 3, 35 },
+            274 => .{ 3, 43 },
+            275 => .{ 3, 51 },
+            276 => .{ 3, 59 },
+            277 => .{ 4, 67 },
+            278 => .{ 4, 83 },
+            279 => .{ 4, 99 },
+            280 => .{ 4, 115 },
+            281 => .{ 5, 131 },
+            282 => .{ 5, 163 },
+            283 => .{ 5, 195 },
+            284 => .{ 5, 227 },
+            285 => .{ 0, 258 },
+            else => unreachable,
+        };
+        return TokenEncoding {
+            .code = length_code,
+            .bit_count = @truncate(r[0]),
+            .range_start = r[1]
+        };
+    }
+
+    /// The inverse of `lookup_distance`, fetch the `TokenEncoding` for a given
+    /// distance 'Code'.
+    pub fn from_distance_code(distance_code: u5) TokenEncoding {
+        const r: [2]u16 = switch (distance_code) {
+            0 => .{0, 1},
+            1 => .{0, 2},
+            2 => .{0, 3},
+            3 => .{0, 4},
+            4 => .{1, 5},
+            5 => .{1, 7},
+            6 => .{2, 9},
+            7 => .{2, 13},
+            8 => .{3, 17},
+            9 => .{3, 25},
+            10 => .{4, 33},
+            11 => .{4, 49},
+            12 => .{5, 65},
+            13 => .{5, 97},
+            14 => .{6, 129},
+            15 => .{6, 193},
+            16 => .{7, 257},
+            17 => .{7, 385},
+            18 => .{8, 513},
+            19 => .{8, 769},
+            20 => .{9, 1025},
+            21 => .{9, 1537},
+            22 => .{10, 2049},
+            23 => .{10, 3073},
+            24 => .{11, 4097},
+            25 => .{11, 6145},
+            26 => .{12, 8193},
+            27 => .{12, 12289},
+            28 => .{13, 16385},
+            29 => .{13, 24577},
+            else => unreachable,
+        };
+        return TokenEncoding {
+            .code = distance_code,
+            .bit_count = @truncate(r[0]),
+            .range_start = r[1]
+        };
+    }
+
 };
 
 const Token = struct {
@@ -111,52 +197,6 @@ const Token = struct {
         };
     }
 
-    /// The inverse of `lookup_length`, fetch the `TokenEncoding` for a given
-    /// length 'Code'.
-    pub fn from_length_code(length_code: u5) TokenEncoding {
-        const r: [2]u16 = switch (length_code) {
-            257 => .{ 0, 3 },
-            258 => .{ 0, 4 },
-            259 => .{ 0, 5 },
-            260 => .{ 0, 6 },
-            261 => .{ 0, 7 },
-            262 => .{ 0, 8 },
-            263 => .{ 0, 9 },
-            264 => .{ 0, 10 },
-            265 => .{ 1, 11 },
-            265 => .{ 1, 12 },
-            266 => .{ 1, 13 },
-            266 => .{ 1, 14 },
-            267 => .{ 1, 15 },
-            267 => .{ 1, 16 },
-            268 => .{ 1, 17 },
-            268 => .{ 1, 18 },
-            269 => .{ 2, 19 },
-            270 => .{ 2, 23 },
-            271 => .{ 2, 27 },
-            272 => .{ 2, 31 },
-            273 => .{ 3, 35 },
-            274 => .{ 3, 43 },
-            275 => .{ 3, 51 },
-            276 => .{ 3, 59 },
-            277 => .{ 4, 67 },
-            278 => .{ 4, 83 },
-            279 => .{ 4, 99 },
-            280 => .{ 4, 115 },
-            281 => .{ 5, 131 },
-            282 => .{ 5, 163 },
-            283 => .{ 5, 195 },
-            284 => .{ 5, 227 },
-            285 => .{ 0, 258 },
-            else => unreachable,
-        };
-        return TokenEncoding {
-            .code = length_code,
-            .bit_count = @truncate(r[0]),
-            .range_start = r[1]
-        };
-    }
-
     /// Map a distance onto a `TokenEncoding`
     ///      Extra           Extra               Extra
     /// Code Bits Dist  Code Bits   Dist     Code Bits Distance
@@ -218,6 +258,7 @@ const FlateError = error {
     UnexpectedBlockType,
     UnexpectedEof,
     InvalidLiteralLength,
+    InvalidDistance,
     MissingTokenLiteral,
     UndecodableBitStream,
 };
@@ -685,6 +726,25 @@ pub const Flate = struct {
         );
     }
 
+    /// Get the starting index of a back reference at `distance` backwards
+    /// into the sliding window.
+    fn window_start_index(write_index: usize, distance: u16) !usize {
+        if (distance > Flate.window_length) {
+            log.err(@src(), "Distance too large: {d} >= {d}", .{ distance, Flate.window_length });
+            return FlateError.InvalidDistance;
+        }
+
+        const write_index_i: i64 = @intCast(write_index);
+        const distance_i: i64 = @intCast(distance);
+        const window_length_i: i64 = @intCast(Flate.window_length);
+
+        const s: i64 = write_index_i - distance_i;
+
+        const s_usize: usize = @intCast(s + window_length_i);
+
+        return s_usize % Flate.window_length;
+    }
+
     fn decompress_fixed_code(
         self: @This(),
         ctx: *DecompressContext,
@@ -739,13 +799,51 @@ pub const Flate = struct {
             else if (b < 285) {
                 log.debug(@src(), "backref: {d}", .{b});
 
-                // Map the code symbol to the actual length
-                const enc = from_length_code(TODO);
+                // Get the corresponding `TokenEncoding` for the 'Code'
+                const enc = TokenEncoding.from_length_code(b);
 
-                // 1. Decode the length
-                // 2. Decode the extra bits of the length
-                // 3. Decode the distance
-                // 4. Decode the extra bits of the distance
+                // 2. Determine the length of the match
+                const length: u16 = blk: {
+                    if (enc.bit_count != 0) {
+                        // Parse extra bits for the offset
+                        const bits = Flate.read_bits(ctx, u16, enc.bit_count) catch {
+                            return FlateError.UnexpectedEof;
+                        };
+                        const offset: u16 = @intCast(bits);
+                        break :blk enc.range_start + offset;
+                    } else {
+                        break :blk enc.range_start;
+                    }
+                };
+
+                // 3. Determine the distance for the match
+                const distance_code = Flate.read_bits(ctx, u5, 5) catch {
+                    return FlateError.UnexpectedEof;
+                };
+                const denc = TokenEncoding.from_distance_code(distance_code);
+
+                const distance: u16 = blk: {
+                    if (denc.bit_count != 0) {
+                        // Parse extra bits for the offset
+                        const bits = Flate.read_bits(ctx, u16, denc.bit_count) catch {
+                            return FlateError.UnexpectedEof;
+                        };
+                        const offset: u16 = @intCast(bits);
+                        break :blk denc.range_start + offset;
+                    } else {
+                        break :blk denc.range_start;
+                    }
+                };
+
+                const write_index = ctx.sliding_window.write_index;
+                const start_index = try Flate.window_start_index(write_index, distance);
+                for (start_index..start_index + length) |i| {
+                    const c: u8 = ctx.sliding_window.data[i];
+                    try ctx.*.writer.writeByte(c);
+                    log.debug(@src(), "backref[{}]: '{}'", .{i, c});
+                }
+                
+
             }
             else {
                 return FlateError.InvalidLiteralLength;
