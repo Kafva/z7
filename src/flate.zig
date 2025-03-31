@@ -840,7 +840,7 @@ pub const Flate = struct {
                 for (start_index..start_index + length) |i| {
                     const c: u8 = ctx.sliding_window.data[i];
                     try ctx.*.writer.writeByte(c);
-                    log.debug(@src(), "backref[{}]: '{}'", .{i, c});
+                    log.debug(@src(), "backref[{}]: '{c}'", .{i, c});
                 }
                 
 
