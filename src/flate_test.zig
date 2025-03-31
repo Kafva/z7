@@ -54,9 +54,9 @@ fn run_alloc(
     try util.eql(allocator, in, decompressed.*);
 }
 
-// test "Flate on empty file" {
-//     try check_flate("tests/testdata/empty");
-// }
+test "Flate on empty file" {
+    try check_flate("tests/testdata/empty");
+}
 
 test "Flate on simple text" {
     try check_flate("tests/testdata/flate_test.txt");

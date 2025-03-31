@@ -75,8 +75,11 @@ pub const Compress = struct {
         ctx: *CompressContext,
     ) !void {
         var done = false;
-        ctx.*.lookahead[0] = Compress.read_byte(ctx) catch {
-            return;
+        ctx.*.lookahead[0] = blk: {
+            break :blk Compress.read_byte(ctx) catch {
+                done = true;
+                break :blk 0;
+            };
         };
 
         while (!done) {
@@ -134,7 +137,11 @@ pub const Compress = struct {
                     done = true;
                     break;
                 };
-                log.debug(@src(), "Extending lookahead {d} item(s)", .{longest_match_length});
+                log.debug(
+                    @src(),
+                    "Extending lookahead {d} item(s)",
+                    .{longest_match_length}
+                );
             }
 
             const lookahead_end = if (longest_match_length == 0) 1
