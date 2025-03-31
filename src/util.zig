@@ -27,3 +27,31 @@ pub fn dump_hashmap(
     }
 }
 
+pub fn print_bits(
+    comptime T: type,
+    comptime prefix: []const u8,
+    bits: T,
+    num_bits: usize,
+) void {
+    switch (num_bits) {
+        7 =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b:0>7} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
+        8 =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b:0>8} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
+        else =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
+    }
+}
+
