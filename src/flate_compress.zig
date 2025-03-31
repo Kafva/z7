@@ -26,7 +26,6 @@ pub const Compress = struct {
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !void {
-        var done = false;
         var ctx = CompressContext {
             .allocator = allocator,
             .block_type = FlateBlockType.FIXED_HUFFMAN,
@@ -41,107 +40,25 @@ pub const Compress = struct {
         };
         defer ctx.sliding_window.deinit(allocator);
 
-        ctx.lookahead[0] = Compress.read_byte(&ctx) catch {
-            return;
-        };
-
         // Write block header
         try Compress.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
         try Compress.write_bits(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
         try Compress.write_bits(u5, &ctx, @as(u5, 0), 5);
 
-        while (!done) {
-            // The current number of matches within the lookahead
-            var match_cnt: u8 = 0;
-            // Max number of matches in the lookahead this iteration
-            // XXX: The byte at the `longest_match_cnt` index is not part
-            // of the match!
-            var longest_match_length: u8 = 0;
-            var longest_match_distance: u16 = 0;
-
-            // Look for matches in the sliding_window
-            const win_len: u16 = @truncate(ctx.sliding_window.len());
-            for (0..win_len) |i| {
-                const ring_index = (ctx.sliding_window.read_index + i) %
-                                   Flate.window_length;
-                if (ctx.lookahead[match_cnt] != ctx.sliding_window.data[ring_index]) {
-                    // Reset and start matching from the beginning of the
-                    // lookahead again.
-                    match_cnt = 0;
-                    continue;
-                }
-
-                match_cnt += 1;
-
-                // When `match_cnt` exceeds `longest_match_cant` we
-                // need to feed another byte into the lookahead.
-                if (match_cnt <= longest_match_length) {
-                    continue;
-                }
-
-                // Update the longest match
-                longest_match_length = match_cnt;
-                const win_idx: u16 = @truncate(i);
-                longest_match_distance = (win_len - win_idx) + (match_cnt - 1);
-
-                if (longest_match_length == win_len) {
-                    // Lookahead is filled
-                    break;
-                }
-
-                ctx.lookahead[longest_match_length] = Compress.read_byte(&ctx) catch {
-                    done = true;
-                    break;
-                };
-                // log.debug(@src(), "Extending lookahead {d} item(s)", .{longest_match_length});
-            }
-
-            // Update the sliding window with the longest match
-            // we will write `longest_match_length` characters in all cases
-            // except for when there were no matches at all, in that case we will
-            // just write a single byte.
-            const end = if (longest_match_length == 0) 1 else longest_match_length;
-            for (0..end) |i| {
-                try Flate.window_write(&ctx.sliding_window, ctx.lookahead[i]);
-            }
-
-            if (longest_match_length <= 3) {
-                // Prefer raw characters when the match length is <= 3
-                for (0..end) |i| {
-                    const token = Token {
-                        .char = ctx.lookahead[i],
-                        .length = 0,
-                        .distance = 0
-                    };
-                    try Compress.write_token(&ctx, token);
-                }
-            }
-            else {
-                const token = Token {
-                    .char = null,
-                    .length = longest_match_length,
-                    .distance = longest_match_distance
-                };
-                try Compress.write_token(&ctx, token);
-            }
-
-            // Set starting byte for next iteration
-            if (longest_match_length == 0 or
-                longest_match_length == Flate.lookahead_length)
-            {
-                // We need a new byte
-                ctx.lookahead[0] = Compress.read_byte(&ctx) catch {
-                    done = true;
-                    break;
-                };
-            } else {
-                // The `next_char` should be passed to the next iteration
-                ctx.lookahead[0] = ctx.lookahead[longest_match_length];
-            }
+        switch (ctx.block_type) {
+            FlateBlockType.NO_COMPRESSION => {
+                return FlateError.NotImplemented;
+            },
+            FlateBlockType.FIXED_HUFFMAN => {
+                // Encode the token according to the static huffman code
+                try Compress.fixed_code_compress_block(&ctx);
+            },
+            FlateBlockType.DYNAMIC_HUFFMAN => {
+                return FlateError.NotImplemented;
+            },
+            else => unreachable
         }
 
-        // End-of-block marker (with static huffman encoding: 0000_000 -> 256)
-        try Compress.write_bits(u7, &ctx, @as(u7, 0), 7);
 
         // Incomplete bytes will be padded when flushing, wait until all
         // writes are done.
@@ -154,6 +71,205 @@ pub const Compress = struct {
         );
     }
 
+    pub fn fixed_code_compress_block(
+        ctx: *CompressContext,
+    ) !void {
+        var done = false;
+        ctx.*.lookahead[0] = Compress.read_byte(ctx) catch {
+            return;
+        };
+
+        while (!done) {
+            // The current number of matches within the lookahead
+            var match_length: u8 = 0;
+            // Max number of matches in the lookahead this iteration
+            // XXX: The byte at the `longest_match_length` index is not part
+            // of the match!
+            var longest_match_length: u8 = 0;
+            var longest_match_distance: u16 = 0;
+
+            // Look for matches in the sliding_window
+            const win_len: u16 = @truncate(ctx.*.sliding_window.len());
+            const ring_index_start = ctx.*.sliding_window.read_index;
+            var ring_index = ring_index_start;
+
+            while (ring_index - ring_index_start < win_len) {
+                if (ctx.*.lookahead[match_length] != ctx.*.sliding_window.data[ring_index]) {
+                    // Reset and start matching from the beginning of the
+                    // lookahead again
+                    //
+                    // Try the same index in the sliding_window again
+                    // if we had found a partial match, otherwise move on
+                    if (match_length == 0) {
+                        ring_index += 1;
+                        ring_index %= Flate.window_length;
+                    }
+
+                    match_length = 0;
+                    continue;
+                }
+
+                ring_index += 1;
+                ring_index %= Flate.window_length;
+
+                match_length += 1;
+
+                // When `match_cnt` exceeds `longest_match_cant` we
+                // need to feed another byte into the lookahead.
+                if (match_length <= longest_match_length) {
+                    continue;
+                }
+
+                // Update the longest match
+                longest_match_length = match_length;
+                const win_idx: u16 = @truncate(ring_index - ring_index_start);
+                longest_match_distance = (win_len - win_idx) + (match_length - 1);
+
+                if (longest_match_length == win_len) {
+                    // Lookahead is filled
+                    break;
+                }
+
+                ctx.*.lookahead[longest_match_length] = Compress.read_byte(ctx) catch {
+                    done = true;
+                    break;
+                };
+                log.debug(@src(), "Extending lookahead {d} item(s)", .{longest_match_length});
+            }
+
+            const lookahead_end = if (longest_match_length == 0) 1
+                                  else longest_match_length;
+            // Update the sliding window with the characters from the lookahead
+            for (0..lookahead_end) |i| {
+                try Flate.window_write(&ctx.sliding_window, ctx.*.lookahead[i]);
+            }
+
+            // Write the compressed representation of the lookahead characters 
+            // onto the output stream
+            try Compress.fixed_code_write_match(
+                ctx,
+                lookahead_end,
+                longest_match_length,
+                longest_match_distance,
+            );
+
+            // Set starting byte for next iteration
+            if (longest_match_length == 0 or
+                longest_match_length == Flate.lookahead_length) {
+                // We need a new byte
+                ctx.*.lookahead[0] = Compress.read_byte(ctx) catch {
+                    done = true;
+                    break;
+                };
+            } else {
+                // The final char from the lookahead should be passed to
+                // the next iteration
+                log.debug(
+                    @src(),
+                    "Pushing '{c}' to next iteration",
+                    .{ctx.*.lookahead[longest_match_length]}
+                );
+                ctx.*.lookahead[0] = ctx.*.lookahead[longest_match_length];
+            }
+        }
+
+        // End-of-block marker (with static huffman encoding: 0000_000 -> 256)
+        try Compress.write_bits(u7, ctx, @as(u7, 0), 7);
+    }
+
+    /// Write the bits for the provided match length and distance to the output
+    /// stream.
+    fn fixed_code_write_match(
+        ctx: *CompressContext,
+        lookahead_end: u16,
+        longest_match_length: u16,
+        longest_match_distance: u16,
+    ) !void {
+        if (longest_match_length <= Flate.min_length_match) {
+            // Prefer raw characters for small matches
+            for (0..lookahead_end) |i| {
+                const char = ctx.*.lookahead[i];
+                // Lit Value    Bits        Codes
+                // ---------    ----        -----
+                //   0 - 143     8          00110000 through
+                //                          10111111
+                // 144 - 255     9          110010000 through
+                //                          111111111
+                if (char < 144) {
+                    try Compress.write_bits(u8, ctx, 0b0011_0000 + char, 8);
+                }
+                else {
+                    const char_9: u9 = 0b1_1001_0000 + @as(u9, char - 144);
+                    try Compress.write_bits(u9, ctx, char_9, 9);
+                }
+            }
+        }
+        else {
+            // Lookup the encoding for the token length
+            const enc = TokenEncoding.from_length(longest_match_length);
+            log.debug(@src(), "backref(length): {any}", .{enc});
+
+            if (enc.code < 256 or enc.code > 285) {
+                return FlateError.InvalidLiteralLength;
+            }
+
+            // Translate the length to the corresponding code
+            //
+            // 256 - 279     7          000_0000 through
+            //                          001_0111
+            // 280 - 287     8          1100_0000 through
+            //                          1100_0111
+            if (enc.code < 280) {
+                // Write the huffman encoding of 'Code'
+                const hcode: u7 = @truncate(enc.code - 256);
+                try Compress.write_bits(u7, ctx, 0b000_0000 + hcode, 7);
+            }
+            else {
+                const hcode: u8 = @truncate(enc.code - 280);
+                try Compress.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
+            }
+
+            // Write the 'Extra Bits', i.e. the offset that indicate
+            // the exact offset to use in the range.
+            if (enc.code != 0) {
+                const offset = longest_match_length - enc.range_start;
+                try Compress.write_bits(
+                    u16,
+                    ctx,
+                    offset,
+                    enc.bit_count
+                );
+                log.debug(@src(), "backref(length-offset): {d}", .{offset});
+            }
+
+            // Write the 'Distance' encoding
+            const denc = TokenEncoding.from_distance(longest_match_distance);
+            log.debug(@src(), "backref(distance): {any}", .{denc});
+            const denc_code: u5 = @truncate(denc.code);
+            try Compress.write_bits(u5, ctx, denc_code, 5);
+
+            // Write the offset bits for the distance
+            if (denc.bit_count != 0) {
+                const offset = longest_match_distance - denc.range_start;
+                try Compress.write_bits(
+                    u16,
+                    ctx,
+                    offset,
+                    denc.bit_count
+                );
+                log.debug(@src(), "backref(distance-offset): {d}", .{offset});
+            }
+
+            const start_index = ctx.sliding_window.write_index - longest_match_distance - longest_match_length;
+            for (start_index..start_index + longest_match_length) |i| {
+                const c: u8 = ctx.sliding_window.data[i];
+                // Write each byte to the output stream AND the the sliding window
+                log.debug(@src(), "backref[{}]: '{c}'", .{i, c});
+            }
+
+        }
+    }
+
     fn write_bits(
         T: type,
         ctx: *CompressContext,
@@ -163,94 +279,6 @@ pub const Compress = struct {
         try ctx.bit_writer.writeBits(value, num_bits);
         util.print_bits(T, "Output write", value, num_bits);
         ctx.*.written_bits += num_bits;
-    }
-
-    fn write_token(ctx: *CompressContext, token: Token) !void {
-        switch (ctx.block_type) {
-            FlateBlockType.NO_COMPRESSION => {
-                if (token.char) |c| {
-                    try Compress.write_bits(u8, ctx, c, 8);
-                }
-                else {
-                    return FlateError.MissingTokenLiteral;
-                }
-            },
-            FlateBlockType.FIXED_HUFFMAN => {
-                // Encode the token according to the static huffman code
-                if (token.char) |char| {
-                    // Lit Value    Bits        Codes
-                    // ---------    ----        -----
-                    //   0 - 143     8          00110000 through
-                    //                          10111111
-                    // 144 - 255     9          110010000 through
-                    //                          111111111
-                    if (char < 144) {
-                        try Compress.write_bits(u8, ctx, 0b0011_0000 + char, 8);
-                    }
-                    else {
-                        try Compress.write_bits(u9, ctx, 0b1_1001_0000 + @as(u9, char), 9);
-                    }
-                }
-                else {
-                    // Lookup the encoding for the token length
-                    const enc = token.lookup_length();
-                    log.debug(@src(), "backref(length): {any}", .{enc});
-
-                    if (enc.code < 256 or enc.code > 285) {
-                        return FlateError.InvalidLiteralLength;
-                    }
-
-                    // Translate the length to the corresponding code
-                    //
-                    // 256 - 279     7          000_0000 through
-                    //                          001_0111
-                    // 280 - 287     8          1100_0000 through
-                    //                          1100_0111
-                    if (enc.code < 280) {
-                        // Write the huffman encoding of 'Code'
-                        const hcode: u7 = @truncate(enc.code - 256);
-                        try Compress.write_bits(u7, ctx, 0b000_0000 + hcode, 7);
-                    }
-                    else {
-                        const hcode: u8 = @truncate(enc.code - 280);
-                        try Compress.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
-                    }
-
-                    // Write the 'Extra Bits', i.e. the offset that indicate
-                    // the exact offset to use in the range.
-                    if (enc.code != 0) {
-                        try Compress.write_bits(
-                            u16,
-                            ctx,
-                            token.length - enc.range_start,
-                            enc.bit_count
-                        );
-                    }
-
-                    // Write the 'Distance' encoding
-                    const denc = token.lookup_distance();
-                    log.debug(@src(), "backref(distance): {any}", .{denc});
-                    const denc_code: u5 = @truncate(denc.code);
-                    try Compress.write_bits(u5, ctx, denc_code, 5);
-
-                    // Write the offset bits for the distance
-                    if (denc.bit_count != 0) {
-                        try Compress.write_bits(
-                            u16,
-                            ctx,
-                            token.distance - denc.range_start,
-                            denc.bit_count
-                        );
-                    }
-                }
-            },
-            FlateBlockType.DYNAMIC_HUFFMAN => {
-                return FlateError.NotImplemented;
-            },
-            else => {
-                return FlateError.UnexpectedBlockType;
-            }
-        }
     }
 
     fn read_byte(ctx: *CompressContext) !u8 {

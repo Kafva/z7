@@ -87,7 +87,7 @@ pub const Decompress = struct {
                     }
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
-                    return Decompress.decompress_fixed_code(&ctx);
+                    return Decompress.fixed_code_decompress_block(&ctx);
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
                     return FlateError.NotImplemented;
@@ -106,12 +106,12 @@ pub const Decompress = struct {
         );
     }
 
-    fn decompress_fixed_code(
+    fn fixed_code_decompress_block(
         ctx: *DecompressContext,
     ) !void {
-        const seven_bit_decode = try Decompress.fixed_literal_length_decoding(ctx, 7);
-        const eight_bit_decode = try Decompress.fixed_literal_length_decoding(ctx, 8);
-        const nine_bit_decode = try Decompress.fixed_literal_length_decoding(ctx, 9);
+        const seven_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 7);
+        const eight_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 8);
+        const nine_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 9);
         while (true) {
             const b = blk: {
                 var key = Decompress.read_bits(ctx, u16, 7) catch {
@@ -200,7 +200,10 @@ pub const Decompress = struct {
                 };
                 log.debug(@src(), "backref(distance): {d}", .{distance});
 
-                const write_index = ctx.sliding_window.write_index;
+                const write_index = if (ctx.sliding_window.write_index == 0)
+                                        ctx.sliding_window.data.len - 1
+                                    else
+                                        ctx.sliding_window.write_index - 1;
                 const start_index = try Decompress.window_start_index(write_index, distance);
                 for (start_index..start_index + length) |i| {
                     const c: u8 = ctx.sliding_window.data[i];
@@ -231,7 +234,7 @@ pub const Decompress = struct {
     ///                          0010111
     /// 280 - 287     8          11000000 through
     ///                          11000111
-    fn fixed_literal_length_decoding(
+    fn fixed_code_decoding_map(
         ctx: *DecompressContext,
         num_bits: u8,
     ) !std.AutoHashMap(u16, u16) {

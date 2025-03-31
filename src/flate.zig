@@ -1,14 +1,14 @@
 const std = @import("std");
 const log = @import("log.zig");
 
-pub const Token = struct {
-    /// Valid matches are between (3..258) characters long, i.e. we acutally
-    /// only need a u8 to represent this.
-    length: u16,
-    /// Valid distances are within (1..2**15)
-    distance: u16,
-    /// If a raw character has been set, ignore the length/distance values.
-    char: ?u8,
+pub const TokenEncoding = struct {
+    /// The symbol used to encode a length or distance (1..2**15)
+    code: u16,
+    /// The number of extra bits available for this code to represent more values
+    bit_count: u8,
+    /// The start of the length or distance range for this token, the range ends
+    /// at `range_start + 2**bit_count`.
+    range_start: u16,
 
     pub fn format(
         self: *const @This(),
@@ -19,25 +19,10 @@ pub const Token = struct {
         if (fmt.len != 0) {
             return std.fmt.invalidFmtError(fmt, self);
         }
-
-        if (self.char) |char| {
-            if (std.ascii.isPrint(char) and char != '\n') {
-                return writer.print(
-                    "{{ .length = {d}, .distance = {d}, .char = '{c}' }}",
-                    .{self.length, self.distance, char}
-                );
-            } else {
-                return writer.print(
-                    "{{ .length = {d}, .distance = {d}, .char = 0x{x} }}",
-                    .{self.length, self.distance, char}
-                );
-            }
-        } else {
-            return writer.print(
-                "{{ .length = {d}, .distance = {d} }}",
-                .{self.length, self.distance}
-            );
-        }
+        return writer.print(
+            "{{ .code = {d}, .bit_count = {d}, .range_start = {d} }}",
+            .{self.code, self.bit_count, self.range_start}
+        );
     }
 
     /// Map a length onto a `TokenEncoding`
@@ -54,8 +39,8 @@ pub const Token = struct {
     ///  264   0    10       274   3   43-50     284   5  227-257
     ///  265   1  11,12      275   3   51-58     285   0    258
     ///  266   1  13,14      276   3   59-66
-    pub fn lookup_length(self: @This()) TokenEncoding {
-        const r: [3]u16 = switch (self.length) {
+    pub fn from_length(length: u16) TokenEncoding {
+        const r: [3]u16 = switch (length) {
             3 => .{ 257, 0, 3 },
             4 => .{ 258, 0, 4 },
             5 => .{ 259, 0, 5 },
@@ -108,8 +93,8 @@ pub const Token = struct {
     ///   7   2  13-16   17   7    385-512   27   12 12289-16384
     ///   8   3  17-24   18   8    513-768   28   13 16385-24576
     ///   9   3  25-32   19   8   769-1024   29   13 24577-32768
-    pub fn lookup_distance(self: @This()) TokenEncoding {
-        const r: [3]u16 = switch (self.distance) {
+    pub fn from_distance(distance: u16) TokenEncoding {
+        const r: [3]u16 = switch (distance) {
             1 => .{0, 0, 1},
             2 => .{1, 0, 2},
             3 => .{2, 0, 3},
@@ -148,34 +133,8 @@ pub const Token = struct {
             .range_start = r[2]
         };
     }
-};
 
-pub const TokenEncoding = struct {
-    /// The symbol used to encode a length or distance (0..2**15)
-    code: u16,
-    /// The number of extra bits available for this code to represent more values
-    bit_count: u8,
-    /// The start of the length or distance range for this token, the range ends
-    /// at `range_start + 2**bit_count`.
-    range_start: u16,
-
-    pub fn format(
-        self: *const @This(),
-        comptime fmt: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype
-    ) !void {
-        if (fmt.len != 0) {
-            return std.fmt.invalidFmtError(fmt, self);
-        }
-        return writer.print(
-            "{{ .code = {d}, .bit_count = {d}, .range_start = {d} }}",
-            .{self.code, self.bit_count, self.range_start}
-        );
-    }
-
-    /// The inverse of `lookup_length`, fetch the `TokenEncoding` for a given
-    /// length 'Code'.
+    /// Fetch the `TokenEncoding` for a given length 'Code'.
     pub fn from_length_code(length_code: u16) TokenEncoding {
         const r: [2]u16 = switch (length_code) {
             257 => .{ 0, 3 },
@@ -216,8 +175,7 @@ pub const TokenEncoding = struct {
         };
     }
 
-    /// The inverse of `lookup_distance`, fetch the `TokenEncoding` for a given
-    /// distance 'Code'.
+    /// Fetch the `TokenEncoding` for a given distance 'Code'.
     pub fn from_distance_code(distance_code: u5) TokenEncoding {
         const r: [2]u16 = switch (distance_code) {
             0 => .{0, 1},
@@ -278,7 +236,12 @@ pub const FlateBlockType = enum(u2) {
 
 pub const Flate = struct {
     pub const writer_endian = std.builtin.Endian.big;
+    /// The minimum length of a match required to use a back reference
+    pub const min_length_match: usize = 3;
+    /// Valid matches are between (3..258) characters long, i.e. we acutally
+    /// only need a u8 to represent this.
     pub const lookahead_length: usize = 258;
+    /// Valid distances must be within the window length, i.e. (1..2**15)
     pub const window_length: usize = std.math.pow(usize, 2, 15);
 
     pub fn window_write(window: *std.RingBuffer, c: u8) !void {
