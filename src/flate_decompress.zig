@@ -8,11 +8,11 @@ const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
 const TokenEncoding = @import("flate.zig").TokenEncoding;
 
-const InflateError = error {
+const FlateDecompressError = error {
     UndecodableBitStream,
 };
 
-const InflateContext = struct {
+const FlateDecompressContext = struct {
     allocator: std.mem.Allocator,
     /// The current type of block to decode
     block_type: FlateBlockType,
@@ -24,14 +24,14 @@ const InflateContext = struct {
     sliding_window: std.RingBuffer,
 };
 
-pub const Inflate = struct {
+pub const FlateDecompress = struct {
     pub fn decompress(
         allocator: std.mem.Allocator,
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !void {
         var done = false;
-        var ctx = InflateContext {
+        var ctx = FlateDecompressContext {
             .allocator = allocator,
             .block_type = FlateBlockType.NO_COMPRESSION,
             .writer = outstream.writer().any(),
@@ -48,7 +48,7 @@ pub const Inflate = struct {
 
         // Decode the stream
         while (!done) {
-            const bfinal = Inflate.read_bits(&ctx, u1, 1) catch {
+            const bfinal = FlateDecompress.read_bits(&ctx, u1, 1) catch {
                 return;
             };
 
@@ -57,14 +57,14 @@ pub const Inflate = struct {
                 done = true;
             }
 
-            const block_type_bits = Inflate.read_bits(&ctx, u2, 2) catch {
+            const block_type_bits = FlateDecompress.read_bits(&ctx, u2, 2) catch {
                 return FlateError.UnexpectedEof;
             };
 
 
             // Read up to the next byte boundary
             while (ctx.processed_bits % 8 != 0) {
-                _ = Inflate.read_bits(&ctx, u1, 1) catch {
+                _ = FlateDecompress.read_bits(&ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
             }
@@ -74,12 +74,12 @@ pub const Inflate = struct {
             switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
                     // Read block length
-                    const block_size = try Inflate.read_bits(&ctx, u16, 16);
+                    const block_size = try FlateDecompress.read_bits(&ctx, u16, 16);
                     // Skip over ones-complement of length
-                    _ = try Inflate.read_bits(&ctx, u16, 16);
+                    _ = try FlateDecompress.read_bits(&ctx, u16, 16);
                     // Write bytes as-is to output stream
                     for (0..block_size) |_| {
-                        const b = Inflate.read_bits(&ctx, u8, 8) catch {
+                        const b = FlateDecompress.read_bits(&ctx, u8, 8) catch {
                             return FlateError.UnexpectedEof;
                         };
                         try Flate.window_write(&ctx.sliding_window, b);
@@ -87,7 +87,7 @@ pub const Inflate = struct {
                     }
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
-                    return Inflate.decompress_fixed_code(&ctx);
+                    return FlateDecompress.decompress_fixed_code(&ctx);
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
                     return FlateError.NotImplemented;
@@ -107,14 +107,14 @@ pub const Inflate = struct {
     }
 
     fn decompress_fixed_code(
-        ctx: *InflateContext,
+        ctx: *FlateDecompressContext,
     ) !void {
-        const seven_bit_decode = try Inflate.fixed_literal_length_decoding(ctx, 7);
-        const eight_bit_decode = try Inflate.fixed_literal_length_decoding(ctx, 8);
-        const nine_bit_decode = try Inflate.fixed_literal_length_decoding(ctx, 9);
+        const seven_bit_decode = try FlateDecompress.fixed_literal_length_decoding(ctx, 7);
+        const eight_bit_decode = try FlateDecompress.fixed_literal_length_decoding(ctx, 8);
+        const nine_bit_decode = try FlateDecompress.fixed_literal_length_decoding(ctx, 9);
         while (true) {
             const b = blk: {
-                var key = Inflate.read_bits(ctx, u16, 7) catch {
+                var key = FlateDecompress.read_bits(ctx, u16, 7) catch {
                     return FlateError.UnexpectedEof;
                 };
 
@@ -124,7 +124,7 @@ pub const Inflate = struct {
 
                 // Read one more bit and try the 8-bit value
                 //  0b0111100 [7 bits] -> 0b0111100(x) [8 bits]
-                var bit = Inflate.read_bits(ctx, u1, 1) catch {
+                var bit = FlateDecompress.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
                 key = (key << 1) | @as(u16, bit);
@@ -135,7 +135,7 @@ pub const Inflate = struct {
 
                 // Read one more bit and try the 9-bit value
                 //  0b01111001 [8 bits] -> 0b01111001(x) [9 bits]
-                bit = Inflate.read_bits(ctx, u1, 1) catch {
+                bit = FlateDecompress.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
                 key = (key << 1) | @as(u16, bit);
@@ -144,7 +144,7 @@ pub const Inflate = struct {
                     break :blk char;
                 }
 
-                return InflateError.UndecodableBitStream;
+                return FlateDecompressError.UndecodableBitStream;
             };
 
             if (b < 256) {
@@ -166,7 +166,7 @@ pub const Inflate = struct {
                 const length: u16 = blk: {
                     if (enc.bit_count != 0) {
                         // Parse extra bits for the offset
-                        const bits = Inflate.read_bits(ctx, u16, enc.bit_count) catch {
+                        const bits = FlateDecompress.read_bits(ctx, u16, enc.bit_count) catch {
                             return FlateError.UnexpectedEof;
                         };
                         const offset: u16 = @intCast(bits);
@@ -177,7 +177,7 @@ pub const Inflate = struct {
                 };
 
                 // 3. Determine the distance for the match
-                const distance_code = Inflate.read_bits(ctx, u5, 5) catch {
+                const distance_code = FlateDecompress.read_bits(ctx, u5, 5) catch {
                     return FlateError.UnexpectedEof;
                 };
                 const denc = TokenEncoding.from_distance_code(distance_code);
@@ -185,7 +185,7 @@ pub const Inflate = struct {
                 const distance: u16 = blk: {
                     if (denc.bit_count != 0) {
                         // Parse extra bits for the offset
-                        const bits = Inflate.read_bits(ctx, u16, denc.bit_count) catch {
+                        const bits = FlateDecompress.read_bits(ctx, u16, denc.bit_count) catch {
                             return FlateError.UnexpectedEof;
                         };
                         const offset: u16 = @intCast(bits);
@@ -196,7 +196,7 @@ pub const Inflate = struct {
                 };
 
                 const write_index = ctx.sliding_window.write_index;
-                const start_index = try Inflate.window_start_index(write_index, distance);
+                const start_index = try FlateDecompress.window_start_index(write_index, distance);
                 for (start_index..start_index + length) |i| {
                     const c: u8 = ctx.sliding_window.data[i];
                     try ctx.*.writer.writeByte(c);
@@ -227,7 +227,7 @@ pub const Inflate = struct {
     /// 280 - 287     8          11000000 through
     ///                          11000111
     fn fixed_literal_length_decoding(
-        ctx: *InflateContext,
+        ctx: *FlateDecompressContext,
         num_bits: u8,
     ) !std.AutoHashMap(u16, u16) {
         var huffman_map = std.AutoHashMap(u16, u16).init(ctx.allocator);
@@ -279,7 +279,7 @@ pub const Inflate = struct {
     }
 
     fn read_bits(
-        ctx: *InflateContext,
+        ctx: *FlateDecompressContext,
         comptime T: type,
         num_bits: u16,
     ) !T {

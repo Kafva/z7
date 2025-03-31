@@ -8,7 +8,6 @@ const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
 const TokenEncoding = @import("flate.zig").TokenEncoding;
 
-
 const CompressContext = struct {
     allocator: std.mem.Allocator,
     /// The current type of block to write
@@ -21,7 +20,7 @@ const CompressContext = struct {
     lookahead: []u8,
 };
 
-pub const Deflate = struct {
+pub const FlateCompress = struct {
     pub fn compress(
         allocator: std.mem.Allocator,
         instream: std.fs.File,
@@ -42,14 +41,14 @@ pub const Deflate = struct {
         };
         defer ctx.sliding_window.deinit(allocator);
 
-        ctx.lookahead[0] = Deflate.read_byte(&ctx) catch {
+        ctx.lookahead[0] = FlateCompress.read_byte(&ctx) catch {
             return;
         };
 
         // Write block header
-        try Deflate.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
-        try Deflate.write_bits(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
-        try Deflate.write_bits(u5, &ctx, @as(u5, 0), 5);
+        try FlateCompress.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
+        try FlateCompress.write_bits(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
+        try FlateCompress.write_bits(u5, &ctx, @as(u5, 0), 5);
 
         while (!done) {
             // The current number of matches within the lookahead
@@ -90,7 +89,7 @@ pub const Deflate = struct {
                     break;
                 }
 
-                ctx.lookahead[longest_match_length] = Deflate.read_byte(&ctx) catch {
+                ctx.lookahead[longest_match_length] = FlateCompress.read_byte(&ctx) catch {
                     done = true;
                     break;
                 };
@@ -115,7 +114,7 @@ pub const Deflate = struct {
                         .distance = 0
                     };
                     log.debug(@src(), "token(literal): {any}", .{token});
-                    try Deflate.write_token(&ctx, token);
+                    try FlateCompress.write_token(&ctx, token);
                 }
             }
             else {
@@ -125,7 +124,7 @@ pub const Deflate = struct {
                     .distance = longest_match_distance
                 };
                 log.debug(@src(), "token(ref    ): {any}", .{token});
-                try Deflate.write_token(&ctx, token);
+                try FlateCompress.write_token(&ctx, token);
             }
 
             // Set starting byte for next iteration
@@ -133,7 +132,7 @@ pub const Deflate = struct {
                 longest_match_length == Flate.lookahead_length)
             {
                 // We need a new byte
-                ctx.lookahead[0] = Deflate.read_byte(&ctx) catch {
+                ctx.lookahead[0] = FlateCompress.read_byte(&ctx) catch {
                     done = true;
                     break;
                 };
@@ -144,7 +143,7 @@ pub const Deflate = struct {
         }
 
         // End-of-block marker (with static huffman encoding: 0000_000 -> 256)
-        try Deflate.write_bits(u7, &ctx, @as(u7, 0), 7);
+        try FlateCompress.write_bits(u7, &ctx, @as(u7, 0), 7);
 
         // Incomplete bytes will be padded when flushing, wait until all
         // writes are done.
@@ -172,7 +171,7 @@ pub const Deflate = struct {
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 if (token.char) |c| {
-                    try Deflate.write_bits(u8, ctx, c, 8);
+                    try FlateCompress.write_bits(u8, ctx, c, 8);
                 }
                 else {
                     return FlateError.MissingTokenLiteral;
@@ -188,10 +187,10 @@ pub const Deflate = struct {
                     // 144 - 255     9          110010000 through
                     //                          111111111
                     if (char < 144) {
-                        try Deflate.write_bits(u8, ctx, 0b0011_0000 + char, 8);
+                        try FlateCompress.write_bits(u8, ctx, 0b0011_0000 + char, 8);
                     }
                     else {
-                        try Deflate.write_bits(u9, ctx, 0b1_1001_0000 + @as(u9, char), 9);
+                        try FlateCompress.write_bits(u9, ctx, 0b1_1001_0000 + @as(u9, char), 9);
                     }
                 }
                 else {
@@ -210,17 +209,17 @@ pub const Deflate = struct {
                     if (enc.code < 280) {
                         // Write the huffman encoding of 'Code'
                         const hcode: u7 = @truncate(enc.code - 256);
-                        try Deflate.write_bits(u7, ctx, 0b000_0000 + hcode, 7);
+                        try FlateCompress.write_bits(u7, ctx, 0b000_0000 + hcode, 7);
                     }
                     else {
                         const hcode: u8 = @truncate(enc.code - 280);
-                        try Deflate.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
+                        try FlateCompress.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
                     }
 
                     // Write the 'Extra Bits', i.e. the offset that indicate
                     // the exact offset to use in the range.
                     if (enc.code != 0) {
-                        try Deflate.write_bits(
+                        try FlateCompress.write_bits(
                             u16,
                             ctx,
                             token.length - enc.range_start,
@@ -231,11 +230,11 @@ pub const Deflate = struct {
                     // Write the 'Distance' encoding
                     const denc = token.lookup_distance();
                     const denc_code: u5 = @truncate(denc.code);
-                    try Deflate.write_bits(u5, ctx, denc_code, 5);
+                    try FlateCompress.write_bits(u5, ctx, denc_code, 5);
 
                     // Write the offset bits for the distance
                     if (denc.bit_count != 0) {
-                        try Deflate.write_bits(
+                        try FlateCompress.write_bits(
                             u16,
                             ctx,
                             token.distance - denc.range_start,
