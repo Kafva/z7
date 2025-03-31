@@ -64,14 +64,10 @@ pub const Token = struct {
             8 => .{ 262, 0, 8 },
             9 => .{ 263, 0, 9 },
             10 => .{ 264, 0, 10 },
-            11 => .{ 265, 1, 11 },
-            12 => .{ 265, 1, 12 },
-            13 => .{ 266, 1, 13 },
-            14 => .{ 266, 1, 14 },
-            15 => .{ 267, 1, 15 },
-            16 => .{ 267, 1, 16 },
-            17 => .{ 268, 1, 17 },
-            18 => .{ 268, 1, 18 },
+            11...12 => .{ 265, 1, 11 },
+            13...14 => .{ 266, 1, 13 },
+            15...16 => .{ 267, 1, 15 },
+            17...18 => .{ 268, 1, 17 },
             19...22 => .{ 269, 2, 19 },
             23...26 => .{ 270, 2, 23 },
             27...30 => .{ 271, 2, 27 },
@@ -162,6 +158,21 @@ pub const TokenEncoding = struct {
     /// The start of the length or distance range for this token, the range ends
     /// at `range_start + 2**bit_count`.
     range_start: u16,
+
+    pub fn format(
+        self: *const @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype
+    ) !void {
+        if (fmt.len != 0) {
+            return std.fmt.invalidFmtError(fmt, self);
+        }
+        return writer.print(
+            "{{ .code = {d}, .bit_count = {d}, .range_start = {d} }}",
+            .{self.code, self.bit_count, self.range_start}
+        );
+    }
 
     /// The inverse of `lookup_length`, fetch the `TokenEncoding` for a given
     /// length 'Code'.

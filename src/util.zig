@@ -34,6 +34,36 @@ pub fn print_bits(
     num_bits: usize,
 ) void {
     switch (num_bits) {
+        2 =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b:0>2} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
+        3 =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b:0>3} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
+        4 =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b:0>4} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
+        5 =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b:0>5} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
+        6 =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b:0>6} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
         7 =>
             log.debug(
                 @src(),

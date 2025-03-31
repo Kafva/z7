@@ -3,8 +3,8 @@ const std = @import("std");
 const log = @import("log.zig");
 const util = @import("util_test.zig");
 
-const FlateDecompress = @import("flate_decompress.zig").FlateDecompress;
-const FlateCompress = @import("flate_compress.zig").FlateCompress;
+const Decompress = @import("flate_decompress.zig").Decompress;
+const Compress = @import("flate_compress.zig").Compress;
 
 const max_size = 40*1024;
 
@@ -44,11 +44,11 @@ fn run_alloc(
     );
     defer in.close();
 
-    try FlateCompress.compress(allocator, in, compressed.*);
+    try Compress.compress(allocator, in, compressed.*);
 
     try util.log_result("flate", inputfile, in_size, try compressed.getPos());
 
-    try FlateDecompress.decompress(allocator, compressed.*, decompressed.*);
+    try Decompress.decompress(allocator, compressed.*, decompressed.*);
 
     // Verify correct decoding
     try util.eql(allocator, in, decompressed.*);

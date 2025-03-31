@@ -8,11 +8,11 @@ const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
 const TokenEncoding = @import("flate.zig").TokenEncoding;
 
-const FlateDecompressError = error {
+const DecompressError = error {
     UndecodableBitStream,
 };
 
-const FlateDecompressContext = struct {
+const DecompressContext = struct {
     allocator: std.mem.Allocator,
     /// The current type of block to decode
     block_type: FlateBlockType,
@@ -24,14 +24,14 @@ const FlateDecompressContext = struct {
     sliding_window: std.RingBuffer,
 };
 
-pub const FlateDecompress = struct {
+pub const Decompress = struct {
     pub fn decompress(
         allocator: std.mem.Allocator,
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !void {
         var done = false;
-        var ctx = FlateDecompressContext {
+        var ctx = DecompressContext {
             .allocator = allocator,
             .block_type = FlateBlockType.NO_COMPRESSION,
             .writer = outstream.writer().any(),
@@ -48,7 +48,7 @@ pub const FlateDecompress = struct {
 
         // Decode the stream
         while (!done) {
-            const bfinal = FlateDecompress.read_bits(&ctx, u1, 1) catch {
+            const bfinal = Decompress.read_bits(&ctx, u1, 1) catch {
                 return;
             };
 
@@ -57,14 +57,14 @@ pub const FlateDecompress = struct {
                 done = true;
             }
 
-            const block_type_bits = FlateDecompress.read_bits(&ctx, u2, 2) catch {
+            const block_type_bits = Decompress.read_bits(&ctx, u2, 2) catch {
                 return FlateError.UnexpectedEof;
             };
 
 
             // Read up to the next byte boundary
             while (ctx.processed_bits % 8 != 0) {
-                _ = FlateDecompress.read_bits(&ctx, u1, 1) catch {
+                _ = Decompress.read_bits(&ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
             }
@@ -74,12 +74,12 @@ pub const FlateDecompress = struct {
             switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
                     // Read block length
-                    const block_size = try FlateDecompress.read_bits(&ctx, u16, 16);
+                    const block_size = try Decompress.read_bits(&ctx, u16, 16);
                     // Skip over ones-complement of length
-                    _ = try FlateDecompress.read_bits(&ctx, u16, 16);
+                    _ = try Decompress.read_bits(&ctx, u16, 16);
                     // Write bytes as-is to output stream
                     for (0..block_size) |_| {
-                        const b = FlateDecompress.read_bits(&ctx, u8, 8) catch {
+                        const b = Decompress.read_bits(&ctx, u8, 8) catch {
                             return FlateError.UnexpectedEof;
                         };
                         try Flate.window_write(&ctx.sliding_window, b);
@@ -87,7 +87,7 @@ pub const FlateDecompress = struct {
                     }
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
-                    return FlateDecompress.decompress_fixed_code(&ctx);
+                    return Decompress.decompress_fixed_code(&ctx);
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
                     return FlateError.NotImplemented;
@@ -107,14 +107,14 @@ pub const FlateDecompress = struct {
     }
 
     fn decompress_fixed_code(
-        ctx: *FlateDecompressContext,
+        ctx: *DecompressContext,
     ) !void {
-        const seven_bit_decode = try FlateDecompress.fixed_literal_length_decoding(ctx, 7);
-        const eight_bit_decode = try FlateDecompress.fixed_literal_length_decoding(ctx, 8);
-        const nine_bit_decode = try FlateDecompress.fixed_literal_length_decoding(ctx, 9);
+        const seven_bit_decode = try Decompress.fixed_literal_length_decoding(ctx, 7);
+        const eight_bit_decode = try Decompress.fixed_literal_length_decoding(ctx, 8);
+        const nine_bit_decode = try Decompress.fixed_literal_length_decoding(ctx, 9);
         while (true) {
             const b = blk: {
-                var key = FlateDecompress.read_bits(ctx, u16, 7) catch {
+                var key = Decompress.read_bits(ctx, u16, 7) catch {
                     return FlateError.UnexpectedEof;
                 };
 
@@ -124,7 +124,7 @@ pub const FlateDecompress = struct {
 
                 // Read one more bit and try the 8-bit value
                 //  0b0111100 [7 bits] -> 0b0111100(x) [8 bits]
-                var bit = FlateDecompress.read_bits(ctx, u1, 1) catch {
+                var bit = Decompress.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
                 key = (key << 1) | @as(u16, bit);
@@ -135,7 +135,7 @@ pub const FlateDecompress = struct {
 
                 // Read one more bit and try the 9-bit value
                 //  0b01111001 [8 bits] -> 0b01111001(x) [9 bits]
-                bit = FlateDecompress.read_bits(ctx, u1, 1) catch {
+                bit = Decompress.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
                 key = (key << 1) | @as(u16, bit);
@@ -144,7 +144,7 @@ pub const FlateDecompress = struct {
                     break :blk char;
                 }
 
-                return FlateDecompressError.UndecodableBitStream;
+                return DecompressError.UndecodableBitStream;
             };
 
             if (b < 256) {
@@ -157,7 +157,7 @@ pub const FlateDecompress = struct {
                 break;
             }
             else if (b < 285) {
-                log.debug(@src(), "backref: {d}", .{b});
+                log.debug(@src(), "backref(length-code): {d}", .{b});
 
                 // Get the corresponding `TokenEncoding` for the 'Code'
                 const enc = TokenEncoding.from_length_code(b);
@@ -166,44 +166,49 @@ pub const FlateDecompress = struct {
                 const length: u16 = blk: {
                     if (enc.bit_count != 0) {
                         // Parse extra bits for the offset
-                        const bits = FlateDecompress.read_bits(ctx, u16, enc.bit_count) catch {
+                        const offset = Decompress.read_bits(ctx, u16, enc.bit_count) catch {
                             return FlateError.UnexpectedEof;
                         };
-                        const offset: u16 = @intCast(bits);
+                        log.debug(@src(), "backref(length-offset): {d}", .{offset});
                         break :blk enc.range_start + offset;
                     } else {
+                        log.debug(@src(), "backref(length-offset): 0", .{});
                         break :blk enc.range_start;
                     }
                 };
+                log.debug(@src(), "backref(length): {d}", .{length});
 
                 // 3. Determine the distance for the match
-                const distance_code = FlateDecompress.read_bits(ctx, u5, 5) catch {
+                const distance_code = Decompress.read_bits(ctx, u5, 5) catch {
                     return FlateError.UnexpectedEof;
                 };
                 const denc = TokenEncoding.from_distance_code(distance_code);
+                log.debug(@src(), "backref(distance-code): {d}", .{distance_code});
 
                 const distance: u16 = blk: {
                     if (denc.bit_count != 0) {
                         // Parse extra bits for the offset
-                        const bits = FlateDecompress.read_bits(ctx, u16, denc.bit_count) catch {
+                        const offset = Decompress.read_bits(ctx, u16, denc.bit_count) catch {
                             return FlateError.UnexpectedEof;
                         };
-                        const offset: u16 = @intCast(bits);
+                        log.debug(@src(), "backref(distance-offset): {d}", .{offset});
                         break :blk denc.range_start + offset;
                     } else {
+                        log.debug(@src(), "backref(distance-offset): 0", .{});
                         break :blk denc.range_start;
                     }
                 };
+                log.debug(@src(), "backref(distance): {d}", .{distance});
 
                 const write_index = ctx.sliding_window.write_index;
-                const start_index = try FlateDecompress.window_start_index(write_index, distance);
+                const start_index = try Decompress.window_start_index(write_index, distance);
                 for (start_index..start_index + length) |i| {
                     const c: u8 = ctx.sliding_window.data[i];
+                    // Write each byte to the output stream AND the the sliding window
                     try ctx.*.writer.writeByte(c);
+                    try Flate.window_write(&ctx.sliding_window, c);
                     log.debug(@src(), "backref[{}]: '{c}'", .{i, c});
                 }
-                
-
             }
             else {
                 return FlateError.InvalidLiteralLength;
@@ -227,7 +232,7 @@ pub const FlateDecompress = struct {
     /// 280 - 287     8          11000000 through
     ///                          11000111
     fn fixed_literal_length_decoding(
-        ctx: *FlateDecompressContext,
+        ctx: *DecompressContext,
         num_bits: u8,
     ) !std.AutoHashMap(u16, u16) {
         var huffman_map = std.AutoHashMap(u16, u16).init(ctx.allocator);
@@ -259,19 +264,19 @@ pub const FlateDecompress = struct {
         return huffman_map;
     }
 
-    /// Get the starting index of a back reference at `distance` backwards
+    /// Get the starting index of a back reference at `offset` backwards
     /// into the sliding window.
-    fn window_start_index(write_index: usize, distance: u16) !usize {
-        if (distance > Flate.window_length) {
-            log.err(@src(), "Distance too large: {d} >= {d}", .{ distance, Flate.window_length });
+    fn window_start_index(write_index: usize, offset: u16) !usize {
+        if (offset > Flate.window_length) {
+            log.err(@src(), "Offset too large: {d} >= {d}", .{ offset, Flate.window_length });
             return FlateError.InvalidDistance;
         }
 
         const write_index_i: i64 = @intCast(write_index);
-        const distance_i: i64 = @intCast(distance);
+        const offset_i: i64 = @intCast(offset);
         const window_length_i: i64 = @intCast(Flate.window_length);
 
-        const s: i64 = write_index_i - distance_i;
+        const s: i64 = write_index_i - offset_i;
 
         const s_usize: usize = @intCast(s + window_length_i);
 
@@ -279,7 +284,7 @@ pub const FlateDecompress = struct {
     }
 
     fn read_bits(
-        ctx: *FlateDecompressContext,
+        ctx: *DecompressContext,
         comptime T: type,
         num_bits: u16,
     ) !T {

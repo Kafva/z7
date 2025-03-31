@@ -20,7 +20,7 @@ const CompressContext = struct {
     lookahead: []u8,
 };
 
-pub const FlateCompress = struct {
+pub const Compress = struct {
     pub fn compress(
         allocator: std.mem.Allocator,
         instream: std.fs.File,
@@ -41,14 +41,14 @@ pub const FlateCompress = struct {
         };
         defer ctx.sliding_window.deinit(allocator);
 
-        ctx.lookahead[0] = FlateCompress.read_byte(&ctx) catch {
+        ctx.lookahead[0] = Compress.read_byte(&ctx) catch {
             return;
         };
 
         // Write block header
-        try FlateCompress.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
-        try FlateCompress.write_bits(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
-        try FlateCompress.write_bits(u5, &ctx, @as(u5, 0), 5);
+        try Compress.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
+        try Compress.write_bits(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
+        try Compress.write_bits(u5, &ctx, @as(u5, 0), 5);
 
         while (!done) {
             // The current number of matches within the lookahead
@@ -89,11 +89,11 @@ pub const FlateCompress = struct {
                     break;
                 }
 
-                ctx.lookahead[longest_match_length] = FlateCompress.read_byte(&ctx) catch {
+                ctx.lookahead[longest_match_length] = Compress.read_byte(&ctx) catch {
                     done = true;
                     break;
                 };
-                log.debug(@src(), "Extending lookahead {d} item(s)", .{longest_match_length});
+                // log.debug(@src(), "Extending lookahead {d} item(s)", .{longest_match_length});
             }
 
             // Update the sliding window with the longest match
@@ -113,8 +113,7 @@ pub const FlateCompress = struct {
                         .length = 0,
                         .distance = 0
                     };
-                    log.debug(@src(), "token(literal): {any}", .{token});
-                    try FlateCompress.write_token(&ctx, token);
+                    try Compress.write_token(&ctx, token);
                 }
             }
             else {
@@ -123,8 +122,7 @@ pub const FlateCompress = struct {
                     .length = longest_match_length,
                     .distance = longest_match_distance
                 };
-                log.debug(@src(), "token(ref    ): {any}", .{token});
-                try FlateCompress.write_token(&ctx, token);
+                try Compress.write_token(&ctx, token);
             }
 
             // Set starting byte for next iteration
@@ -132,7 +130,7 @@ pub const FlateCompress = struct {
                 longest_match_length == Flate.lookahead_length)
             {
                 // We need a new byte
-                ctx.lookahead[0] = FlateCompress.read_byte(&ctx) catch {
+                ctx.lookahead[0] = Compress.read_byte(&ctx) catch {
                     done = true;
                     break;
                 };
@@ -143,7 +141,7 @@ pub const FlateCompress = struct {
         }
 
         // End-of-block marker (with static huffman encoding: 0000_000 -> 256)
-        try FlateCompress.write_bits(u7, &ctx, @as(u7, 0), 7);
+        try Compress.write_bits(u7, &ctx, @as(u7, 0), 7);
 
         // Incomplete bytes will be padded when flushing, wait until all
         // writes are done.
@@ -171,7 +169,7 @@ pub const FlateCompress = struct {
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 if (token.char) |c| {
-                    try FlateCompress.write_bits(u8, ctx, c, 8);
+                    try Compress.write_bits(u8, ctx, c, 8);
                 }
                 else {
                     return FlateError.MissingTokenLiteral;
@@ -187,15 +185,17 @@ pub const FlateCompress = struct {
                     // 144 - 255     9          110010000 through
                     //                          111111111
                     if (char < 144) {
-                        try FlateCompress.write_bits(u8, ctx, 0b0011_0000 + char, 8);
+                        try Compress.write_bits(u8, ctx, 0b0011_0000 + char, 8);
                     }
                     else {
-                        try FlateCompress.write_bits(u9, ctx, 0b1_1001_0000 + @as(u9, char), 9);
+                        try Compress.write_bits(u9, ctx, 0b1_1001_0000 + @as(u9, char), 9);
                     }
                 }
                 else {
                     // Lookup the encoding for the token length
                     const enc = token.lookup_length();
+                    log.debug(@src(), "backref(length): {any}", .{enc});
+
                     if (enc.code < 256 or enc.code > 285) {
                         return FlateError.InvalidLiteralLength;
                     }
@@ -209,17 +209,17 @@ pub const FlateCompress = struct {
                     if (enc.code < 280) {
                         // Write the huffman encoding of 'Code'
                         const hcode: u7 = @truncate(enc.code - 256);
-                        try FlateCompress.write_bits(u7, ctx, 0b000_0000 + hcode, 7);
+                        try Compress.write_bits(u7, ctx, 0b000_0000 + hcode, 7);
                     }
                     else {
                         const hcode: u8 = @truncate(enc.code - 280);
-                        try FlateCompress.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
+                        try Compress.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
                     }
 
                     // Write the 'Extra Bits', i.e. the offset that indicate
                     // the exact offset to use in the range.
                     if (enc.code != 0) {
-                        try FlateCompress.write_bits(
+                        try Compress.write_bits(
                             u16,
                             ctx,
                             token.length - enc.range_start,
@@ -229,12 +229,13 @@ pub const FlateCompress = struct {
 
                     // Write the 'Distance' encoding
                     const denc = token.lookup_distance();
+                    log.debug(@src(), "backref(distance): {any}", .{denc});
                     const denc_code: u5 = @truncate(denc.code);
-                    try FlateCompress.write_bits(u5, ctx, denc_code, 5);
+                    try Compress.write_bits(u5, ctx, denc_code, 5);
 
                     // Write the offset bits for the distance
                     if (denc.bit_count != 0) {
-                        try FlateCompress.write_bits(
+                        try Compress.write_bits(
                             u16,
                             ctx,
                             token.distance - denc.range_start,
