@@ -3,4 +3,5 @@ comptime {
     _ = @import("lz77_test.zig");
     _ = @import("huffman_test.zig");
     _ = @import("flate_test.zig");
+    _ = @import("ring_buffer_test.zig");
 }

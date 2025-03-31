@@ -70,9 +70,9 @@ test "Flate on short simple text" {
 //     try check_flate("tests/testdata/over_9000_a.txt");
 // }
 
-// test "Flate on rfc1951.txt" {
-//     try check_flate("tests/testdata/rfc1951.txt");
-// }
+test "Flate on rfc1951.txt" {
+    try check_flate("tests/testdata/rfc1951.txt");
+}
 
 // test "Flate on random data" {
 //     try check_flate(util.random_label);
