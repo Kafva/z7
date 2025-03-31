@@ -144,7 +144,7 @@ pub const Compress = struct {
                 try Flate.window_write(&ctx.sliding_window, ctx.*.lookahead[i]);
             }
 
-            // Write the compressed representation of the lookahead characters 
+            // Write the compressed representation of the lookahead characters
             // onto the output stream
             try Compress.fixed_code_write_match(
                 ctx,
@@ -154,8 +154,7 @@ pub const Compress = struct {
             );
 
             // Set starting byte for next iteration
-            if (longest_match_length == 0 or
-                longest_match_length == Flate.lookahead_length) {
+            if (longest_match_length == 0 or longest_match_length == win_len) {
                 // We need a new byte
                 ctx.*.lookahead[0] = Compress.read_byte(ctx) catch {
                     done = true;
