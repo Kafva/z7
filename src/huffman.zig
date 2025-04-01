@@ -124,7 +124,7 @@ pub const Huffman = struct {
         frequencies: *const std.AutoHashMap(u8, usize),
     ) !@This() {
         log.debug(@src(), "Frequencies:", .{});
-        util.dump_hashmap(usize, frequencies);
+        util.dump_hashmap(u8, usize, frequencies);
 
         // 2. Create a queue of nodes to place into the tree
         const queue_cnt: usize = frequencies.count();
