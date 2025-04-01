@@ -243,17 +243,4 @@ pub const Flate = struct {
     pub const lookahead_length: usize = 258;
     /// Valid distances must be within the window length, i.e. (1..2**15)
     pub const window_length: usize = std.math.pow(usize, 2, 15);
-
-    pub fn window_write(window: *std.RingBuffer, c: u8) !void {
-        if (window.isFull()) {
-            _ = window.read();
-        }
-        if (std.ascii.isPrint(c) and c != '\n') {
-            log.debug(@src(), "Window write: '{c}'", .{c});
-        } else {
-            log.debug(@src(), "Window write: '0x{x}'", .{c});
-        }
-        try window.write(c);
-    }
 };
-

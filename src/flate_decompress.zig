@@ -7,6 +7,7 @@ const FlateBlockType = @import("flate.zig").FlateBlockType;
 const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
 const TokenEncoding = @import("flate.zig").TokenEncoding;
+const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
 const DecompressError = error {
     UndecodableBitStream,
@@ -21,7 +22,7 @@ const DecompressContext = struct {
     written_bits: usize,
     processed_bits: usize,
     /// Cache of the last 32K read bytes to support backreferences
-    sliding_window: std.RingBuffer,
+    sliding_window: RingBuffer(u8),
 };
 
 pub const Decompress = struct {
@@ -38,9 +39,8 @@ pub const Decompress = struct {
             .bit_reader = std.io.bitReader(Flate.writer_endian, instream.reader().any()),
             .written_bits = 0,
             .processed_bits = 0,
-            .sliding_window = try std.RingBuffer.init(allocator, Flate.window_length)
+            .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length)
         };
-        defer ctx.sliding_window.deinit(allocator);
 
         // Make sure to start from the beginning in both streams
         try instream.seekTo(0);
@@ -82,7 +82,7 @@ pub const Decompress = struct {
                         const b = Decompress.read_bits(&ctx, u8, 8) catch {
                             return FlateError.UnexpectedEof;
                         };
-                        try Flate.window_write(&ctx.sliding_window, b);
+                        ctx.sliding_window.push(b);
                         try ctx.writer.writeByte(b);
                     }
                 },
@@ -149,8 +149,8 @@ pub const Decompress = struct {
 
             if (b < 256) {
                 const c: u8 = @truncate(b);
-                try Flate.window_write(&ctx.sliding_window, c);
-                try ctx.*.writer.writeByte(c);
+                ctx.sliding_window.push(c);
+                try ctx.writer.writeByte(c);
             }
             else if (b == 256) {
                 log.debug(@src(), "End-of-block marker found", .{});
@@ -200,17 +200,14 @@ pub const Decompress = struct {
                 };
                 log.debug(@src(), "backref(distance): {d}", .{distance});
 
-                const write_index = if (ctx.sliding_window.write_index == 0)
-                                        ctx.sliding_window.data.len - 1
-                                    else
-                                        ctx.sliding_window.write_index - 1;
-                const start_index = try Decompress.window_start_index(write_index, distance);
-                for (start_index..start_index + length) |i| {
-                    const c: u8 = ctx.sliding_window.data[i];
+                for (0..length) |i| {
+                    // Since we add one byte every iteration the offset is
+                    // always equal to the distance
+                    const c: u8 = try ctx.sliding_window.read_offset_end(distance);
                     // Write each byte to the output stream AND the the sliding window
-                    try ctx.*.writer.writeByte(c);
-                    try Flate.window_write(&ctx.sliding_window, c);
-                    log.debug(@src(), "backref[{}]: '{c}'", .{i, c});
+                    try ctx.writer.writeByte(c);
+                    ctx.sliding_window.push(c);
+                    log.debug(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
                 }
             }
             else {
@@ -267,37 +264,18 @@ pub const Decompress = struct {
         return huffman_map;
     }
 
-    /// Get the starting index of a back reference at `offset` backwards
-    /// into the sliding window.
-    fn window_start_index(write_index: usize, offset: u16) !usize {
-        if (offset > Flate.window_length) {
-            log.err(@src(), "Offset too large: {d} >= {d}", .{ offset, Flate.window_length });
-            return FlateError.InvalidDistance;
-        }
-
-        const write_index_i: i64 = @intCast(write_index);
-        const offset_i: i64 = @intCast(offset);
-        const window_length_i: i64 = @intCast(Flate.window_length);
-
-        const s: i64 = write_index_i - offset_i;
-
-        const s_usize: usize = @intCast(s + window_length_i);
-
-        return s_usize % Flate.window_length;
-    }
-
     fn read_bits(
         ctx: *DecompressContext,
         comptime T: type,
         num_bits: u16,
     ) !T {
-        const bits = ctx.*.bit_reader.readBitsNoEof(T, num_bits) catch |e| {
+        const bits = ctx.bit_reader.readBitsNoEof(T, num_bits) catch |e| {
             return e;
         };
 
         util.print_bits(T, "Input read", bits, num_bits);
 
-        ctx.*.processed_bits += num_bits;
+        ctx.processed_bits += num_bits;
 
         return bits;
     }
