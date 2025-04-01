@@ -11,8 +11,8 @@ pub fn RingBuffer(comptime T: type) type {
         data: []T,
         /// The oldest value is at this index (head)
         start_index: usize = 0,
-        /// The newest value is at this index (tail), `null` when the buffer is
-        /// empty.
+        /// The newest value is at this index (tail), set to `null` when the 
+        /// buffer is empty.
         end_index: ?usize = null,
 
         pub fn init(allocator: std.mem.Allocator, capacity: usize) !@This() {
@@ -25,15 +25,21 @@ pub fn RingBuffer(comptime T: type) type {
 
         /// Offset 0 will return the latest item at `end_index`
         /// Offset 1 will return the item one index before `end_index`
-        /// XXX: no read outside bounds check!
+        /// etc.
         pub fn read(self: *@This(), backward_offset: i64) !T {
             if (self.end_index) |end_index| {
                 const data_len_i: i64 = @intCast(self.data.len);
+                const start_index_i: i64 = @intCast(self.start_index);
                 const end_index_i: i64 = @intCast(end_index);
-                const offset_start_index_i: i64 = end_index_i - backward_offset;
 
-                const denominator: usize = @intCast(data_len_i + offset_start_index_i);
-                const ring_index: usize = denominator % self.data.len;
+                const numerator = -1*(start_index_i - end_index_i);
+                const max_offset: usize = @intCast(@mod(numerator, data_len_i)); 
+                if (backward_offset > max_offset) {
+                    return RingBufferError.InvalidOffsetRead;
+                }
+
+                const offset_start_index_i: i64 = end_index_i - backward_offset;
+                const ring_index: usize = @intCast(@mod(offset_start_index_i, data_len_i));
 
                 return self.data[ring_index];
             }
@@ -41,7 +47,6 @@ pub fn RingBuffer(comptime T: type) type {
                 return RingBufferError.EmptyRead;
             }
         }
-
 
         /// Push a new item onto the end of the ring buffer, if the buffer is full,
         /// overwrite the oldest item.
