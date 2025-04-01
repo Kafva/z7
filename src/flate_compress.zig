@@ -7,6 +7,7 @@ const FlateBlockType = @import("flate.zig").FlateBlockType;
 const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
 const TokenEncoding = @import("flate.zig").TokenEncoding;
+const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
 const CompressContext = struct {
     allocator: std.mem.Allocator,
@@ -16,7 +17,7 @@ const CompressContext = struct {
     reader: std.io.AnyReader,
     written_bits: usize,
     processed_bits: usize,
-    sliding_window: std.RingBuffer,
+    sliding_window: RingBuffer(u8),
     lookahead: []u8,
 };
 
@@ -35,10 +36,9 @@ pub const Compress = struct {
             .written_bits = 0,
             .processed_bits = 0,
             // Initialize sliding window for backreferences
-            .sliding_window = try std.RingBuffer.init(allocator, Flate.window_length),
+            .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
             .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         };
-        defer ctx.sliding_window.deinit(allocator);
 
         // Write block header
         try Compress.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
@@ -59,7 +59,6 @@ pub const Compress = struct {
             else => unreachable
         }
 
-
         // Incomplete bytes will be padded when flushing, wait until all
         // writes are done.
         try ctx.bit_writer.flushBits();
@@ -75,7 +74,7 @@ pub const Compress = struct {
         ctx: *CompressContext,
     ) !void {
         var done = false;
-        ctx.*.lookahead[0] = blk: {
+        ctx.lookahead[0] = blk: {
             break :blk Compress.read_byte(ctx) catch {
                 done = true;
                 break :blk 0;
@@ -92,29 +91,26 @@ pub const Compress = struct {
             var longest_match_distance: u16 = 0;
 
             // Look for matches in the sliding_window
-            const win_len: u16 = @truncate(ctx.*.sliding_window.len());
-            const ring_index_start = ctx.*.sliding_window.read_index;
-            var ring_index = ring_index_start;
+            const window_length: u16 = @truncate(ctx.sliding_window.len());
+            var ring_offset: u16 = 0;
 
-            while (ring_index - ring_index_start < win_len) {
-                if (ctx.*.lookahead[match_length] != ctx.*.sliding_window.data[ring_index]) {
+            while (ring_offset != window_length) {
+                const ring_byte: u8 = try ctx.sliding_window.read_offset_start(@as(i32, ring_offset));
+                if (ctx.lookahead[match_length] != ring_byte) {
                     // Reset and start matching from the beginning of the
                     // lookahead again
                     //
                     // Try the same index in the sliding_window again
                     // if we had found a partial match, otherwise move on
                     if (match_length == 0) {
-                        ring_index += 1;
-                        ring_index %= Flate.window_length;
+                        ring_offset += 1;
                     }
 
                     match_length = 0;
                     continue;
                 }
 
-                ring_index += 1;
-                ring_index %= Flate.window_length;
-
+                ring_offset += 1;
                 match_length += 1;
 
                 // When `match_cnt` exceeds `longest_match_cant` we
@@ -125,15 +121,14 @@ pub const Compress = struct {
 
                 // Update the longest match
                 longest_match_length = match_length;
-                const win_idx: u16 = @truncate(ring_index - ring_index_start);
-                longest_match_distance = (win_len - win_idx) + (match_length - 1);
+                longest_match_distance = (window_length - (ring_offset-1)) + (match_length - 1);
 
-                if (longest_match_length == win_len) {
+                if (longest_match_length == window_length) {
                     // Lookahead is filled
                     break;
                 }
 
-                ctx.*.lookahead[longest_match_length] = Compress.read_byte(ctx) catch {
+                ctx.lookahead[longest_match_length] = Compress.read_byte(ctx) catch {
                     done = true;
                     break;
                 };
@@ -148,7 +143,7 @@ pub const Compress = struct {
                                   else longest_match_length;
             // Update the sliding window with the characters from the lookahead
             for (0..lookahead_end) |i| {
-                try Flate.window_write(&ctx.sliding_window, ctx.*.lookahead[i]);
+                ctx.sliding_window.push(ctx.lookahead[i]);
             }
 
             // Write the compressed representation of the lookahead characters
@@ -161,9 +156,9 @@ pub const Compress = struct {
             );
 
             // Set starting byte for next iteration
-            if (longest_match_length == 0 or longest_match_length == win_len) {
+            if (longest_match_length == 0 or longest_match_length == window_length) {
                 // We need a new byte
-                ctx.*.lookahead[0] = Compress.read_byte(ctx) catch {
+                ctx.lookahead[0] = Compress.read_byte(ctx) catch {
                     done = true;
                     break;
                 };
@@ -173,9 +168,9 @@ pub const Compress = struct {
                 log.debug(
                     @src(),
                     "Pushing '{c}' to next iteration",
-                    .{ctx.*.lookahead[longest_match_length]}
+                    .{ctx.lookahead[longest_match_length]}
                 );
-                ctx.*.lookahead[0] = ctx.*.lookahead[longest_match_length];
+                ctx.lookahead[0] = ctx.lookahead[longest_match_length];
             }
         }
 
@@ -194,7 +189,7 @@ pub const Compress = struct {
         if (longest_match_length <= Flate.min_length_match) {
             // Prefer raw characters for small matches
             for (0..lookahead_end) |i| {
-                const char = ctx.*.lookahead[i];
+                const char = ctx.lookahead[i];
                 // Lit Value    Bits        Codes
                 // ---------    ----        -----
                 //   0 - 143     8          00110000 through
@@ -266,13 +261,11 @@ pub const Compress = struct {
                 log.debug(@src(), "backref(distance-offset): {d}", .{offset});
             }
 
-            const start_index = ctx.sliding_window.write_index - longest_match_distance - longest_match_length;
-            for (start_index..start_index + longest_match_length) |i| {
-                const c: u8 = ctx.sliding_window.data[i];
-                // Write each byte to the output stream AND the the sliding window
-                log.debug(@src(), "backref[{}]: '{c}'", .{i, c});
-            }
-
+            // for (0..longest_match_length) |i| {
+            //     const offset: i32 = @intCast(longest_match_distance + i);
+            //     const c: u8 = try ctx.sliding_window.read_offset_end(offset);
+            //     log.debug(@src(), "backref[{}]: '{c}'", .{i, c});
+            // }
         }
     }
 
@@ -284,13 +277,13 @@ pub const Compress = struct {
     ) !void {
         try ctx.bit_writer.writeBits(value, num_bits);
         util.print_bits(T, "Output write", value, num_bits);
-        ctx.*.written_bits += num_bits;
+        ctx.written_bits += num_bits;
     }
 
     fn read_byte(ctx: *CompressContext) !u8 {
-        const b = try ctx.*.reader.readByte();
+        const b = try ctx.reader.readByte();
 
-        ctx.*.processed_bits += 8;
+        ctx.processed_bits += 8;
 
         if (std.ascii.isPrint(b) and b != '\n') {
             log.debug(@src(), "Input read: '{c}'", .{b});

@@ -33,11 +33,11 @@ test "Ring buffer read" {
         rbuf.push(@truncate(i));
     }
 
-    try std.testing.expectEqual(11, try rbuf.read(0));
-    try std.testing.expectEqual(10, try rbuf.read(1));
-    try std.testing.expectEqual(9, try rbuf.read(2));
-    try std.testing.expectEqual(8, try rbuf.read(3));
-    try std.testing.expectEqual(7, try rbuf.read(4));
+    try std.testing.expectEqual(11, try rbuf.read_offset_end(0));
+    try std.testing.expectEqual(10, try rbuf.read_offset_end(1));
+    try std.testing.expectEqual(9, try rbuf.read_offset_end(2));
+    try std.testing.expectEqual(8, try rbuf.read_offset_end(3));
+    try std.testing.expectEqual(7, try rbuf.read_offset_end(4));
 }
 
 test "Ring buffer OOB read" {
@@ -49,7 +49,7 @@ test "Ring buffer OOB read" {
 
     try std.testing.expectError(
          RingBufferError.EmptyRead,
-        rbuf.read(0)
+        rbuf.read_offset_end(0)
     );
 
     for (0..2) |i| {
@@ -58,17 +58,21 @@ test "Ring buffer OOB read" {
 
     try std.testing.expectError(
          RingBufferError.InvalidOffsetRead,
-         rbuf.read(2)
+         rbuf.read_offset_end(2)
     );
 
     rbuf.push(@truncate(2));
 
-    try std.testing.expectEqual(0, try rbuf.read(2));
-    try std.testing.expectEqual(1, try rbuf.read(1));
-    try std.testing.expectEqual(2, try rbuf.read(0));
+    try std.testing.expectEqual(0, try rbuf.read_offset_end(2));
+    try std.testing.expectEqual(1, try rbuf.read_offset_end(1));
+    try std.testing.expectEqual(2, try rbuf.read_offset_end(0));
+
+    try std.testing.expectEqual(0, try rbuf.read_offset_start(0));
+    try std.testing.expectEqual(1, try rbuf.read_offset_start(1));
+    try std.testing.expectEqual(2, try rbuf.read_offset_start(2));
 
     try std.testing.expectError(
          RingBufferError.InvalidOffsetRead,
-        rbuf.read(111)
+        rbuf.read_offset_end(111)
     );
 }
