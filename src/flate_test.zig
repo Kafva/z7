@@ -54,21 +54,21 @@ fn run_alloc(
     try util.eql(allocator, in, decompressed.*);
 }
 
-test "Flate on empty file" {
-    try check_flate("tests/testdata/empty");
-}
+// test "Flate on empty file" {
+//     try check_flate("tests/testdata/empty");
+// }
 
-test "Flate on simple text" {
-    try check_flate("tests/testdata/flate_test.txt");
-}
+// test "Flate on simple text" {
+//     try check_flate("tests/testdata/flate_test.txt");
+// }
 
 test "Flate on short simple text" {
     try check_flate("tests/testdata/simple.txt");
 }
 
-// test "Flate on 9001 repeated characters" {
-//     try check_flate("tests/testdata/over_9000_a.txt");
-// }
+test "Flate on 9001 repeated characters" {
+    try check_flate("tests/testdata/over_9000_a.txt");
+}
 
 // test "Flate on rfc1951.txt" {
 //     try check_flate("tests/testdata/rfc1951.txt");

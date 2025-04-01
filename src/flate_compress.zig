@@ -83,11 +83,11 @@ pub const Compress = struct {
 
         while (!done) {
             // The current number of matches within the lookahead
-            var match_length: u8 = 0;
+            var match_length: u16 = 0;
             // Max number of matches in the lookahead this iteration
             // XXX: The byte at the `longest_match_length` index is not part
             // of the match!
-            var longest_match_length: u8 = 0;
+            var longest_match_length: u16 = 0;
             var longest_match_distance: u16 = 0;
 
             // Look for matches in the sliding_window
@@ -124,7 +124,7 @@ pub const Compress = struct {
                 longest_match_distance = (window_length - (ring_offset-1)) + (match_length - 1);
 
                 if (longest_match_length == window_length) {
-                    // Lookahead is filled
+                    // Matched entire lookahead
                     break;
                 }
 
@@ -137,6 +137,11 @@ pub const Compress = struct {
                     "Extending lookahead {d} item(s)",
                     .{longest_match_length}
                 );
+
+                if (longest_match_length == Flate.lookahead_length - 1) {
+                    // Longest supported match
+                    break;
+                }
             }
 
             const lookahead_end = if (longest_match_length == 0) 1
