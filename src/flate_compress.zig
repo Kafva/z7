@@ -127,6 +127,10 @@ pub const Compress = struct {
                     // Matched entire lookahead
                     break;
                 }
+                else if (longest_match_length == Flate.lookahead_length - 1) {
+                    // Longest supported match
+                    break;
+                }
 
                 ctx.lookahead[longest_match_length] = Compress.read_byte(ctx) catch {
                     done = true;
@@ -137,11 +141,6 @@ pub const Compress = struct {
                     "Extending lookahead {d} item(s)",
                     .{longest_match_length}
                 );
-
-                if (longest_match_length == Flate.lookahead_length - 1) {
-                    // Longest supported match
-                    break;
-                }
             }
 
             const lookahead_end = if (longest_match_length == 0) 1
@@ -161,7 +160,10 @@ pub const Compress = struct {
             );
 
             // Set starting byte for next iteration
-            if (longest_match_length == 0 or longest_match_length == window_length) {
+            if (longest_match_length == 0 or 
+                longest_match_length == window_length or
+                longest_match_length == Flate.lookahead_length - 1
+            ) {
                 // We need a new byte
                 ctx.lookahead[0] = Compress.read_byte(ctx) catch {
                     done = true;
