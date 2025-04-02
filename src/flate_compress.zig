@@ -30,7 +30,6 @@ pub const Compress = struct {
         var ctx = CompressContext {
             .allocator = allocator,
             .block_type = FlateBlockType.FIXED_HUFFMAN,
-            // XXX: Big-endian order bits need to be manually converted
             .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
             .reader = instream.reader().any(),
             .written_bits = 0,
@@ -42,9 +41,10 @@ pub const Compress = struct {
 
         // Write block header
         try Compress.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
-        try Compress.write_bits(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
-        try Compress.write_bits(u5, &ctx, @as(u5, 0), 5);
+        try Compress.write_bits_integer(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
+        try Compress.write_bits_integer(u5, &ctx, @as(u5, 0), 5);
 
+        log.debug(@src(), "Encoding type-{d} block", .{ctx.block_type.numeric()});
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 return FlateError.NotImplemented;
@@ -160,7 +160,7 @@ pub const Compress = struct {
             );
 
             // Set starting byte for next iteration
-            if (longest_match_length == 0 or 
+            if (longest_match_length == 0 or
                 longest_match_length == window_length or
                 longest_match_length == Flate.lookahead_length - 1
             ) {
@@ -172,10 +172,9 @@ pub const Compress = struct {
             } else {
                 // The final char from the lookahead should be passed to
                 // the next iteration
-                log.debug(
-                    @src(),
-                    "Pushing '{c}' to next iteration",
-                    .{ctx.lookahead[longest_match_length]}
+                util.print_char(
+                    "Pushing to next iteration",
+                    ctx.lookahead[longest_match_length]
                 );
                 ctx.lookahead[0] = ctx.lookahead[longest_match_length];
             }
@@ -241,7 +240,7 @@ pub const Compress = struct {
             // the exact offset to use in the range.
             if (enc.code != 0) {
                 const offset = longest_match_length - enc.range_start;
-                try Compress.write_bits(
+                try Compress.write_bits_integer(
                     u16,
                     ctx,
                     offset,
@@ -259,7 +258,7 @@ pub const Compress = struct {
             // Write the offset bits for the distance
             if (denc.bit_count != 0) {
                 const offset = longest_match_distance - denc.range_start;
-                try Compress.write_bits(
+                try Compress.write_bits_integer(
                     u16,
                     ctx,
                     offset,
@@ -267,12 +266,6 @@ pub const Compress = struct {
                 );
                 log.debug(@src(), "backref(distance-offset): {d}", .{offset});
             }
-
-            // for (0..longest_match_length) |i| {
-            //     const offset: i32 = @intCast(longest_match_distance + i);
-            //     const c: u8 = try ctx.sliding_window.read_offset_end(offset);
-            //     log.debug(@src(), "backref[{}]: '{c}'", .{i, c});
-            // }
         }
     }
 
@@ -287,16 +280,31 @@ pub const Compress = struct {
         ctx.written_bits += num_bits;
     }
 
+    /// Write the provided `value` as a `.little` endian integer to the output stream,
+    /// the bit_writer is assumed to be a `.big` endian writer.
+    fn write_bits_integer(
+        T: type,
+        ctx: *CompressContext,
+        value: T,
+        num_bits: u16,
+    ) !void {
+        var bit: u1 = 0;
+        var bits: T = value;
+        for (0..num_bits) |_| {
+            bit = @truncate(bits & 0x1);
+            bits <<= 1;
+            try ctx.bit_writer.writeBits(bit, 1);
+        }
+
+        util.print_bits(T, "Output write integer", value, num_bits);
+        ctx.written_bits += num_bits;
+    }
+
     fn read_byte(ctx: *CompressContext) !u8 {
         const b = try ctx.reader.readByte();
 
+        util.print_char("Input read", b);
         ctx.processed_bits += 8;
-
-        if (std.ascii.isPrint(b) and b != '\n') {
-            log.debug(@src(), "Input read: '{c}'", .{b});
-        } else {
-            log.debug(@src(), "Input read: '0x{x}'", .{b});
-        }
 
         return b;
     }

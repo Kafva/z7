@@ -11,8 +11,8 @@ import (
     "os"
 )
 
-//export DeflateHuffmanOnly
-func DeflateHuffmanOnly(inputfile string, outputfile string) int64 {
+//export FlateCompress
+func FlateCompress(inputfile string, outputfile string) int64 {
     // Open input file
     in, err := os.Open(inputfile)
     if err != nil {
@@ -29,7 +29,7 @@ func DeflateHuffmanOnly(inputfile string, outputfile string) int64 {
     }
     defer out.Close()
     // Wrap output file in flate writer
-    writer, err := flate.NewWriter(out, flate.HuffmanOnly)
+    writer, err := flate.NewWriter(out, flate.DefaultCompression)
     if err != nil {
         println(err.Error())
         return -1
@@ -57,8 +57,8 @@ func DeflateHuffmanOnly(inputfile string, outputfile string) int64 {
     return info.Size()
 }
 
-//export InflateHuffmanOnly
-func InflateHuffmanOnly(inputfile string, outputfile string) int64 {
+//export FlateDecompress
+func FlateDecompress(inputfile string, outputfile string) int64 {
     // Open input file
     in, err := os.Open(inputfile)
     if err != nil {
@@ -101,7 +101,7 @@ func InflateHuffmanOnly(inputfile string, outputfile string) int64 {
 }
 
 // TODO: filepath parameters
-func InflateGzip(input []uint8, output []uint8) int {
+func GzipDecompress(input []uint8, output []uint8) int {
     var buf bytes.Buffer
     var n = 0
     var err error
@@ -132,7 +132,6 @@ func InflateGzip(input []uint8, output []uint8) int {
 
     return n;
 }
-
 
 func loadFromFile(path string) ([]byte, bool) {
     out, err := os.ReadFile(path)
@@ -177,7 +176,7 @@ func main() {
     output := make([]uint8, len(uncompressed), len(uncompressed))
 
     // Inflate the provided compressed file and compare it to the original
-    InflateGzip(compressed, output)
+    GzipDecompress(compressed, output)
 
     if !arrayEquals(uncompressed, output) {
         println("Inflate: ERROR")

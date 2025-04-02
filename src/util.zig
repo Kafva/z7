@@ -85,3 +85,14 @@ pub fn print_bits(
     }
 }
 
+
+pub fn print_char(
+    comptime prefix: []const u8,
+    byte: u8,
+) void {
+    if (std.ascii.isPrint(byte) and byte != '\n') {
+        log.debug(@src(), "{s}: '{c}'", .{prefix, byte});
+    } else {
+        log.debug(@src(), "{s}: '0x{x}'", .{prefix, byte});
+    }
+}

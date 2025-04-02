@@ -53,14 +53,13 @@ pub const Decompress = struct {
             };
 
             if (bfinal == 1) {
-                log.debug(@src(), "End-of-stream marker found", .{});
+                log.debug(@src(), "Last block marker found", .{});
                 done = true;
             }
 
-            const block_type_bits = Decompress.read_bits(&ctx, u2, 2) catch {
+            const block_type_bits = Decompress.read_bits_integer(&ctx, u2, u1, 2) catch {
                 return FlateError.UnexpectedEof;
             };
-
 
             // Read up to the next byte boundary
             while (ctx.processed_bits % 8 != 0) {
@@ -166,7 +165,7 @@ pub const Decompress = struct {
                 const length: u16 = blk: {
                     if (enc.bit_count != 0) {
                         // Parse extra bits for the offset
-                        const offset = Decompress.read_bits(ctx, u16, enc.bit_count) catch {
+                        const offset = Decompress.read_bits_integer(ctx, u16, u4, enc.bit_count) catch {
                             return FlateError.UnexpectedEof;
                         };
                         log.debug(@src(), "backref(length-offset): {d}", .{offset});
@@ -188,7 +187,7 @@ pub const Decompress = struct {
                 const distance: u16 = blk: {
                     if (denc.bit_count != 0) {
                         // Parse extra bits for the offset
-                        const offset = Decompress.read_bits(ctx, u16, denc.bit_count) catch {
+                        const offset = Decompress.read_bits_integer(ctx, u16, u4, denc.bit_count) catch {
                             return FlateError.UnexpectedEof;
                         };
                         log.debug(@src(), "backref(distance-offset): {d}", .{offset});
@@ -274,7 +273,41 @@ pub const Decompress = struct {
         };
 
         util.print_bits(T, "Input read", bits, num_bits);
+        ctx.processed_bits += num_bits;
 
+        return bits;
+    }
+
+    /// Read `num_bits` bits from the input stream interpreted as a
+    /// `.little` endian integer, the bit_writer is assumed to be a `.big`
+    /// endian reader.
+    fn read_bits_integer(
+        ctx: *DecompressContext,
+        comptime T: type,
+        comptime V: type,
+        num_bits: u16,
+    ) !T {
+        const one: T = 1;
+        var bits: T = 0;
+        var i: u16 = num_bits;
+        while (i > 0) {
+            i -= 1;
+            // 79 = 0b0100_1111 (msb)
+            // 79 = 0b1111_0010 (lsb)
+            //
+            // First read bit should be the LSB and placed first into the bits
+            // value.
+            const bit = ctx.bit_reader.readBitsNoEof(u1, 1) catch |e| {
+                return e;
+            };
+            if (bit == 1) {
+                const shift: V = @intCast(i);
+                bits |= (one << shift);
+            }
+
+        }
+
+        util.print_bits(T, "Input read integer", bits, num_bits);
         ctx.processed_bits += num_bits;
 
         return bits;

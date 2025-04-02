@@ -227,18 +227,32 @@ pub const FlateError = error {
     MissingTokenLiteral,
 };
 
+/// XXX: Least significant bit first!!!
+/// 1 = 10
+/// 2 = 01
 pub const FlateBlockType = enum(u2) {
     NO_COMPRESSION = 0b00,
-    FIXED_HUFFMAN = 0b01,
-    DYNAMIC_HUFFMAN = 0b10,
+    FIXED_HUFFMAN = 0b10,
+    DYNAMIC_HUFFMAN = 0b01,
     RESERVED = 0b11,
+
+    pub fn numeric(self: @This()) u2 {
+        return switch (self) {
+            FlateBlockType.NO_COMPRESSION => 0b0,
+            FlateBlockType.FIXED_HUFFMAN => 0b01,
+            FlateBlockType.DYNAMIC_HUFFMAN => 0b10,
+            FlateBlockType.RESERVED => 0b11,
+        };
+    }
 };
 
 pub const Flate = struct {
+    /// Bit order for bit readers and writers, note numerical values
+    /// in the flate stream should be interpreted with LSB!
     pub const writer_endian = std.builtin.Endian.big;
     /// The minimum length of a match required to use a back reference
     pub const min_length_match: usize = 3;
-    /// Valid matches are between (3..258) characters long, i.e. we acutally
+    /// Valid matches are between (3..258) characters long, i.e. we actually
     /// only need a u8 to represent this.
     pub const lookahead_length: usize = 258;
     /// Valid distances must be within the window length, i.e. (1..2**15)
