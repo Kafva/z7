@@ -30,6 +30,7 @@ pub const Decompress = struct {
         allocator: std.mem.Allocator,
         instream: std.fs.File,
         outstream: std.fs.File,
+        instream_offset: usize,
     ) !void {
         var done = false;
         var ctx = DecompressContext {
@@ -42,8 +43,9 @@ pub const Decompress = struct {
             .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length)
         };
 
-        // Make sure to start from the beginning in both streams
-        try instream.seekTo(0);
+        // We may want to start from an offset in the input stream
+        try instream.seekTo(instream_offset);
+        // Always start from the beginning in the output stream
         try outstream.seekTo(0);
 
         // Decode the stream
