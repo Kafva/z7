@@ -44,7 +44,7 @@ pub const Compress = struct {
         try Compress.write_bits_integer(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
         try Compress.write_bits_integer(u5, &ctx, @as(u5, 0), 5);
 
-        log.debug(@src(), "Encoding type-{d} block", .{ctx.block_type.numeric()});
+        log.debug(@src(), "Encoding type-{d} block", .{@intFromEnum(ctx.block_type)});
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 return FlateError.NotImplemented;
@@ -180,7 +180,7 @@ pub const Compress = struct {
             }
         }
 
-        // End-of-block marker (with static huffman encoding: 0000_000 -> 256)
+        // End-of-block marker (with static Huffman encoding: 0000_000 -> 256)
         try Compress.write_bits(u7, ctx, @as(u7, 0), 7);
     }
 
@@ -282,6 +282,7 @@ pub const Compress = struct {
 
     /// Write the provided `value` as a `.little` endian integer to the output stream,
     /// the bit_writer is assumed to be a `.big` endian writer.
+    /// E.g. 0b10 (2) should be written as [0,1] to output stream.
     fn write_bits_integer(
         T: type,
         ctx: *CompressContext,
@@ -290,13 +291,16 @@ pub const Compress = struct {
     ) !void {
         var bit: u1 = 0;
         var bits: T = value;
+
         for (0..num_bits) |_| {
+            // Extract the value for the least significant bit
             bit = @truncate(bits & 0x1);
-            bits <<= 1;
+            // Shift it out
+            bits >>= 1;
             try ctx.bit_writer.writeBits(bit, 1);
         }
 
-        util.print_bits(T, "Output write integer", value, num_bits);
+        util.print_bits(T, "Output little-endian write integer", value, num_bits);
         ctx.written_bits += num_bits;
     }
 

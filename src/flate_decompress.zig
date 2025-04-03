@@ -57,7 +57,7 @@ pub const Decompress = struct {
                 done = true;
             }
 
-            const block_type_bits = Decompress.read_bits_integer(&ctx, u2, u1, 2) catch {
+            const block_type_int = Decompress.read_bits_integer(&ctx, u2, u1, 2) catch {
                 return FlateError.UnexpectedEof;
             };
 
@@ -68,8 +68,8 @@ pub const Decompress = struct {
                 };
             }
 
-            ctx.block_type = @enumFromInt(block_type_bits);
-            log.debug(@src(), "Decoding type-{d} block", .{block_type_bits});
+            ctx.block_type = @enumFromInt(block_type_int);
+            log.debug(@src(), "Decoding type-{d} block", .{block_type_int});
             switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
                     // Read block length
@@ -281,6 +281,7 @@ pub const Decompress = struct {
     /// Read `num_bits` bits from the input stream interpreted as a
     /// `.little` endian integer, the bit_writer is assumed to be a `.big`
     /// endian reader.
+    /// E.g. The bit stream [0,1,1] will be interpreted as a 0b110 (6)
     fn read_bits_integer(
         ctx: *DecompressContext,
         comptime T: type,
@@ -288,29 +289,26 @@ pub const Decompress = struct {
         num_bits: u16,
     ) !T {
         const one: T = 1;
-        var bits: T = 0;
-        var i: u16 = num_bits;
-        while (i > 0) {
-            i -= 1;
-            // 79 = 0b0100_1111 (msb)
-            // 79 = 0b1111_0010 (lsb)
-            //
-            // First read bit should be the LSB and placed first into the bits
-            // value.
+        var integer: T = 0;
+        var i: u16 = 0;
+        while (i < num_bits) {
             const bit = ctx.bit_reader.readBitsNoEof(u1, 1) catch |e| {
                 return e;
             };
             if (bit == 1) {
+                // Each read bit will be more significant, shift with a higher
+                // value for each iteration.
                 const shift: V = @intCast(i);
-                bits |= (one << shift);
+                integer |= (one << shift);
             }
 
+            i += 1;
         }
 
-        util.print_bits(T, "Input read integer", bits, num_bits);
+        util.print_bits(T, "Input read little-endian integer", integer, num_bits);
         ctx.processed_bits += num_bits;
 
-        return bits;
+        return integer;
     }
 };
 

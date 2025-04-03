@@ -227,20 +227,18 @@ pub const FlateError = error {
     MissingTokenLiteral,
 };
 
-/// XXX: Least significant bit first!!!
-/// 1 = 10
-/// 2 = 01
 pub const FlateBlockType = enum(u2) {
-    NO_COMPRESSION = 0b00,
-    FIXED_HUFFMAN = 0b10,
-    DYNAMIC_HUFFMAN = 0b01,
-    RESERVED = 0b11,
+    NO_COMPRESSION = 0,
+    FIXED_HUFFMAN = 1,
+    DYNAMIC_HUFFMAN = 2,
+    RESERVED = 3,
 
-    pub fn numeric(self: @This()) u2 {
+    /// Binary block type values with least significant bit first
+    pub fn lsb(self: @This()) u2 {
         return switch (self) {
             FlateBlockType.NO_COMPRESSION => 0b0,
-            FlateBlockType.FIXED_HUFFMAN => 0b01,
-            FlateBlockType.DYNAMIC_HUFFMAN => 0b10,
+            FlateBlockType.FIXED_HUFFMAN => 0b10,
+            FlateBlockType.DYNAMIC_HUFFMAN => 0b01,
             FlateBlockType.RESERVED => 0b11,
         };
     }
