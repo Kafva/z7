@@ -16,11 +16,12 @@ pub const Gzip = struct {
         outstream: std.fs.File,
     ) !void {
         const instream = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
-        const filename = std.fs.path.basename(inputfile);
+        //const filename = std.fs.path.basename(inputfile);
         defer instream.close();
 
         const st = try instream.stat();
-        const mtime: u32 = @intCast(st.mtime & 0xffff_ffff);
+        const mtime_sec = @divFloor(st.mtime, std.math.pow(i128, 10, 9));
+        const mtime: u32 = @intCast(mtime_sec & 0xffff_ffff);
 
         // TODO: calculate crc incrementally
         const uncompressed_data = try instream.readToEndAlloc(allocator, 40*1024);
@@ -40,15 +41,15 @@ pub const Gzip = struct {
         // bit 5   reserved
         // bit 6   reserved
         // bit 7   reserved
-        try writer.writeByte(0b0000_1000);
+        try writer.writeByte(0b0000_0000);
         // MTIME
         try writer.writeInt(u32, mtime, .little);
         // XFL = 2 - compressor used maximum compression, slowest algorithm
         try writer.writeByte(2);
         try writer.writeByte(255); // OS (unknown)
 
-        _ = try writer.write(filename);
-        try writer.writeByte(0x0);
+        // _ = try writer.write(filename);
+        // try writer.writeByte(0x0);
 
         // Compressed data block
         try Compress.compress(allocator, instream, outstream);

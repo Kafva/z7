@@ -76,6 +76,12 @@ pub fn print_bits(
                 "{s}: 0b{b:0>8} ({d}) [{d} bits]",
                 .{prefix, bits, bits, num_bits}
             ),
+        16 =>
+            log.debug(
+                @src(),
+                "{s}: 0b{b:0>16} ({d}) [{d} bits]",
+                .{prefix, bits, bits, num_bits}
+            ),
         else =>
             log.debug(
                 @src(),

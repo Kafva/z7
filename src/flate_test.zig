@@ -234,14 +234,19 @@ fn check_z7_gzip_ok(
 
 ////////////////////////////////////////////////////////////////////////////////
 
+test "Gzip on simple text" {
+    try run("tests/testdata/helloworld.txt", check_z7_gzip_ok);
+}
+
 // test "Flate on empty file" {
 //     try run("tests/testdata/empty", check_z7_ok);
 //     // try run("tests/testdata/empty", check_ref_ok);
 // }
 
 // test "Flate on simple text" {
-//     try run("tests/testdata/flate_test.txt", check_z7_ok);
-//     try run("tests/testdata/flate_test.txt", check_ref_ok);
+//     try run("tests/testdata/helloworld.txt", check_z7_ok);
+//     // try run("tests/testdata/flate_test.txt", check_z7_ok);
+//     // try run("tests/testdata/flate_test.txt", check_ref_ok);
 // }
 
 //test "Flate on short simple text" {
@@ -265,6 +270,3 @@ fn check_z7_gzip_ok(
 //     try run(util.random_label, check_z7_ok);
 // }
 
-test "Gzip on simple text" {
-    try run("tests/testdata/flate_test.txt", check_z7_gzip_ok);
-}

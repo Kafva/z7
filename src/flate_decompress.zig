@@ -11,6 +11,7 @@ const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
 const DecompressError = error {
     UndecodableBitStream,
+    UnexpectedNLenBytes
 };
 
 const DecompressContext = struct {
@@ -74,18 +75,7 @@ pub const Decompress = struct {
             log.debug(@src(), "Decoding type-{d} block", .{block_type_int});
             switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
-                    // Read block length
-                    const block_size = try Decompress.read_bits(&ctx, u16, 16);
-                    // Skip over ones-complement of length
-                    _ = try Decompress.read_bits(&ctx, u16, 16);
-                    // Write bytes as-is to output stream
-                    for (0..block_size) |_| {
-                        const b = Decompress.read_bits(&ctx, u8, 8) catch {
-                            return FlateError.UnexpectedEof;
-                        };
-                        ctx.sliding_window.push(b);
-                        try ctx.writer.writeByte(b);
-                    }
+                    return Decompress.no_compression_decompress_block(&ctx);
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
                     return Decompress.fixed_code_decompress_block(&ctx);
@@ -105,6 +95,27 @@ pub const Decompress = struct {
             .{ctx.processed_bits, ctx.processed_bits / 8,
               ctx.written_bits, ctx.written_bits / 8}
         );
+    }
+
+    fn no_compression_decompress_block(
+        ctx: *DecompressContext,
+    ) !void {
+        // Read block length
+        const block_size = try Decompress.read_bits_integer(ctx, u16, u4, 16);
+        const block_size_compl = try Decompress.read_bits_integer(ctx, u16, u4, 16);
+        if (~block_size != block_size_compl) {
+            return DecompressError.UnexpectedNLenBytes;
+        }
+        log.debug(@src(), "Unpacking uncompressed {d} byte block", .{block_size});
+
+        // Write bytes as-is to output stream
+        for (0..block_size) |_| {
+            const b = Decompress.read_bits(ctx, u8, 8) catch {
+                return FlateError.UnexpectedEof;
+            };
+            ctx.sliding_window.push(b);
+            try ctx.writer.writeByte(b);
+        }
     }
 
     fn fixed_code_decompress_block(

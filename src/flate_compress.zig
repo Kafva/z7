@@ -29,7 +29,7 @@ pub const Compress = struct {
     ) !void {
         var ctx = CompressContext {
             .allocator = allocator,
-            .block_type = FlateBlockType.FIXED_HUFFMAN,
+            .block_type = FlateBlockType.NO_COMPRESSION,
             .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
             .reader = instream.reader().any(),
             .written_bits = 0,
@@ -39,6 +39,9 @@ pub const Compress = struct {
             .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         };
 
+        const st = try instream.stat();
+        const insize: u16 = @truncate(st.size); // TODO
+
         // Write block header
         try Compress.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
         try Compress.write_bits_integer(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
@@ -47,7 +50,7 @@ pub const Compress = struct {
         log.debug(@src(), "Encoding type-{d} block", .{@intFromEnum(ctx.block_type)});
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
-                return FlateError.NotImplemented;
+                try Compress.no_compression_compress_block(&ctx, insize);
             },
             FlateBlockType.FIXED_HUFFMAN => {
                 // Encode the token according to the static huffman code
@@ -68,6 +71,23 @@ pub const Compress = struct {
             .{ctx.processed_bits, ctx.processed_bits / 8,
               ctx.written_bits, ctx.written_bits / 8}
         );
+    }
+
+    pub fn no_compression_compress_block(
+        ctx: *CompressContext,
+        length: u16,
+    ) !void {
+        try Compress.write_bits_integer(u16, ctx, length, 16);
+        try Compress.write_bits_integer(u16, ctx, ~length, 16);
+
+        log.debug(@src(), "Writing uncompressed {d} byte block", .{length});
+        for (0..length) |_| {
+            const b = Compress.read_byte(ctx) catch {
+                return FlateError.UnexpectedEof;
+            };
+            ctx.sliding_window.push(b);
+            try Compress.write_bits(u8, ctx, b, 8);
+        }
     }
 
     pub fn fixed_code_compress_block(
