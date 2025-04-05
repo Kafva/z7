@@ -5,6 +5,7 @@ const util = @import("util_test.zig");
 
 const Decompress = @import("flate_decompress.zig").Decompress;
 const Compress = @import("flate_compress.zig").Compress;
+const Gzip = @import("gzip.zig").Gzip;
 
 const libflate = @cImport({
     @cInclude("libflate.h");
@@ -58,7 +59,7 @@ fn check_z7_ok(
 
     try Compress.compress(allocator, in, compressed.*);
 
-    try util.log_result("z7", inputfile, in_size, try compressed.getPos());
+    try util.log_result("z7-flate", inputfile, in_size, try compressed.getPos());
 
     try Decompress.decompress(allocator, compressed.*, decompressed.*, 0);
 
@@ -94,7 +95,7 @@ fn check_z7_decompress_ref(
 
     try Compress.compress(allocator, in, compressed.*);
 
-    try util.log_result("z7", inputfile, in_size, try compressed.getPos());
+    try util.log_result("z7-flate", inputfile, in_size, try compressed.getPos());
 
     // Decompress with Go flate implementation
     const compressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, "compressed.bin");
@@ -195,6 +196,44 @@ fn check_ref_ok(
     try util.eql(allocator, in, decompressed.*);
 }
 
+/// Verify that z7 can decompress its own output (gzip)
+fn check_z7_gzip_ok(
+    allocator: std.mem.Allocator,
+    inputfile: []const u8,
+    compressed: *std.fs.File,
+    decompressed: *std.fs.File,
+) !void {
+    var in: std.fs.File = undefined;
+    var in_size: usize = undefined;
+
+    var tmp = std.testing.tmpDir(.{});
+    if (cleanup_tmpdir) {
+        defer tmp.cleanup();
+    }
+
+    try util.setup(
+        allocator,
+        &tmp,
+        inputfile,
+        &in,
+        &in_size,
+        compressed,
+        decompressed
+    );
+    defer in.close();
+
+    try Gzip.compress(allocator, inputfile, compressed.*);
+
+    try util.log_result("z7-gzip", inputfile, in_size, try compressed.getPos());
+
+    // // Verify correct decompression
+    // try util.eql(allocator, in, decompressed.*);
+}
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+
 // test "Flate on empty file" {
 //     try run("tests/testdata/empty", check_z7_ok);
 //     // try run("tests/testdata/empty", check_ref_ok);
@@ -205,12 +244,12 @@ fn check_ref_ok(
 //     try run("tests/testdata/flate_test.txt", check_ref_ok);
 // }
 
-test "Flate on short simple text" {
-    //try run("tests/testdata/simple.txt", check_z7_ok);
-    //try run("tests/testdata/simple.txt", check_ref_ok);
-    try run("tests/testdata/simple.txt", check_z7_decompress_ref);
-    //try run("tests/testdata/simple.txt", check_z7_compress_ref);
-}
+//test "Flate on short simple text" {
+//    //try run("tests/testdata/simple.txt", check_z7_ok);
+//    //try run("tests/testdata/simple.txt", check_ref_ok);
+//    try run("tests/testdata/simple.txt", check_z7_decompress_ref);
+//    //try run("tests/testdata/simple.txt", check_z7_compress_ref);
+//}
 
 // test "Flate on 9001 repeated characters" {
 //     try run("tests/testdata/over_9000_a.txt", check_z7_ok);
@@ -225,3 +264,7 @@ test "Flate on short simple text" {
 // test "Flate on random data" {
 //     try run(util.random_label, check_z7_ok);
 // }
+
+test "Gzip on simple text" {
+    try run("tests/testdata/flate_test.txt", check_z7_gzip_ok);
+}

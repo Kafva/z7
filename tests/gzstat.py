@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # gzstat.py
 # 
 # Utility for analyzing the structure of .gz files.
