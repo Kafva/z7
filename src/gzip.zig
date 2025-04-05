@@ -5,52 +5,59 @@ const util = @import("util.zig");
 const Decompress = @import("flate_decompress.zig").Decompress;
 const Compress = @import("flate_compress.zig").Compress;
 
+const GzipError = error {
+    InvalidHeader,
+    TruncatedHeaderFname,
+};
+
+pub const GzipFlag = enum(u8) {
+    FTEXT = 0b1,
+    FHCRC = 0b10,
+    FEXTRA = 0b100,
+    FNAME = 0b1000,
+    FCOMMENT = 0b10000,
+};
+
 /// +---+---+---+---+---+---+---+---+---+---+
 /// |ID1|ID2|CM |FLG|     MTIME     |XFL|OS | (more-->)
 /// +---+---+---+---+---+---+---+---+---+---+
 pub const Gzip = struct {
-
     pub fn compress(
         allocator: std.mem.Allocator,
         inputfile: []const u8,
         outstream: std.fs.File,
+        flags: u8,
     ) !void {
+        const writer = outstream.writer();
         const instream = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
-        //const filename = std.fs.path.basename(inputfile);
-        defer instream.close();
-
         const st = try instream.stat();
         const mtime_sec = @divFloor(st.mtime, std.math.pow(i128, 10, 9));
         const mtime: u32 = @intCast(mtime_sec & 0xffff_ffff);
         const size: u32 = @truncate(st.size);
+
+        defer instream.close();
 
         // TODO: calculate crc incrementally
         const uncompressed_data = try instream.readToEndAlloc(allocator, 40*1024);
         try instream.seekTo(0);
         const crc = std.hash.Crc32.hash(uncompressed_data);
 
-        const writer = outstream.writer();
         try writer.writeByte(0x1f); // ID1
         try writer.writeByte(0x8b); // ID2
         try writer.writeByte(0x08); // CM (deflate)
-        // FLG
-        // bit 0   FTEXT
-        // bit 1   FHCRC
-        // bit 2   FEXTRA
-        // bit 3   FNAME
-        // bit 4   FCOMMENT
-        // bit 5   reserved
-        // bit 6   reserved
-        // bit 7   reserved
-        try writer.writeByte(0b0000_0000);
+        try writer.writeByte(flags);
         // MTIME
         try writer.writeInt(u32, mtime, .little);
         // XFL = 2 - compressor used maximum compression, slowest algorithm
         try writer.writeByte(2);
         try writer.writeByte(255); // OS (unknown)
 
-        // _ = try writer.write(filename);
-        // try writer.writeByte(0x0);
+        if ((flags & @intFromEnum(GzipFlag.FNAME)) == 1) {
+            log.debug(@src(), "Handling FNAME flag", .{});
+            const filename = std.fs.path.basename(inputfile);
+            _ = try writer.write(filename);
+            try writer.writeByte(0x0);
+        }
 
         // Compressed data block
         try Compress.compress(allocator, instream, outstream);
@@ -58,6 +65,85 @@ pub const Gzip = struct {
         // Trailer
         try writer.writeInt(u32, crc, .little);
         try writer.writeInt(u32, size, .little);
+    }
+
+    pub fn decompress(
+        allocator: std.mem.Allocator,
+        instream: std.fs.File,
+        outstream: std.fs.File,
+    ) !void {
+        const fname_max = 1024;
+        var handle_fname = false;
+        var fname = [_]u8{0}**fname_max;
+        var fname_length: usize = 0;
+        const reader = instream.reader();
+
+        // Always start from the beginning of the input stream
+        try instream.seekTo(0);
+
+        if (try reader.readByte() != 0x1f) {
+            return GzipError.InvalidHeader;
+        }
+        if (try reader.readByte() != 0x8b) {
+            return GzipError.InvalidHeader;
+        }
+        if (try reader.readByte() != 0x08) {
+            return GzipError.InvalidHeader;
+        }
+
+        const flg = try reader.readByte();
+        if ((flg & @intFromEnum(GzipFlag.FTEXT)) == 1) {
+            log.debug(@src(), "Ignoring FTEXT flag", .{});
+        }
+        if ((flg & @intFromEnum(GzipFlag.FHCRC)) == 1) {
+            log.debug(@src(), "Ignoring FHCRC flag", .{});
+        }
+        if ((flg & @intFromEnum(GzipFlag.FEXTRA)) == 1) {
+            log.debug(@src(), "Ignoring FEXTRA flag", .{});
+        }
+        if ((flg & @intFromEnum(GzipFlag.FNAME)) == 1) {
+            handle_fname = true;
+        }
+        if ((flg & @intFromEnum(GzipFlag.FCOMMENT)) == 1) {
+            log.debug(@src(), "Ignoring FCOMMENT flag", .{});
+        }
+
+        const mtime = try reader.readInt(u32, .little);
+        log.debug(@src(), "Modification time: {d}", .{mtime});
+
+        const xfl = try reader.readByte();
+        if (xfl != 1 and xfl != 2) {
+            return GzipError.InvalidHeader;
+        }
+        const os = try reader.readByte();
+        if (os != 255) {
+            log.debug(@src(), "Ignoring custom OS flag", .{});
+        }
+
+        if (handle_fname) {
+            var b: u8 = 0;
+            for (0..fname_max) |i| {
+                b = try reader.readByte();
+                fname[i] = b;
+                fname_length += 1; 
+                if (b == 0) {
+                    break;
+                }
+            }
+
+            if (b != 0) {
+                return GzipError.TruncatedHeaderFname;
+            }
+            log.debug(@src(), "Original filename: '{s}'", .{fname});
+        }
+
+        const read_bytes = 10 + fname_length;
+        try Decompress.decompress(allocator, instream, outstream, read_bytes);
+
+        const crc = try reader.readInt(u32, .little);
+        const size = try reader.readInt(u32, .little);
+        log.debug(@src(), "Original data CRC32: 0x{x}", .{crc});
+        log.debug(@src(), "Original size: {d} bytes", .{size});
     }
 };
 

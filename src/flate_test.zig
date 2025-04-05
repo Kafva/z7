@@ -226,17 +226,13 @@ fn check_z7_gzip_ok(
 
     try util.log_result("z7-gzip", inputfile, in_size, try compressed.getPos());
 
-    // // Verify correct decompression
-    // try util.eql(allocator, in, decompressed.*);
+    try Gzip.decompress(allocator, compressed.*, decompressed.*);
+
+    // Verify correct decompression
+    try util.eql(allocator, in, decompressed.*);
 }
 
-
-
 ////////////////////////////////////////////////////////////////////////////////
-
-// test "Gzip on simple text" {
-//     try run("tests/testdata/helloworld.txt", check_z7_gzip_ok);
-// }
 
 test "[Flate] check empty file" {
     try run("tests/testdata/empty", check_z7_ok);
@@ -273,4 +269,3 @@ test "[Flate]: check random data" {
 // test "[Flate]: Decompress reference implementation output with z7" {
 //     try run("tests/testdata/simple.txt", check_z7_decompress_ref);
 // }
-
