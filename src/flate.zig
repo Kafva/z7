@@ -232,21 +232,19 @@ pub const FlateBlockType = enum(u2) {
     FIXED_HUFFMAN = 1,
     DYNAMIC_HUFFMAN = 2,
     RESERVED = 3,
-
-    /// Binary block type values with least significant bit first
-    pub fn lsb(self: @This()) u2 {
-        return switch (self) {
-            FlateBlockType.NO_COMPRESSION => 0b0,
-            FlateBlockType.FIXED_HUFFMAN => 0b10,
-            FlateBlockType.DYNAMIC_HUFFMAN => 0b01,
-            FlateBlockType.RESERVED => 0b11,
-        };
-    }
 };
 
 pub const Flate = struct {
-    /// Bit order for bit readers and writers, note numerical values
-    /// in the flate stream should be interpreted with LSB!
+    /// Byte order for bit readers and writers.
+    /// For numerical values, we want the `.little` endian byte order, for
+    /// Huffman symobols, the `.big` endian order.
+    ///
+    /// [0x35, 0xf0] = 0x35, 0xf0 (.big)
+    /// [0x35, 0xf0] = 0xf0, 0x35 (.little)
+    ///
+    /// We do not need to mess with the bit-order (in bytes) for Huffman symbols,
+    /// the most significant bit is first as usual.
+    ///
     pub const writer_endian = std.builtin.Endian.big;
     /// The minimum length of a match required to use a back reference
     pub const min_length_match: usize = 3;

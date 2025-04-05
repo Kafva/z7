@@ -43,11 +43,11 @@ pub const Compress = struct {
         const insize: u16 = @truncate(st.size); // TODO
 
         // Write block header
-        try Compress.write_bits(u1, &ctx, @as(u1, 1), 1); // XXX bfinal
-        try Compress.write_bits_integer(u2, &ctx, @as(u2, @intFromEnum(ctx.block_type)), 2);
-        try Compress.write_bits_integer(u5, &ctx, @as(u5, 0), 5);
+        try Compress.write_bits(&ctx, u1, @as(u1, 1), 1); // XXX bfinal
+        try Compress.write_bits_le(&ctx, u2, @as(u2, @intFromEnum(ctx.block_type)), 2);
+        try Compress.write_bits_le(&ctx, u5, @as(u5, 0), 5);
 
-        log.debug(@src(), "Encoding type-{d} block", .{@intFromEnum(ctx.block_type)});
+        log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 try Compress.no_compression_compress_block(&ctx, insize);
@@ -77,16 +77,16 @@ pub const Compress = struct {
         ctx: *CompressContext,
         length: u16,
     ) !void {
-        try Compress.write_bits_integer(u16, ctx, length, 16);
-        try Compress.write_bits_integer(u16, ctx, ~length, 16);
+        try Compress.write_bytes_le(ctx, u16, length, 16);
+        try Compress.write_bytes_le(ctx, u16, ~length, 16);
 
-        log.debug(@src(), "Writing uncompressed {d} byte block", .{length});
+        log.debug(@src(), "Compressing {d} bytes into type-0 block", .{length});
         for (0..length) |_| {
             const b = Compress.read_byte(ctx) catch {
                 return FlateError.UnexpectedEof;
             };
             ctx.sliding_window.push(b);
-            try Compress.write_bits(u8, ctx, b, 8);
+            try Compress.write_bits(ctx, u8, b, 8);
         }
     }
 
@@ -201,7 +201,7 @@ pub const Compress = struct {
         }
 
         // End-of-block marker (with static Huffman encoding: 0000_000 -> 256)
-        try Compress.write_bits(u7, ctx, @as(u7, 0), 7);
+        try Compress.write_bits(ctx, u7, @as(u7, 0), 7);
     }
 
     /// Write the bits for the provided match length and distance to the output
@@ -223,11 +223,11 @@ pub const Compress = struct {
                 // 144 - 255     9          110010000 through
                 //                          111111111
                 if (char < 144) {
-                    try Compress.write_bits(u8, ctx, 0b0011_0000 + char, 8);
+                    try Compress.write_bits(ctx, u8, 0b0011_0000 + char, 8);
                 }
                 else {
                     const char_9: u9 = 0b1_1001_0000 + @as(u9, char - 144);
-                    try Compress.write_bits(u9, ctx, char_9, 9);
+                    try Compress.write_bits(ctx, u9, char_9, 9);
                 }
             }
         }
@@ -249,20 +249,20 @@ pub const Compress = struct {
             if (enc.code < 280) {
                 // Write the huffman encoding of 'Code'
                 const hcode: u7 = @truncate(enc.code - 256);
-                try Compress.write_bits(u7, ctx, 0b000_0000 + hcode, 7);
+                try Compress.write_bits(ctx, u7, 0b000_0000 + hcode, 7);
             }
             else {
                 const hcode: u8 = @truncate(enc.code - 280);
-                try Compress.write_bits(u8, ctx, 0b1100_0000 + hcode, 8);
+                try Compress.write_bits(ctx, u8, 0b1100_0000 + hcode, 8);
             }
 
             // Write the 'Extra Bits', i.e. the offset that indicate
             // the exact offset to use in the range.
             if (enc.code != 0) {
                 const offset = longest_match_length - enc.range_start;
-                try Compress.write_bits_integer(
-                    u16,
+                try Compress.write_bits_le(
                     ctx,
+                    u16,
                     offset,
                     enc.bit_count
                 );
@@ -273,14 +273,14 @@ pub const Compress = struct {
             const denc = TokenEncoding.from_distance(longest_match_distance);
             log.debug(@src(), "backref(distance): {any}", .{denc});
             const denc_code: u5 = @truncate(denc.code);
-            try Compress.write_bits(u5, ctx, denc_code, 5);
+            try Compress.write_bits(ctx, u5, denc_code, 5);
 
             // Write the offset bits for the distance
             if (denc.bit_count != 0) {
                 const offset = longest_match_distance - denc.range_start;
-                try Compress.write_bits_integer(
-                    u16,
+                try Compress.write_bits_le(
                     ctx,
+                    u16,
                     offset,
                     denc.bit_count
                 );
@@ -289,9 +289,10 @@ pub const Compress = struct {
         }
     }
 
+    /// Write `value` as to the output stream in big-endian byte order.
     fn write_bits(
-        T: type,
         ctx: *CompressContext,
+        T: type,
         value: T,
         num_bits: u16,
     ) !void {
@@ -300,12 +301,12 @@ pub const Compress = struct {
         ctx.written_bits += num_bits;
     }
 
-    /// Write the provided `value` as a `.little` endian integer to the output stream,
-    /// the bit_writer is assumed to be a `.big` endian writer.
-    /// E.g. 0b10 (2) should be written as [0,1] to output stream.
-    fn write_bits_integer(
-        T: type,
+    /// Write bits from least significant to most significant, *disregarding* the internal
+    /// order of each byte!
+    /// 0b10 (2) should be written as [0,1] to output stream.
+    fn write_bits_le(
         ctx: *CompressContext,
+        T: type,
         value: T,
         num_bits: u16,
     ) !void {
@@ -317,11 +318,36 @@ pub const Compress = struct {
             bit = @truncate(bits & 0x1);
             // Shift it out
             bits >>= 1;
-            try ctx.bit_writer.writeBits(bit, 1);
+            try Compress.write_bits(ctx, u1, bit, 1);
+        }
+    }
+
+    /// Write `value` as to the output stream in little-endian byte order. We
+    /// need this helper function since our `bit_writer` is a big-endian
+    /// writer.
+    fn write_bytes_le(
+        ctx: *CompressContext,
+        T: type,
+        value: T,
+        num_bits: u16,
+    ) !void {
+        var byte: u8 = undefined;
+        var input: T = value;
+        var bit_cnt: u16 = num_bits;
+
+        if (num_bits % 8 != 0) unreachable;
+
+        while (bit_cnt > 0) {
+            // Extract the value for the least significant byte
+            byte = @intCast(input & 0xff);
+            // Shift it out
+            input >>= 8;
+
+            try Compress.write_bits(ctx, u8, byte, 8);
+            bit_cnt -= 8;
         }
 
-        util.print_bits(T, "Output little-endian write integer", value, num_bits);
-        ctx.written_bits += num_bits;
+        util.print_bits(T, "Output little-endian integer", value, num_bits);
     }
 
     fn read_byte(ctx: *CompressContext) !u8 {
