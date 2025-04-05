@@ -29,7 +29,7 @@ pub const Compress = struct {
     ) !void {
         var ctx = CompressContext {
             .allocator = allocator,
-            .block_type = FlateBlockType.NO_COMPRESSION,
+            .block_type = FlateBlockType.FIXED_HUFFMAN,
             .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
             .reader = instream.reader().any(),
             .written_bits = 0,
@@ -43,9 +43,11 @@ pub const Compress = struct {
         const insize: u16 = @truncate(st.size); // TODO
 
         // Write block header
-        try Compress.write_bits(&ctx, u1, @as(u1, 1), 1); // XXX bfinal
-        try Compress.write_bits_le(&ctx, u2, @as(u2, @intFromEnum(ctx.block_type)), 2);
-        try Compress.write_bits_le(&ctx, u5, @as(u5, 0), 5);
+        var header: u8 = 0;
+        header |= @intFromEnum(ctx.block_type) << 1; // BTYPE
+        header |= 1; // BFINAL
+
+        try Compress.write_bits(&ctx, u8, header, 8);
 
         log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
         switch (ctx.block_type) {

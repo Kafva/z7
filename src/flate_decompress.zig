@@ -36,7 +36,7 @@ pub const Decompress = struct {
         var done = false;
         var ctx = DecompressContext {
             .allocator = allocator,
-            .block_type = FlateBlockType.NO_COMPRESSION,
+            .block_type = FlateBlockType.RESERVED,
             .writer = outstream.writer().any(),
             .bit_reader = std.io.bitReader(Flate.writer_endian, instream.reader().any()),
             .written_bits = 0,
@@ -51,27 +51,16 @@ pub const Decompress = struct {
 
         // Decode the stream
         while (!done) {
-            const bfinal = Decompress.read_bits(&ctx, u1, 1) catch {
-                return;
-            };
+            const header = try Decompress.read_bits(&ctx, u8, 8);
 
-            if (bfinal == 1) {
+            if ((header & 1) == 1) {
                 log.debug(@src(), "Last block marker found", .{});
                 done = true;
             }
 
-            const block_type_int = Decompress.read_bits_le(&ctx, u2, u1, 2) catch {
-                return FlateError.UnexpectedEof;
-            };
-
-            // Read up to the next byte boundary
-            while (ctx.processed_bits % 8 != 0) {
-                _ = Decompress.read_bits(&ctx, u1, 1) catch {
-                    return FlateError.UnexpectedEof;
-                };
-            }
-
+            const block_type_int = (header >> 1) & 0b0000_0011;
             ctx.block_type = @enumFromInt(block_type_int);
+
             log.debug(@src(), "Reading type-{d} block", .{block_type_int});
             switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
@@ -304,15 +293,14 @@ pub const Decompress = struct {
         var out: T = 0;
         var shifted_byte: T = undefined;
      
-        for (0..num_bytes) |_| {
-            const byte = ctx.bit_reader.readBitsNoEof(u8, 8) catch |e| {
-                return e;
-            };
-            ctx.processed_bits += 8;
+        if (num_bytes >= 8) unreachable;
+        for (0..num_bytes) |i| {
+            const iter: u4 = @intCast(i);
+            const byte = try Decompress.read_bits(ctx, u8, 8);
 
             // Each byte should be at a lower position
             shifted_byte = @intCast(byte);
-            shifted_byte <<= 8;
+            shifted_byte <<= 8*iter;
             out |= shifted_byte;
         }
 

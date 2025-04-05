@@ -22,6 +22,7 @@ pub const Gzip = struct {
         const st = try instream.stat();
         const mtime_sec = @divFloor(st.mtime, std.math.pow(i128, 10, 9));
         const mtime: u32 = @intCast(mtime_sec & 0xffff_ffff);
+        const size: u32 = @truncate(st.size);
 
         // TODO: calculate crc incrementally
         const uncompressed_data = try instream.readToEndAlloc(allocator, 40*1024);
@@ -36,7 +37,7 @@ pub const Gzip = struct {
         // bit 0   FTEXT
         // bit 1   FHCRC
         // bit 2   FEXTRA
-        // bit 3   FNAME        [X]
+        // bit 3   FNAME
         // bit 4   FCOMMENT
         // bit 5   reserved
         // bit 6   reserved
@@ -56,6 +57,7 @@ pub const Gzip = struct {
 
         // Trailer
         try writer.writeInt(u32, crc, .little);
+        try writer.writeInt(u32, size, .little);
     }
 };
 

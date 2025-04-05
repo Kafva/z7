@@ -234,39 +234,43 @@ fn check_z7_gzip_ok(
 
 ////////////////////////////////////////////////////////////////////////////////
 
-test "Gzip on simple text" {
-    try run("tests/testdata/helloworld.txt", check_z7_gzip_ok);
+// test "Gzip on simple text" {
+//     try run("tests/testdata/helloworld.txt", check_z7_gzip_ok);
+// }
+
+test "[Flate] check empty file" {
+    try run("tests/testdata/empty", check_z7_ok);
 }
 
-// test "Flate on empty file" {
-//     try run("tests/testdata/empty", check_z7_ok);
-//     // try run("tests/testdata/empty", check_ref_ok);
+test "[Flate] check simple text" {
+    try run("tests/testdata/flate_test.txt", check_z7_ok);
+    try run("tests/testdata/flate_test.txt", check_ref_ok);
+}
+
+test "[Flate] check short simple text" {
+    try run("tests/testdata/simple.txt", check_z7_ok);
+    try run("tests/testdata/simple.txt", check_ref_ok);
+}
+
+test "[Flate] check 9001 repeated characters" {
+    try run("tests/testdata/over_9000_a.txt", check_z7_ok);
+    try run("tests/testdata/over_9000_a.txt", check_ref_ok);
+}
+
+test "[Flate] check rfc1951.txt" {
+    try run("tests/testdata/rfc1951.txt", check_z7_ok);
+    try run("tests/testdata/rfc1951.txt", check_ref_ok);
+}
+
+test "[Flate]: check random data" {
+    try run(util.random_label, check_z7_ok);
+}
+
+// test "[Flate]: Decompress z7 output with reference implementation" {
+//     try run("tests/testdata/simple.txt", check_z7_decompress_ref);
 // }
 
-// test "Flate on simple text" {
-//     try run("tests/testdata/helloworld.txt", check_z7_ok);
-//     // try run("tests/testdata/flate_test.txt", check_z7_ok);
-//     // try run("tests/testdata/flate_test.txt", check_ref_ok);
-// }
-
-//test "Flate on short simple text" {
-//    //try run("tests/testdata/simple.txt", check_z7_ok);
-//    //try run("tests/testdata/simple.txt", check_ref_ok);
-//    try run("tests/testdata/simple.txt", check_z7_decompress_ref);
-//    //try run("tests/testdata/simple.txt", check_z7_compress_ref);
-//}
-
-// test "Flate on 9001 repeated characters" {
-//     try run("tests/testdata/over_9000_a.txt", check_z7_ok);
-//     try run("tests/testdata/over_9000_a.txt", check_ref_ok);
-// }
-
-// test "Flate on rfc1951.txt" {
-//     try run("tests/testdata/rfc1951.txt", check_z7_ok);
-//     try run("tests/testdata/rfc1951.txt", check_ref_ok);
-// }
-
-// test "Flate on random data" {
-//     try run(util.random_label, check_z7_ok);
+// test "[Flate]: Decompress reference implementation output with z7" {
+//     try run("tests/testdata/simple.txt", check_z7_decompress_ref);
 // }
 
