@@ -66,6 +66,52 @@ fn check_z7_gzip_ok(
     try util.eql(allocator, in, decompressed.*);
 }
 
+/// Verify that the Golang implementation is ok for ffi
+fn check_ref_ok(
+    allocator: std.mem.Allocator,
+    inputfile: []const u8,
+    compressed: *std.fs.File,
+    decompressed: *std.fs.File,
+) !void {
+    var in: std.fs.File = undefined;
+    var in_size: usize = undefined;
+
+    var tmp = std.testing.tmpDir(.{});
+    if (cleanup_tmpdir) {
+        defer tmp.cleanup();
+    }
+
+    try util.setup(
+        allocator,
+        &tmp,
+        inputfile,
+        &in,
+        &in_size,
+        compressed,
+        decompressed
+    );
+    defer in.close();
+
+    const inputfile_s = libflate.GoString{
+        .p = inputfile.ptr,
+        .n = @intCast(inputfile.len)
+    };
+
+    const compressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, "compressed.bin");
+    const compressed_len = libflate.GzipCompress(inputfile_s, compressed_path_s);
+    try std.testing.expect(compressed_len > 0);
+
+    try util.log_result("go-gzip", inputfile, in_size, @intCast(compressed_len));
+
+    const decompressed_path_s = try util.go_str_tmp_filepath(allocator, &tmp, "decompressed.bin");
+    const decompressed_len = libflate.GzipDecompress(compressed_path_s, decompressed_path_s);
+    try std.testing.expect(decompressed_len > 0);
+
+    // Verify correct decompression
+    try util.eql(allocator, in, decompressed.*);
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////
 
 test "Gzip on simple text" {
