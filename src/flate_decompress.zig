@@ -115,8 +115,7 @@ pub const Decompress = struct {
             const b = Decompress.read_bits(ctx, u8, 8) catch {
                 return FlateError.UnexpectedEof;
             };
-            ctx.sliding_window.push(b);
-            try ctx.writer.writeByte(b);
+            try Decompress.write_byte(ctx, b);
         }
     }
 
@@ -128,7 +127,8 @@ pub const Decompress = struct {
         const nine_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 9);
         while (true) {
             const b = blk: {
-                var key = Decompress.read_bits(ctx, u16, 7) catch {
+                // TODO: we decode 'H' with 7 bits but a literal is 8 bits...
+                var key = Decompress.read_bits_be(ctx, 7) catch {
                     return FlateError.UnexpectedEof;
                 };
 
@@ -137,22 +137,26 @@ pub const Decompress = struct {
                 }
 
                 // Read one more bit and try the 8-bit value
-                //  0111100 [7 bits] -> 0111100(x) [8 bits]
+                //     0111100 [7 bits]
+                //  (x)0111100 [8 bits]
                 var bit = Decompress.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
-                key = (key << 1) | @as(u16, bit);
+                key <<= 1;
+                key |= bit; 
 
                 if (eight_bit_decode.get(key)) |char| {
                     break :blk char;
                 }
 
                 // Read one more bit and try the 9-bit value
-                //  01111001 [8 bits] -> 01111001(x) [9 bits]
+                //     01111001 [8 bits]
+                //  (x)01111001 [9 bits]
                 bit = Decompress.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
-                key = (key << 1) | @as(u16, bit);
+                key <<= 1;
+                key |= bit; 
 
                 if (nine_bit_decode.get(key)) |char| {
                     break :blk char;
@@ -163,8 +167,7 @@ pub const Decompress = struct {
 
             if (b < 256) {
                 const c: u8 = @truncate(b);
-                ctx.sliding_window.push(c);
-                try ctx.writer.writeByte(c);
+                try Decompress.write_byte(ctx, c);
             }
             else if (b == 256) {
                 log.debug(@src(), "End-of-block marker found", .{});
@@ -219,8 +222,7 @@ pub const Decompress = struct {
                     // always equal to the distance
                     const c: u8 = try ctx.sliding_window.read_offset_end(distance);
                     // Write each byte to the output stream AND the the sliding window
-                    try ctx.writer.writeByte(c);
-                    ctx.sliding_window.push(c);
+                    try Decompress.write_byte(ctx, c);
                     log.debug(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
                 }
             }
@@ -287,11 +289,34 @@ pub const Decompress = struct {
         const bits = ctx.bit_reader.readBitsNoEof(T, num_bits) catch |e| {
             return e;
         };
-
         util.print_bits(T, "Input read", bits, num_bits);
         ctx.processed_bits += num_bits;
-
         return bits;
+    }
+
+    /// This stream: 11110xxx xxxxx000 should be interpreted as 0b01111_000
+    fn read_bits_be(
+        ctx: *DecompressContext,
+        num_bits: u16,
+    ) !u16 {
+        var out: u16 = 0;
+        for (1..num_bits) |i_usize| {
+            const i: u4 = @intCast(i_usize);
+            const shift_by: u4 = @intCast(num_bits - i);
+
+            const bit = try Decompress.read_bits(ctx, u16, 1);
+            out |= bit << shift_by;
+        }
+
+        return out;
+    }
+
+
+    fn write_byte(ctx: *DecompressContext, c: u8) !void {
+        ctx.sliding_window.push(c);
+        try ctx.writer.writeByte(c);
+        util.print_char("Output write", c);
+        ctx.written_bits += 8;
     }
 };
 

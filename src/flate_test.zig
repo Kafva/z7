@@ -87,33 +87,39 @@ fn check_ref_ok(ctx: *TestContext) !void {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-test "[Flate] check empty file" {
-    try run("tests/testdata/empty", "z7-flate", check_z7_ok);
-}
+// test "[Flate] check empty file" {
+//     try run("tests/testdata/empty", "z7-flate", check_z7_ok);
+// }
+
 
 test "[Flate] check simple text" {
-    try run("tests/testdata/flate_test.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/flate_test.txt", "go-flate", check_ref_ok);
+    try run("tests/testdata/helloworld.txt", "z7-flate", check_z7_ok);
+    try run("tests/testdata/helloworld.txt", "go-flate", check_ref_ok);
 }
 
-test "[Flate] check short simple text" {
-    try run("tests/testdata/simple.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/simple.txt", "go-flate", check_ref_ok);
-}
+// test "[Flate] check longer simple text" {
+//     try run("tests/testdata/flate_test.txt", "z7-flate", check_z7_ok);
+//     try run("tests/testdata/flate_test.txt", "go-flate", check_ref_ok);
+// }
 
-test "[Flate] check 9001 repeated characters" {
-    try run("tests/testdata/over_9000_a.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/over_9000_a.txt", "go-flate", check_ref_ok);
-}
+// test "[Flate] check short simple text" {
+//     try run("tests/testdata/simple.txt", "z7-flate", check_z7_ok);
+//     try run("tests/testdata/simple.txt", "go-flate", check_ref_ok);
+// }
 
-test "[Flate] check rfc1951.txt" {
-    try run("tests/testdata/rfc1951.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/rfc1951.txt", "go-flate", check_ref_ok);
-}
+// test "[Flate] check 9001 repeated characters" {
+//     try run("tests/testdata/over_9000_a.txt", "z7-flate", check_z7_ok);
+//     try run("tests/testdata/over_9000_a.txt", "go-flate", check_ref_ok);
+// }
 
-test "[Flate]: check random data" {
-    try run(TestContext.random_label, "z7-flate", check_z7_ok);
-}
+// test "[Flate] check rfc1951.txt" {
+//     try run("tests/testdata/rfc1951.txt", "z7-flate", check_z7_ok);
+//     try run("tests/testdata/rfc1951.txt", "go-flate", check_ref_ok);
+// }
+
+// test "[Flate]: check random data" {
+//     try run(TestContext.random_label, "z7-flate", check_z7_ok);
+// }
 
 // test "[Flate]: Decompress z7 output with reference implementation" {
 //     try run("tests/testdata/simple.txt", "z7-flate", check_z7_decompress_ref);

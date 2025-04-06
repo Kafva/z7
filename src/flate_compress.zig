@@ -29,7 +29,7 @@ pub const Compress = struct {
     ) !void {
         var ctx = CompressContext {
             .allocator = allocator,
-            .block_type = FlateBlockType.NO_COMPRESSION,
+            .block_type = FlateBlockType.FIXED_HUFFMAN,
             .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
             .reader = instream.reader().any(),
             .written_bits = 0,
@@ -226,11 +226,11 @@ pub const Compress = struct {
                 // 144 - 255     9          110010000 through
                 //                          111111111
                 if (char < 144) {
-                    try Compress.write_bits(ctx, u8, 0b0011_0000 + char, 8);
+                    try Compress.write_bits_be(ctx, u8, u3, 0b0011_0000 + char, 8);
                 }
                 else {
                     const char_9: u9 = 0b1_1001_0000 + @as(u9, char - 144);
-                    try Compress.write_bits(ctx, u9, char_9, 9);
+                    try Compress.write_bits_be(ctx, u9, u4, char_9, 9);
                 }
             }
         }
@@ -252,11 +252,11 @@ pub const Compress = struct {
             if (enc.code < 280) {
                 // Write the huffman encoding of 'Code'
                 const hcode: u7 = @truncate(enc.code - 256);
-                try Compress.write_bits(ctx, u7, 0b000_0000 + hcode, 7);
+                try Compress.write_bits_be(ctx, u7, u3, 0b000_0000 + hcode, 7);
             }
             else {
                 const hcode: u8 = @truncate(enc.code - 280);
-                try Compress.write_bits(ctx, u8, 0b1100_0000 + hcode, 8);
+                try Compress.write_bits_be(ctx, u8, u3, 0b1100_0000 + hcode, 8);
             }
 
             // Write the 'Extra Bits', i.e. the offset that indicate
@@ -302,6 +302,30 @@ pub const Compress = struct {
         try ctx.bit_writer.writeBits(value, num_bits);
         util.print_bits(T, "Output write", value, num_bits);
         ctx.written_bits += num_bits;
+    }
+
+    /// Write bits with the configured little-endian writer *BUT* write the bits
+    /// of `value` in the most-to-least-significant order.
+    ///
+    /// 0b0111_1000 should be written as 11110xxx xxxxx000 to the output stream.
+    fn write_bits_be(
+        ctx: *CompressContext,
+        T: type,
+        V: type,
+        value: T,
+        num_bits: u16,
+    ) !void {
+        for (1..num_bits) |i_usize| {
+            const i: V = @intCast(i_usize);
+            const shift_by: V = @intCast(num_bits - i);
+
+            const bit: u1 = @truncate((value >> shift_by) & 1);
+            try Compress.write_bits(ctx, u1, bit, 1);
+        }
+
+        // Final least-significant bit
+        const bit: u1 = @truncate(value & 1);
+        try Compress.write_bits(ctx, u1, bit, 1);
     }
 
     fn read_byte(ctx: *CompressContext) !u8 {
