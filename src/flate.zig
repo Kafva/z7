@@ -235,17 +235,14 @@ pub const FlateBlockType = enum(u2) {
 };
 
 pub const Flate = struct {
-    /// Byte order for bit readers and writers.
-    /// For numerical values, we want the `.little` endian byte order, for
-    /// Huffman symobols, the `.big` endian order.
+    /// *Bit-numbering* endian mode for bit readers and writers.
     ///
-    /// [0x35, 0xf0] = 0x35, 0xf0 (.big)
-    /// [0x35, 0xf0] = 0xf0, 0x35 (.little)
+    /// for ([1,1,1,1, 0,0,1,0]) |b|
+    ///     writeBits(b)
+    /// => 0b1111_0010 (.big)
+    /// => 0b0100_1111 (.little)
     ///
-    /// We do not need to mess with the bit-order (in bytes) for Huffman symbols,
-    /// the most significant bit is first as usual.
-    ///
-    pub const writer_endian = std.builtin.Endian.big;
+    pub const writer_endian = std.builtin.Endian.little;
     /// The minimum length of a match required to use a back reference
     pub const min_length_match: usize = 3;
     /// Valid matches are between (3..258) characters long, i.e. we actually

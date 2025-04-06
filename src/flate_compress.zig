@@ -29,7 +29,7 @@ pub const Compress = struct {
     ) !void {
         var ctx = CompressContext {
             .allocator = allocator,
-            .block_type = FlateBlockType.FIXED_HUFFMAN,
+            .block_type = FlateBlockType.NO_COMPRESSION,
             .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
             .reader = instream.reader().any(),
             .written_bits = 0,
@@ -43,11 +43,11 @@ pub const Compress = struct {
         const insize: u16 = @truncate(st.size); // TODO
 
         // Write block header
-        var header: u8 = 0;
+        var header: u3 = 0;
         header |= @intFromEnum(ctx.block_type) << 1; // BTYPE
         header |= 1; // BFINAL
 
-        try Compress.write_bits(&ctx, u8, header, 8);
+        try Compress.write_bits(&ctx, u3, header, 3);
 
         log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
         switch (ctx.block_type) {
@@ -55,7 +55,6 @@ pub const Compress = struct {
                 try Compress.no_compression_compress_block(&ctx, insize);
             },
             FlateBlockType.FIXED_HUFFMAN => {
-                // Encode the token according to the static huffman code
                 try Compress.fixed_code_compress_block(&ctx);
             },
             FlateBlockType.DYNAMIC_HUFFMAN => {
@@ -79,8 +78,10 @@ pub const Compress = struct {
         ctx: *CompressContext,
         length: u16,
     ) !void {
-        try Compress.write_bytes_le(ctx, u16, length, 16);
-        try Compress.write_bytes_le(ctx, u16, ~length, 16);
+        // Fill up with zeroes to the next byte boundary
+        try Compress.write_bits(ctx, u5, 0, 5);
+        try Compress.write_bits(ctx, u16, length, 16);
+        try Compress.write_bits(ctx, u16, ~length, 16);
 
         log.debug(@src(), "Compressing {d} bytes into type-0 block", .{length});
         for (0..length) |_| {
@@ -262,7 +263,7 @@ pub const Compress = struct {
             // the exact offset to use in the range.
             if (enc.code != 0) {
                 const offset = longest_match_length - enc.range_start;
-                try Compress.write_bits_le(
+                try Compress.write_bits(
                     ctx,
                     u16,
                     offset,
@@ -280,7 +281,7 @@ pub const Compress = struct {
             // Write the offset bits for the distance
             if (denc.bit_count != 0) {
                 const offset = longest_match_distance - denc.range_start;
-                try Compress.write_bits_le(
+                try Compress.write_bits(
                     ctx,
                     u16,
                     offset,
@@ -291,7 +292,7 @@ pub const Compress = struct {
         }
     }
 
-    /// Write `value` as to the output stream in big-endian byte order.
+    /// Write bits with the configured bit-ordering
     fn write_bits(
         ctx: *CompressContext,
         T: type,
@@ -303,61 +304,10 @@ pub const Compress = struct {
         ctx.written_bits += num_bits;
     }
 
-    /// Write bits from least significant to most significant, *disregarding* the internal
-    /// order of each byte!
-    /// 0b10 (2) should be written as [0,1] to output stream.
-    fn write_bits_le(
-        ctx: *CompressContext,
-        T: type,
-        value: T,
-        num_bits: u16,
-    ) !void {
-        var bit: u1 = 0;
-        var bits: T = value;
-
-        for (0..num_bits) |_| {
-            // Extract the value for the least significant bit
-            bit = @truncate(bits & 0x1);
-            // Shift it out
-            bits >>= 1;
-            try Compress.write_bits(ctx, u1, bit, 1);
-        }
-    }
-
-    /// Write `value` as to the output stream in little-endian byte order. We
-    /// need this helper function since our `bit_writer` is a big-endian
-    /// writer.
-    fn write_bytes_le(
-        ctx: *CompressContext,
-        T: type,
-        value: T,
-        num_bits: u16,
-    ) !void {
-        var byte: u8 = undefined;
-        var input: T = value;
-        var bit_cnt: u16 = num_bits;
-
-        if (num_bits % 8 != 0) unreachable;
-
-        while (bit_cnt > 0) {
-            // Extract the value for the least significant byte
-            byte = @intCast(input & 0xff);
-            // Shift it out
-            input >>= 8;
-
-            try Compress.write_bits(ctx, u8, byte, 8);
-            bit_cnt -= 8;
-        }
-
-        util.print_bits(T, "Output little-endian integer", value, num_bits);
-    }
-
     fn read_byte(ctx: *CompressContext) !u8 {
         const b = try ctx.reader.readByte();
-
         util.print_char("Input read", b);
         ctx.processed_bits += 8;
-
         return b;
     }
 };

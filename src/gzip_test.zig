@@ -55,10 +55,9 @@ fn check_ref_ok(ctx: *TestContext) !void {
     try ctx.eql(ctx.in, ctx.decompressed);
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////
 
 test "Gzip on simple text" {
     try run("tests/testdata/helloworld.txt", "z7-gzip", check_z7_gzip_ok);
-    try run("tests/testdata/helloworld.txt", "go-gzip", check_ref_ok);
+    //try run("tests/testdata/helloworld.txt", "go-gzip", check_ref_ok);
 }

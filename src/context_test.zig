@@ -7,7 +7,7 @@ const libflate = @cImport({
 });
 
 /// Manually disable to keep tmpdir output for debugging
-const cleanup_tmpdir = true;
+const cleanup_tmpdir = false;
 
 pub const TestContext = struct {
     allocator: std.mem.Allocator,

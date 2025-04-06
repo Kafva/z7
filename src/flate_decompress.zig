@@ -52,14 +52,14 @@ pub const Decompress = struct {
 
         // Decode the stream
         while (!done) {
-            const header = try Decompress.read_bits(&ctx, u8, 8);
+            const header = try Decompress.read_bits(&ctx, u3, 3);
 
             if ((header & 1) == 1) {
                 log.debug(@src(), "Last block marker found", .{});
                 done = true;
             }
 
-            const block_type_int = (header >> 1) & 0b0000_0011;
+            const block_type_int: u2 = @truncate(header >> 1);
             ctx.block_type = @enumFromInt(block_type_int);
 
             log.debug(@src(), "Reading type-{d} block", .{block_type_int});
@@ -90,9 +90,21 @@ pub const Decompress = struct {
     fn no_compression_decompress_block(
         ctx: *DecompressContext,
     ) !void {
+        // Shift out zeroes up until the next byte boundary
+        while (ctx.processed_bits % 8 != 0) {
+            const b = try Decompress.read_bits(ctx, u1, 1);
+            if (b != 0) {
+                log.err(
+                    @src(),
+                    "Found non-zero padding bit at {} bit offset",
+                    .{ctx.processed_bits}
+                );
+            }
+        }
+
         // Read block length
-        const block_size = try Decompress.read_bytes_le(ctx, u16, 2);
-        const block_size_compl = try Decompress.read_bytes_le(ctx, u16, 2);
+        const block_size = try Decompress.read_bits(ctx, u16, 16);
+        const block_size_compl = try Decompress.read_bits(ctx, u16, 16);
         if (~block_size != block_size_compl) {
             return DecompressError.UnexpectedNLenBytes;
         }
@@ -168,7 +180,7 @@ pub const Decompress = struct {
                 const length: u16 = blk: {
                     if (enc.bit_count != 0) {
                         // Parse extra bits for the offset
-                        const offset = Decompress.read_bits_le(ctx, u16, u4, enc.bit_count) catch {
+                        const offset = Decompress.read_bits(ctx, u16, enc.bit_count) catch {
                             return FlateError.UnexpectedEof;
                         };
                         log.debug(@src(), "backref(length-offset): {d}", .{offset});
@@ -190,7 +202,7 @@ pub const Decompress = struct {
                 const distance: u16 = blk: {
                     if (denc.bit_count != 0) {
                         // Parse extra bits for the offset
-                        const offset = Decompress.read_bits_le(ctx, u16, u4, denc.bit_count) catch {
+                        const offset = Decompress.read_bits(ctx, u16, denc.bit_count) catch {
                             return FlateError.UnexpectedEof;
                         };
                         log.debug(@src(), "backref(distance-offset): {d}", .{offset});
@@ -266,8 +278,7 @@ pub const Decompress = struct {
         return huffman_map;
     }
 
-    /// Read `num_bits` bits from the input stream in most-significant-byte
-    /// first order.
+    /// Read bits with the configured bit-ordering from the input stream
     fn read_bits(
         ctx: *DecompressContext,
         comptime T: type,
@@ -281,56 +292,6 @@ pub const Decompress = struct {
         ctx.processed_bits += num_bits;
 
         return bits;
-    }
-
-    /// Read in little-endian byte order from the input stream. We
-    /// need this helper function since our `bit_reader` is a big-endian
-    /// reader.
-    fn read_bytes_le(
-        ctx: *DecompressContext,
-        comptime T: type,
-        num_bytes: u4,
-    ) !T {
-        var out: T = 0;
-        var shifted_byte: T = undefined;
-     
-        if (num_bytes >= 8) unreachable;
-        for (0..num_bytes) |i| {
-            const iter: u4 = @intCast(i);
-            const byte = try Decompress.read_bits(ctx, u8, 8);
-
-            // Each byte should be at a lower position
-            shifted_byte = @intCast(byte);
-            shifted_byte <<= 8*iter;
-            out |= shifted_byte;
-        }
-
-        return out;
-    }
-
-    /// Read bits from least significant to most significant, *disregarding* the internal
-    /// order of each byte!
-    fn read_bits_le(
-        ctx: *DecompressContext,
-        comptime T: type,
-        comptime V: type,
-        num_bits: u16,
-    ) !T {
-        const one: T = 1;
-        var integer: T = 0;
-        var i: u16 = 0;
-        while (i < num_bits) {
-            const bit = try Decompress.read_bits(ctx, u1, 1);
-            if (bit == 1) {
-                // Each read bit will be more significant, shift with a higher
-                // value for each iteration.
-                const shift: V = @intCast(i);
-                integer |= (one << shift);
-            }
-
-            i += 1;
-        }
-        return integer;
     }
 };
 
