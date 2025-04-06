@@ -1,13 +1,12 @@
 const std = @import("std");
 const log = @import("log.zig");
 const build_options = @import("build_options");
-const Huffman = @import("huffman.zig").Huffman;
 
 const libflate = @cImport({
     @cInclude("libflate.h");
 });
 
-const max_size = 512*1024; // 0.5 MB
+/// Manually disable to keep tmpdir output for debugging
 const cleanup_tmpdir = true;
 
 pub const TestContext = struct {
@@ -20,6 +19,8 @@ pub const TestContext = struct {
     decompressed: std.fs.File,
     label: []const u8,
 
+    /// Maximum input/output file size to handle (0.5 MB)
+    const max_size = 512*1024;
     pub const random_label = "RANDOM";
 
     pub fn init(
@@ -107,8 +108,8 @@ pub const TestContext = struct {
     pub fn eql(self: *@This(), lhs: std.fs.File, rhs: std.fs.File) !void {
         try lhs.seekTo(0);
         try rhs.seekTo(0);
-        const lhs_data = try lhs.readToEndAlloc(self.allocator, max_size);
-        const rhs_data = try rhs.readToEndAlloc(self.allocator, max_size);
+        const lhs_data = try lhs.readToEndAlloc(self.allocator, TestContext.max_size);
+        const rhs_data = try rhs.readToEndAlloc(self.allocator, TestContext.max_size);
         try std.testing.expectEqualSlices(u8, lhs_data, rhs_data);
     }
 
@@ -156,25 +157,3 @@ pub const TestContext = struct {
         };
     }
 };
-
-pub fn list_files(
-    allocator: std.mem.Allocator,
-    dirpath: []const u8,
-) !std.ArrayList([]const u8) {
-    var dir = try std.fs.cwd().openDir(dirpath, .{});
-    defer dir.close();
-    var iter = dir.iterate();
-
-    var list = std.ArrayList([]const u8).init(allocator);
-
-    while (try iter.next()) |entry| {
-        if (entry.kind != .file) {
-            continue;
-        }
-        const buf = try std.fmt.allocPrint(allocator, "{s}/{s}", .{dirpath, entry.name});
-        try list.append(buf);
-    }
-
-    return list;
-}
-

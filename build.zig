@@ -92,7 +92,7 @@ fn build_tests(
     // Just *build* the unit tests, we want to run them separately, not with
     // `.addRunArtifact()`, running the tests directly from `zig build` can
     // obscure some important output, e.g.
-    //   1/1 lz77_test.test.lz77 on random data...FAIL (NoSpaceLeft)
+    //   1/1 FAIL (NoSpaceLeft)
     const tests_install = b.addInstallArtifact(tests, .{});
     const tests_step = b.step("test", "Build unit tests");
 

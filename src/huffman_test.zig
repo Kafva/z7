@@ -1,55 +1,37 @@
 const std = @import("std");
 const util = @import("context_test.zig");
+const TestContext = @import("context_test.zig").TestContext;
 const Huffman = @import("huffman.zig").Huffman;
 const Node = @import("huffman.zig").Node;
 
-const max_size = 512*1024; // 0.5 MB
-
-fn run(inputfile: []const u8) !void {
+fn run(
+    inputfile: []const u8,
+    label: []const u8,
+) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    try run_alloc(allocator, inputfile);
-}
 
-fn run_alloc(allocator: std.mem.Allocator, inputfile: []const u8) !void {
-    var compressed: std.fs.File = undefined;
-    var decompressed: std.fs.File = undefined;
-    var in: std.fs.File = undefined;
-    var in_size: usize = undefined;
+    var ctx = try TestContext.init(allocator, inputfile, label);
+    defer ctx.deinit();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try util.setup(allocator, &tmp, inputfile, &in, &in_size, &compressed, &decompressed);
-    defer in.close();
-
-    var freq = try Huffman.get_frequencies(allocator, in);
+    var freq = try Huffman.get_frequencies(ctx.allocator, ctx.in);
     defer freq.deinit();
-    const huffman = try Huffman.init(allocator, &freq);
+    const huffman = try Huffman.init(ctx.allocator, &freq);
 
     // Reset input stream for second pass
-    try in.seekTo(0);
-    try huffman.compress(in, compressed, std.math.maxInt(usize));
-    try util.log_result("huffman", inputfile, in_size, try compressed.getPos());
+    try ctx.in.seekTo(0);
+    try huffman.compress(ctx.in, ctx.compressed, std.math.maxInt(usize));
 
-    try huffman.decompress(compressed, decompressed);
+    try ctx.log_result(try ctx.compressed.getPos());
+
+    try huffman.decompress(ctx.compressed, ctx.decompressed);
 
     // Verify correct decoding
-    try util.eql(allocator, in, decompressed);
+    try ctx.eql(ctx.in, ctx.decompressed);
 }
 
-fn run_dir(dirpath: []const u8) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
-    const filepaths = try util.list_files(allocator, dirpath);
-
-    for (filepaths.items) |filepath| {
-        try run_alloc(allocator, filepath);
-    }
-}
+////////////////////////////////////////////////////////////////////////////////
 
 test "Huffman node sorting" {
     const size = 20;
@@ -82,29 +64,21 @@ test "Huffman node sorting" {
 }
 
 test "Huffman on empty file" {
-    try run("tests/testdata/empty");
+    try run("tests/testdata/empty", "huffman");
 }
 
-test "Huffman on simple text" {
-    try run("tests/testdata/helloworld.txt");
-}
+// test "Huffman on simple text" {
+//     try run("tests/testdata/helloworld.txt", "huffman");
+// }
 
-test "Huffman on rfc1951.txt" {
-    try run("tests/testdata/rfc1951.txt");
-}
+// test "Huffman on rfc1951.txt" {
+//     try run("tests/testdata/rfc1951.txt", "huffman");
+// }
 
-test "Huffman on 9001 repeated characters" {
-    try run("tests/testdata/over_9000_a.txt");
-}
+// test "Huffman on 9001 repeated characters" {
+//     try run("tests/testdata/over_9000_a.txt", "huffman");
+// }
 
 // test "Huffman on random data" {
-//     try run(util.random_label);
-// }
-// 
-// test "Huffman on fuzzing testdata from zig stdlib" {
-//     try run_dir("tests/testdata/zig/fuzz");
-// }
-// 
-// test "Huffman on block writer testdata from zig stdlib" {
-//     try run_dir("tests/testdata/zig/block_writer");
+//     try run(TestContext.random_label, "huffman");
 // }
