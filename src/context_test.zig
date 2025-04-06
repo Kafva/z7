@@ -7,7 +7,6 @@ const libflate = @cImport({
     @cInclude("libflate.h");
 });
 
-pub const random_label = "RANDOM";
 const max_size = 512*1024; // 0.5 MB
 const cleanup_tmpdir = true;
 
@@ -20,6 +19,8 @@ pub const TestContext = struct {
     compressed: std.fs.File,
     decompressed: std.fs.File,
     label: []const u8,
+
+    pub const random_label = "RANDOM";
 
     pub fn init(
         allocator: std.mem.Allocator,

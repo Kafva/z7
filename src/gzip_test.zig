@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const log = @import("log.zig");
-const util = @import("util_test.zig");
+const util = @import("context_test.zig");
 
 const Gzip = @import("gzip.zig").Gzip;
 

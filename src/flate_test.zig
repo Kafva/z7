@@ -1,8 +1,7 @@
 const std = @import("std");
 
 const log = @import("log.zig");
-const util = @import("util_test.zig");
-const TestContext = @import("util_test.zig").TestContext;
+const TestContext = @import("context_test.zig").TestContext;
 
 const Decompress = @import("flate_decompress.zig").Decompress;
 const Compress = @import("flate_compress.zig").Compress;
@@ -113,7 +112,7 @@ test "[Flate] check rfc1951.txt" {
 }
 
 test "[Flate]: check random data" {
-    try run(util.random_label, "z7-flate", check_z7_ok);
+    try run(TestContext.random_label, "z7-flate", check_z7_ok);
 }
 
 // test "[Flate]: Decompress z7 output with reference implementation" {

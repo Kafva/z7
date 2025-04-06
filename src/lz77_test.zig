@@ -1,5 +1,5 @@
 const std = @import("std");
-const util = @import("util_test.zig");
+const util = @import("context_test.zig");
 const Lz77 = @import("lz77.zig").Lz77;
 
 fn run(inputfile: []const u8, lookahead_length: usize, window_length: usize) !void {

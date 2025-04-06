@@ -1,5 +1,5 @@
 const std = @import("std");
-const util = @import("util_test.zig");
+const util = @import("context_test.zig");
 const Huffman = @import("huffman.zig").Huffman;
 const Node = @import("huffman.zig").Node;
 
