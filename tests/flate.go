@@ -137,13 +137,16 @@ func compress(inputfile string, writer io.Writer) error {
 /// Write input file via reader to output file
 func decompress(out *os.File, reader io.Reader) error {
     for {
-        _, err := io.Copy(out, reader)
+        written, err := io.Copy(out, reader)
 
         if err != nil {
             if err == io.EOF || err == io.ErrUnexpectedEOF {
                 break
             }
             return err
+        }
+        if written == 0 {
+            break
         }
     }
 

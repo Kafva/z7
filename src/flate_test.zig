@@ -87,43 +87,37 @@ fn check_ref_ok(ctx: *TestContext) !void {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+fn runall(inputfile: []const u8) !void {
+    try run(inputfile, "flate-z7-only", check_z7_ok);
+    try run(inputfile, "flate-go-only", check_ref_ok);
+    try run(inputfile, "flate-go-decompress-z7", check_z7_decompress_ref);
+    try run(inputfile, "flate-z7-decompress-go", check_z7_compress_ref);
+}
+
 test "[Flate] check empty file" {
     try run("tests/testdata/empty", "z7-flate", check_z7_ok);
-}
-
-test "[Flate] check simple text" {
-    try run("tests/testdata/helloworld.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/helloworld.txt", "go-flate", check_ref_ok);
-}
-
-test "[Flate] check longer simple text" {
-    try run("tests/testdata/flate_test.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/flate_test.txt", "go-flate", check_ref_ok);
-}
-
-test "[Flate] check short simple text" {
-    try run("tests/testdata/simple.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/simple.txt", "go-flate", check_ref_ok);
-}
-
-test "[Flate] check 9001 repeated characters" {
-    try run("tests/testdata/over_9000_a.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/over_9000_a.txt", "go-flate", check_ref_ok);
-}
-
-test "[Flate] check rfc1951.txt" {
-    try run("tests/testdata/rfc1951.txt", "z7-flate", check_z7_ok);
-    try run("tests/testdata/rfc1951.txt", "go-flate", check_ref_ok);
 }
 
 test "[Flate]: check random data" {
     try run(TestContext.random_label, "z7-flate", check_z7_ok);
 }
 
-// test "[Flate]: Decompress z7 output with reference implementation" {
-//     try run("tests/testdata/simple.txt", "z7-flate", check_z7_decompress_ref);
+test "[Flate] check simple text" {
+    try runall("tests/testdata/helloworld.txt");
+}
+
+// test "[Flate] check short simple text" {
+//     try runall("tests/testdata/simple.txt");
 // }
 
-// test "[Flate]: Decompress reference implementation output with z7" {
-//     try run("tests/testdata/simple.txt", "go-flate", check_z7_decompress_ref);
+// test "[Flate] check longer simple text" {
+//     try runall("tests/testdata/flate_test.txt");
+// }
+
+// test "[Flate] check 9001 repeated characters" {
+//     try runall("tests/testdata/over_9000_a.txt");
+// }
+
+// test "[Flate] check rfc1951.txt" {
+//     try runall("tests/testdata/rfc1951.txt");
 // }

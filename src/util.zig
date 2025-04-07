@@ -1,6 +1,10 @@
 const std = @import("std");
 const log = @import("log.zig");
 
+const ctime = @cImport({
+    @cInclude("time.h");
+});
+
 /// Create an array with `c` repeated `count` times
 pub fn repeat(comptime c: u8, comptime count: u8) ![]const u8 {
     if (count == 0) return "";
@@ -91,7 +95,6 @@ pub fn print_bits(
     }
 }
 
-
 pub fn print_char(
     comptime prefix: []const u8,
     byte: u8,
@@ -101,4 +104,13 @@ pub fn print_char(
     } else {
         log.debug(@src(), "{s}: '0x{x}'", .{prefix, byte});
     }
+}
+
+pub fn strtime(epoch: u32) [*c]u8 {
+    const c_epoch: ctime.time_t = epoch;
+    const timeinfo = ctime.localtime(&c_epoch);
+    var s = ctime.asctime(timeinfo);
+    const len = std.mem.len(s);
+    s[len - 1] = 0;
+    return s;
 }

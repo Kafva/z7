@@ -24,6 +24,10 @@ const DecompressContext = struct {
     processed_bits: usize,
     /// Cache of the last 32K read bytes to support backreferences
     sliding_window: RingBuffer(u8),
+    /// Fixed huffman decoding maps
+    seven_bit_decode: std.AutoHashMap(u16, u16),
+    eight_bit_decode: std.AutoHashMap(u16, u16),
+    nine_bit_decode: std.AutoHashMap(u16, u16),
 };
 
 pub const Decompress = struct {
@@ -41,7 +45,10 @@ pub const Decompress = struct {
             .bit_reader = std.io.bitReader(Flate.writer_endian, instream.reader().any()),
             .written_bits = 0,
             .processed_bits = 0,
-            .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length)
+            .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
+            .seven_bit_decode = try Decompress.fixed_code_decoding_map(allocator, 7),
+            .eight_bit_decode = try Decompress.fixed_code_decoding_map(allocator, 8),
+            .nine_bit_decode = try Decompress.fixed_code_decoding_map(allocator, 9),
         };
 
         // We may want to start from an offset in the input stream
@@ -122,17 +129,13 @@ pub const Decompress = struct {
     fn fixed_code_decompress_block(
         ctx: *DecompressContext,
     ) !void {
-        const seven_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 7);
-        const eight_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 8);
-        const nine_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 9);
-        util.dump_hashmap(u16, u16, &seven_bit_decode);
         while (true) {
             const b = blk: {
                 var key = Decompress.read_bits_be(ctx, 7) catch {
                     return FlateError.UnexpectedEof;
                 };
 
-                if (seven_bit_decode.get(key)) |char| {
+                if (ctx.seven_bit_decode.get(key)) |char| {
                     log.debug(@src(), "Matched 0b{b:0>7}", .{key});
                     break :blk char;
                 }
@@ -144,9 +147,9 @@ pub const Decompress = struct {
                     return FlateError.UnexpectedEof;
                 };
                 key <<= 1;
-                key |= bit; 
+                key |= bit;
 
-                if (eight_bit_decode.get(key)) |char| {
+                if (ctx.eight_bit_decode.get(key)) |char| {
                     log.debug(@src(), "Matched 0b{b:0>8}", .{key});
                     break :blk char;
                 }
@@ -158,9 +161,9 @@ pub const Decompress = struct {
                     return FlateError.UnexpectedEof;
                 };
                 key <<= 1;
-                key |= bit; 
+                key |= bit;
 
-                if (nine_bit_decode.get(key)) |char| {
+                if (ctx.nine_bit_decode.get(key)) |char| {
                     log.debug(@src(), "Matched 0b{b:0>9}", .{key});
                     break :blk char;
                 }
@@ -251,10 +254,10 @@ pub const Decompress = struct {
     /// 280 - 287     8          11000000 through
     ///                          11000111
     fn fixed_code_decoding_map(
-        ctx: *DecompressContext,
+        allocator: std.mem.Allocator,
         num_bits: u8,
     ) !std.AutoHashMap(u16, u16) {
-        var huffman_map = std.AutoHashMap(u16, u16).init(ctx.allocator);
+        var huffman_map = std.AutoHashMap(u16, u16).init(allocator);
         switch (num_bits) {
             7 => {
                 for (0..(280-256)) |c| {

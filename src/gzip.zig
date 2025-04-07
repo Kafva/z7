@@ -114,10 +114,10 @@ pub const Gzip = struct {
         }
 
         const mtime = try reader.readInt(u32, .little);
-        log.debug(@src(), "Modification time: {d}", .{mtime});
+        log.debug(@src(), "Modification time: {s}", .{util.strtime(mtime)});
 
         const xfl = try reader.readByte();
-        if (xfl != 1 and xfl != 2) {
+        if (xfl != 0 and xfl != 2 and xfl != 4) {
             return GzipError.InvalidHeader;
         }
         const os = try reader.readByte();
