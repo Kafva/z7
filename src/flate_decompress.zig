@@ -125,20 +125,21 @@ pub const Decompress = struct {
         const seven_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 7);
         const eight_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 8);
         const nine_bit_decode = try Decompress.fixed_code_decoding_map(ctx, 9);
+        util.dump_hashmap(u16, u16, &seven_bit_decode);
         while (true) {
             const b = blk: {
-                // TODO: we decode 'H' with 7 bits but a literal is 8 bits...
                 var key = Decompress.read_bits_be(ctx, 7) catch {
                     return FlateError.UnexpectedEof;
                 };
 
                 if (seven_bit_decode.get(key)) |char| {
+                    log.debug(@src(), "Matched 0b{b:0>7}", .{key});
                     break :blk char;
                 }
 
                 // Read one more bit and try the 8-bit value
-                //     0111100 [7 bits]
-                //  (x)0111100 [8 bits]
+                //   0111100    [7 bits]
+                //   0111100(x) [8 bits]
                 var bit = Decompress.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
@@ -146,12 +147,13 @@ pub const Decompress = struct {
                 key |= bit; 
 
                 if (eight_bit_decode.get(key)) |char| {
+                    log.debug(@src(), "Matched 0b{b:0>8}", .{key});
                     break :blk char;
                 }
 
                 // Read one more bit and try the 9-bit value
-                //     01111001 [8 bits]
-                //  (x)01111001 [9 bits]
+                //  01111001    [8 bits]
+                //  01111001(x) [9 bits]
                 bit = Decompress.read_bits(ctx, u1, 1) catch {
                     return FlateError.UnexpectedEof;
                 };
@@ -159,6 +161,7 @@ pub const Decompress = struct {
                 key |= bit; 
 
                 if (nine_bit_decode.get(key)) |char| {
+                    log.debug(@src(), "Matched 0b{b:0>9}", .{key});
                     break :blk char;
                 }
 
@@ -232,7 +235,7 @@ pub const Decompress = struct {
         }
     }
 
-    /// Create a hashmap from each huffman code onto a literal.
+    /// Create a hashmap from each Huffman code onto a literal.
     /// We need a separate map for each bit-length,
     ///  0b0111100 [7] ~= 0b00111100 [8]
     /// Same numerical value, but not the same bit-stream.
@@ -307,6 +310,10 @@ pub const Decompress = struct {
             const bit = try Decompress.read_bits(ctx, u16, 1);
             out |= bit << shift_by;
         }
+
+        // Final bit
+        const bit = try Decompress.read_bits(ctx, u16, 1);
+        out |= bit;
 
         return out;
     }

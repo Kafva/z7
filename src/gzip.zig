@@ -30,10 +30,15 @@ pub const Gzip = struct {
     ) !void {
         const writer = outstream.writer();
         const instream = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
-        const st = try instream.stat();
-        const mtime_sec = @divFloor(st.mtime, std.math.pow(i128, 10, 9));
-        const mtime: u32 = @intCast(mtime_sec & 0xffff_ffff);
-        const size: u32 = @truncate(st.size);
+        var mtime: u32 = 0;
+        var size: u32 = 0;
+        blk: {
+            // Use zero size and mtime if stat() fails
+            const st = instream.stat() catch break :blk;
+            const mtime_sec = @divFloor(st.mtime, std.math.pow(i128, 10, 9));
+            mtime = @intCast(mtime_sec & 0xffff_ffff);
+            size = @truncate(st.size);
+        }
 
         defer instream.close();
 
@@ -125,7 +130,7 @@ pub const Gzip = struct {
             for (0..fname_max) |i| {
                 b = try reader.readByte();
                 fname[i] = b;
-                fname_length += 1; 
+                fname_length += 1;
                 if (b == 0) {
                     break;
                 }

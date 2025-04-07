@@ -25,7 +25,6 @@ fn run(
     try runFn(&ctx);
 }
 
-
 /// Verify that z7 can decompress its own output (gzip)
 fn check_z7_gzip_ok(ctx: *TestContext) !void {
     try Gzip.compress(ctx.allocator, ctx.inputfile, ctx.compressed, 0);
@@ -59,5 +58,5 @@ fn check_ref_ok(ctx: *TestContext) !void {
 
 test "Gzip on simple text" {
     try run("tests/testdata/helloworld.txt", "z7-gzip", check_z7_gzip_ok);
-    //try run("tests/testdata/helloworld.txt", "go-gzip", check_ref_ok);
+    try run("tests/testdata/helloworld.txt", "go-gzip", check_ref_ok);
 }
