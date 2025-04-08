@@ -4,6 +4,7 @@ const log = @import("log.zig");
 const util = @import("context_test.zig");
 
 const TestContext = @import("context_test.zig").TestContext;
+const GzipFlag = @import("gzip.zig").GzipFlag;
 const gzip = @import("gzip.zig").compress;
 const gunzip = @import("gunzip.zig").decompress;
 
@@ -28,7 +29,13 @@ fn run(
 
 /// Verify that z7 can decompress its own output (gzip)
 fn check_z7_ok(ctx: *TestContext) !void {
-    try gzip(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, 0);
+    try gzip(
+        ctx.allocator,
+        ctx.inputfile,
+        &ctx.in,
+        &ctx.compressed,
+        @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
+    );
 
     try ctx.log_result(try ctx.compressed.getPos());
 
@@ -89,9 +96,9 @@ fn check_ref_ok(ctx: *TestContext) !void {
 
 fn runall(inputfile: []const u8) !void {
     try run(inputfile, "gzip-z7-only", check_z7_ok);
-    //try run(inputfile, "gzip-go-only", check_ref_ok);
-    //try run(inputfile, "gzip-go-decompress-z7", check_go_decompress_z7);
-    //try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go);
+    try run(inputfile, "gzip-go-only", check_ref_ok);
+    try run(inputfile, "gzip-go-decompress-z7", check_go_decompress_z7);
+    try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go);
 }
 
 test "[Gzip] check simple text" {

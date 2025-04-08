@@ -10,6 +10,7 @@ const GunzipError = error {
     TruncatedHeaderFname,
     TruncatedHeaderComment,
     InvalidExtraField,
+    InvalidStringCharacter,
     CrcMismatch,
 };
 
@@ -54,28 +55,28 @@ pub fn decompress(
         return GunzipError.InvalidHeader;
     }
 
-    const flg = try read_hdr_byte(&ctx);
-    if ((flg & @intFromEnum(GzipFlag.FTEXT)) != 0) {
+    const flags = try read_hdr_byte(&ctx);
+    if ((flags & @intFromEnum(GzipFlag.FTEXT)) != 0) {
         log.debug(@src(), "Ignoring FTEXT flag", .{});
     }
-    if ((flg & @intFromEnum(GzipFlag.FHCRC)) != 0) {
+    if ((flags & @intFromEnum(GzipFlag.FHCRC)) != 0) {
         log.debug(@src(), "Handling FHCRC flag", .{});
         handle_fhcrc = true;
     }
-    if ((flg & @intFromEnum(GzipFlag.FEXTRA)) != 0) {
+    if ((flags & @intFromEnum(GzipFlag.FEXTRA)) != 0) {
         log.debug(@src(), "Handling FEXTRA flag", .{});
         handle_fextra = true;
     }
-    if ((flg & @intFromEnum(GzipFlag.FNAME)) != 0) {
+    if ((flags & @intFromEnum(GzipFlag.FNAME)) != 0) {
         log.debug(@src(), "Handling FNAME flag", .{});
         handle_fname = true;
     }
-    if ((flg & @intFromEnum(GzipFlag.FCOMMENT)) != 0) {
+    if ((flags & @intFromEnum(GzipFlag.FCOMMENT)) != 0) {
         log.debug(@src(), "Handling FCOMMENT flag", .{});
         handle_comment = true;
     }
 
-    const mtime = try read_hdr_u32(&ctx);
+    const mtime = try read_hdr_int(&ctx, u32);
     log.debug(@src(), "Modification time: {s}", .{util.strtime(mtime)});
 
     const xfl = try read_hdr_byte(&ctx);
@@ -100,7 +101,7 @@ pub fn decompress(
         const fhcrc = try ctx.reader.readInt(u16, .little);
         ctx.header_size += 2;
 
-        const crch_value = ctx.crch.final();
+        const crch_value: u16 = @truncate(ctx.crch.final());
         if (fhcrc == crch_value) {
             log.debug(@src(), "CRC16: 0x{x}", .{crch_value});
         }
@@ -141,13 +142,28 @@ pub fn decompress(
     log.debug(@src(), "Original size: {d} bytes", .{size});
 }
 
+/// The strings in the Gzip header are zero terminated ISO-8859 strings
 fn parse_string(ctx: *GunzipContext, prefix: []const u8) !void {
     const str_max = 1024;
     var str = [_]u8{0}**str_max;
     var b: u8 = 0;
-    for (0..str_max) |i| {
+    var i: usize = 0;
+    while (i < str_max) {
         b = try read_hdr_byte(ctx);
-        str[i] = b;
+        if (b >= 0xa0) { // latin1 -> utf-8
+            str[i] = 0xc3;
+            i += 1;
+            str[i] = b - 0x40;
+            i += 1;
+        }
+        else if (b < 0x80) { // ascii
+            str[i] = b;
+            i += 1;
+        }
+        else {
+            return GunzipError.InvalidStringCharacter;
+        }
+
         if (b == 0) {
             break;
         }
@@ -163,10 +179,10 @@ fn parse_string(ctx: *GunzipContext, prefix: []const u8) !void {
 /// | XLEN  |SI1|SI2|  LEN  |... LEN bytes of subfield data ...|
 /// +---+---+---+---+---+---+==================================+
 fn parse_extra_field(ctx: *GunzipContext) !void {
-    const xlen = try read_hdr_u16(ctx);
+    const xlen = try read_hdr_int(ctx, u16);
     _ = try read_hdr_byte(ctx);
     _ = try read_hdr_byte(ctx);
-    const len = try read_hdr_u16(ctx);
+    const len = try read_hdr_int(ctx, u16);
 
     if (xlen != 4 + len) {
         log.err(@src(), "Found {d} FEXTRA subfield length, expected {d}", .{len, xlen - 4});
@@ -174,7 +190,9 @@ fn parse_extra_field(ctx: *GunzipContext) !void {
     }
 
     log.debug(@src(), "Skipping {d} bytes of FEXTRA subfield data", .{len});
-    try ctx.instream.seekBy(len);
+    for (0..len) |_| {
+        _ = try read_hdr_byte(ctx);
+    }
 }
 
 fn read_hdr_byte(ctx: *GunzipContext) !u8 {
@@ -185,26 +203,24 @@ fn read_hdr_byte(ctx: *GunzipContext) !u8 {
     return b;
 }
 
-fn read_hdr_u16(ctx: *GunzipContext) !u16 {
-    const int = try ctx.reader.readInt(u16, .little);
-    ctx.header_size += 2;
-    const bytearr = [2]u8{
-        @truncate(int & 0x0000_00ff),
-        @truncate((int & 0x0000_ff00) >> 8),
-    };
-    ctx.crch.update(&bytearr);
-    return int;
-}
+fn read_hdr_int(ctx: *GunzipContext, comptime T: type) !T {
+    const value = try ctx.reader.readInt(T, .little);
 
-fn read_hdr_u32(ctx: *GunzipContext) !u32 {
-    const int = try ctx.reader.readInt(u32, .little);
-    ctx.header_size += 4;
-    const bytearr = [4]u8{
-        @truncate(int & 0x0000_00ff),
-        @truncate((int & 0x0000_ff00) >> 8),
-        @truncate((int & 0x00ff_0000) >> 16),
-        @truncate((int & 0xff00_0000) >> 24),
+    const low = [_]u8{
+        @truncate(value & 0x0000_00ff),
+        @truncate((value & 0x0000_ff00) >> 8),
     };
-    ctx.crch.update(&bytearr);
-    return int;
+    ctx.crch.update(&low);
+    ctx.header_size += 2;
+
+    if (T == u32) {
+        const high = [_]u8{
+            @truncate((value & 0x00ff_0000) >> 16),
+            @truncate((value & 0xff00_0000) >> 24),
+        };
+        ctx.crch.update(&high);
+        ctx.header_size += 2;
+    }
+
+    return value;
 }
