@@ -97,6 +97,7 @@ fn check_ref_ok(ctx: *TestContext) !void {
 fn runall(inputfile: []const u8) !void {
     try run(inputfile, "gzip-z7-only", check_z7_ok);
     try run(inputfile, "gzip-go-only", check_ref_ok);
+    // TODO: block type 2
     // try run(inputfile, "gzip-go-decompress-z7", check_go_decompress_z7);
     try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go);
 }
