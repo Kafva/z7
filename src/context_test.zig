@@ -29,8 +29,9 @@ pub const TestContext = struct {
         label: []const u8,
     ) !@This() {
         const tmp = std.testing.tmpDir(.{});
-        const compressed = try tmp.dir.createFile("compressed.bin", .{ .read = true });
-        const decompressed = try tmp.dir.createFile("decompressed.bin", .{ .read = true });
+        const flgs: std.fs.File.CreateFlags = .{ .read = true, .truncate = true, .mode = 0o644 };
+        const compressed = try tmp.dir.createFile("compressed.bin", flgs);
+        const decompressed = try tmp.dir.createFile("decompressed.bin", flgs);
 
         const in = blk: {
             if (std.mem.eql(u8, inputfile, random_label)) {
@@ -54,12 +55,12 @@ pub const TestContext = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        if (cleanup_tmpdir) {
-            self.tmp.cleanup();
-        }
         self.in.close();
         self.compressed.close();
         self.decompressed.close();
+        if (cleanup_tmpdir) {
+            self.tmp.cleanup();
+        }
     }
 
     pub fn log_result(self: *@This(), new_size: usize) !void {

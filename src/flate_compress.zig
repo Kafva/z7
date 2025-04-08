@@ -25,8 +25,8 @@ const CompressContext = struct {
 pub const Compress = struct {
     pub fn compress(
         allocator: std.mem.Allocator,
-        instream: std.fs.File,
-        outstream: std.fs.File,
+        instream: *const std.fs.File,
+        outstream: *const std.fs.File,
         crc: *std.hash.Crc32,
     ) !void {
         var ctx = CompressContext {

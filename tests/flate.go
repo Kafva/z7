@@ -3,10 +3,12 @@ package main
 import "C"
 
 import (
-    "compress/flate"
-    "compress/gzip"
-    "io"
-    "os"
+	"compress/flate"
+	"compress/gzip"
+	"io"
+	"os"
+	//"path"
+	"time"
 )
 
 //export FlateCompress
@@ -51,6 +53,13 @@ func Gzip(inputfile string, outputfile string) int64 {
 
     // Create gzip writer
     writer := gzip.NewWriter(out)
+
+    // Set custom metadata
+    writer.ModTime = time.Now();
+    // writer.Name = path.Base(inputfile)
+    // writer.Comment = "My comment"
+    // // We are responsible to set the subfield format correctly ourselves
+    // writer.Extra = []byte{0x1, 0x0, 4, 0x0, 0xe, 0xe, 0xe, 0xe}
 
     err = compress(inputfile, writer)
     if err != nil {

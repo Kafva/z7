@@ -19,12 +19,12 @@ pub const Gzip = struct {
     pub fn compress(
         allocator: std.mem.Allocator,
         inputfile: []const u8,
-        outstream: std.fs.File,
+        instream: *const std.fs.File,
+        outstream: *const std.fs.File,
         flags: u8,
     ) !void {
         var crc = std.hash.Crc32.init();
         const writer = outstream.writer();
-        const instream = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
         var mtime: u32 = 0;
         var size: u32 = 0;
         blk: {
@@ -34,8 +34,6 @@ pub const Gzip = struct {
             mtime = @intCast(mtime_sec & 0xffff_ffff);
             size = @truncate(st.size);
         }
-
-        defer instream.close();
 
         try writer.writeByte(0x1f); // ID1
         try writer.writeByte(0x8b); // ID2
