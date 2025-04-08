@@ -5,7 +5,7 @@ const util = @import("context_test.zig");
 
 const TestContext = @import("context_test.zig").TestContext;
 const Gzip = @import("gzip.zig").Gzip;
-const Gunzip = @import("gunzip.zig").Gunzip;
+const gunzip = @import("gunzip.zig").decompress;
 
 const libflate = @cImport({
     @cInclude("libflate.h");
@@ -32,8 +32,7 @@ fn check_z7_ok(ctx: *TestContext) !void {
 
     try ctx.log_result(try ctx.compressed.getPos());
 
-    var gunzip = Gunzip.init(ctx.allocator, &ctx.compressed, &ctx.decompressed);
-    try gunzip.decompress();
+    try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -46,8 +45,7 @@ fn check_go_decompress_z7(ctx: *TestContext) !void {
 
     try ctx.log_result(@intCast(compressed_len));
 
-    var gunzip = Gunzip.init(ctx.allocator, &ctx.compressed, &ctx.decompressed);
-    try gunzip.decompress();
+    try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
