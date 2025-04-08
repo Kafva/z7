@@ -48,7 +48,7 @@ pub fn compress(
         // Use zero size and mtime if stat() fails
         const st = instream.stat() catch break :blk;
         const mtime_sec = @divFloor(st.mtime, std.math.pow(i128, 10, 9));
-        mtime = @intCast(mtime_sec & 0xffff_ffff);
+        mtime = @intCast(mtime_sec);
         size = @truncate(st.size);
     }
     try write_hdr_int(&ctx, u32, mtime);

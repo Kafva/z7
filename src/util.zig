@@ -110,8 +110,8 @@ pub fn print_char(
 
 pub fn strtime(epoch: u32) [*c]u8 {
     const c_epoch: ctime.time_t = epoch;
-    const timeinfo = ctime.localtime(&c_epoch);
-    var s = ctime.asctime(timeinfo);
+    const tm = ctime.localtime(&c_epoch);
+    var s = ctime.asctime(tm);
     const len = std.mem.len(s);
     s[len - 1] = 0;
     return s;

@@ -50,9 +50,9 @@ pub fn decompress(
         .written_bits = 0,
         .processed_bits = 0,
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
-        .seven_bit_decode = try fixed_code_decoding_map(allocator, 7),
-        .eight_bit_decode = try fixed_code_decoding_map(allocator, 8),
-        .nine_bit_decode = try fixed_code_decoding_map(allocator, 9),
+        .seven_bit_decode = try fixed_code_decoding_map(7),
+        .eight_bit_decode = try fixed_code_decoding_map(8),
+        .nine_bit_decode = try fixed_code_decoding_map(9),
     };
 
     // We may want to start from an offset in the input stream
@@ -258,10 +258,9 @@ fn fixed_code_decompress_block(
 /// 280 - 287     8          11000000 through
 ///                          11000111
 fn fixed_code_decoding_map(
-    allocator: std.mem.Allocator,
-    num_bits: u8,
+    comptime num_bits: u8,
 ) !std.AutoHashMap(u16, u16) {
-    var huffman_map = std.AutoHashMap(u16, u16).init(allocator);
+    var huffman_map = std.AutoHashMap(u16, u16).init(std.heap.page_allocator);
     switch (num_bits) {
         7 => {
             for (0..(280-256)) |c| {
