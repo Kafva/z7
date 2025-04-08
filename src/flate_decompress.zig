@@ -206,10 +206,10 @@ fn fixed_code_decompress_block(
             log.debug(@src(), "backref(length): {d}", .{length});
 
             // 3. Determine the distance for the match
-            const distance_code = read_bits(ctx, u5, 5) catch {
+            const distance_code = read_bits_be(ctx, 5) catch {
                 return FlateError.UnexpectedEof;
             };
-            const denc = TokenEncoding.from_distance_code(distance_code);
+            const denc = TokenEncoding.from_distance_code(@truncate(distance_code));
             log.debug(@src(), "backref(distance-code): {d}", .{distance_code});
 
             const distance: u16 = blk: {
@@ -230,7 +230,7 @@ fn fixed_code_decompress_block(
             for (0..length) |i| {
                 // Since we add one byte every iteration the offset is
                 // always equal to the distance
-                const c: u8 = try ctx.sliding_window.read_offset_end(distance);
+                const c: u8 = try ctx.sliding_window.read_offset_end(distance - 1);
                 // Write each byte to the output stream AND the the sliding window
                 try write_byte(ctx, c);
                 log.debug(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});

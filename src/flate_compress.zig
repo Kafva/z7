@@ -146,7 +146,7 @@ fn fixed_code_compress_block(
 
             // Update the longest match
             longest_match_length = match_length;
-            longest_match_distance = (window_length - (ring_offset-1)) + (match_length - 1);
+            longest_match_distance = (window_length - (ring_offset-1)) + match_length;
 
             if (longest_match_length == window_length) {
                 // Matched entire lookahead
@@ -228,18 +228,18 @@ fn fixed_code_write_match(
             // 144 - 255     9          110010000 through
             //                          111111111
             if (char < 144) {
-                try write_bits_be(ctx, u8, u3, 0b0011_0000 + char, 8);
+                try write_bits_be(ctx, u8, 0b0011_0000 + char, 8);
             }
             else {
                 const char_9: u9 = 0b1_1001_0000 + @as(u9, char - 144);
-                try write_bits_be(ctx, u9, u4, char_9, 9);
+                try write_bits_be(ctx, u9, char_9, 9);
             }
         }
     }
     else {
         // Lookup the encoding for the token length
         const enc = TokenEncoding.from_length(longest_match_length);
-        log.debug(@src(), "backref(length): {any}", .{enc});
+        log.debug(@src(), "backref(length): {any} ({d})", .{enc, longest_match_length});
 
         if (enc.code < 256 or enc.code > 285) {
             return FlateError.InvalidLiteralLength;
@@ -254,11 +254,11 @@ fn fixed_code_write_match(
         if (enc.code < 280) {
             // Write the huffman encoding of 'Code'
             const hcode: u7 = @truncate(enc.code - 256);
-            try write_bits_be(ctx, u7, u3, 0b000_0000 + hcode, 7);
+            try write_bits_be(ctx, u7, 0b000_0000 + hcode, 7);
         }
         else {
             const hcode: u8 = @truncate(enc.code - 280);
-            try write_bits_be(ctx, u8, u3, 0b1100_0000 + hcode, 8);
+            try write_bits_be(ctx, u8, 0b1100_0000 + hcode, 8);
         }
 
         // Write the 'Extra Bits', i.e. the offset that indicate
@@ -276,9 +276,9 @@ fn fixed_code_write_match(
 
         // Write the 'Distance' encoding
         const denc = TokenEncoding.from_distance(longest_match_distance);
-        log.debug(@src(), "backref(distance): {any}", .{denc});
+        log.debug(@src(), "backref(distance): {any} ({d})", .{denc, longest_match_distance});
         const denc_code: u5 = @truncate(denc.code);
-        try write_bits(ctx, u5, denc_code, 5);
+        try write_bits_be(ctx, u5, denc_code, 5);
 
         // Write the offset bits for the distance
         if (denc.bit_count != 0) {
@@ -313,11 +313,14 @@ fn write_bits(
 /// 0b0111_1000 should be written as 11110xxx xxxxx000 to the output stream.
 fn write_bits_be(
     ctx: *CompressContext,
-    T: type,
-    V: type,
+    comptime T: type,
     value: T,
     num_bits: u16,
 ) !void {
+    const V = switch (T) {
+        u9 => u4,
+        else => u3,
+    };
     for (1..num_bits) |i_usize| {
         const i: V = @intCast(i_usize);
         const shift_by: V = @intCast(num_bits - i);
