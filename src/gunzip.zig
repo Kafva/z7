@@ -8,6 +8,7 @@ const Decompress = @import("flate_decompress.zig").Decompress;
 const GunzipError = error {
     InvalidHeader,
     TruncatedHeaderFname,
+    CrcMismatch,
 };
 
 pub const Gunzip = struct {
@@ -16,6 +17,7 @@ pub const Gunzip = struct {
         instream: std.fs.File,
         outstream: std.fs.File,
     ) !void {
+        var crc = std.hash.Crc32.init();
         const fname_max = 1024;
         var handle_fname = false;
         var fname = [_]u8{0}**fname_max;
@@ -82,11 +84,24 @@ pub const Gunzip = struct {
         }
 
         const read_bytes = 10 + fname_length;
-        try Decompress.decompress(allocator, instream, outstream, read_bytes);
+        try Decompress.decompress(allocator, instream, outstream, read_bytes, &crc);
 
-        const crc = try reader.readInt(u32, .little);
+        const crc_value = crc.final();
+        const crc_trailer = try reader.readInt(u32, .little);
+
+        if (crc_trailer == crc_value) {
+            log.debug(@src(), "CRC32: 0x{x}", .{crc_value});
+        }
+        else {
+            log.err(
+                @src(),
+                "Found CRC32: 0x{x}, expected CRC32: 0x{x}",
+                .{crc_trailer, crc_value}
+            );
+            return GunzipError.CrcMismatch;
+        }
+
         const size = try reader.readInt(u32, .little);
-        log.debug(@src(), "Original data CRC32: 0x{x}", .{crc});
         log.debug(@src(), "Original size: {d} bytes", .{size});
     }
 };

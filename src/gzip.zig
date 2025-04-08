@@ -22,6 +22,7 @@ pub const Gzip = struct {
         outstream: std.fs.File,
         flags: u8,
     ) !void {
+        var crc = std.hash.Crc32.init();
         const writer = outstream.writer();
         const instream = try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
         var mtime: u32 = 0;
@@ -35,11 +36,6 @@ pub const Gzip = struct {
         }
 
         defer instream.close();
-
-        // TODO: calculate crc incrementally
-        const uncompressed_data = try instream.readToEndAlloc(allocator, 40*1024);
-        try instream.seekTo(0);
-        const crc = std.hash.Crc32.hash(uncompressed_data);
 
         try writer.writeByte(0x1f); // ID1
         try writer.writeByte(0x8b); // ID2
@@ -60,12 +56,14 @@ pub const Gzip = struct {
         }
 
         // Compressed data block
-        try Compress.compress(allocator, instream, outstream);
+        try Compress.compress(allocator, instream, outstream, &crc);
 
         // Trailer
-        log.debug(@src(), "Writing CRC: 0x{x}", .{crc});
-        try writer.writeInt(u32, crc, .little);
-        log.debug(@src(), "Writing ISIZE: {d}", .{crc});
+        const crc_value = crc.final();
+        log.debug(@src(), "Writing CRC: 0x{x}", .{crc_value});
+        try writer.writeInt(u32, crc_value, .little);
+
+        log.debug(@src(), "Writing ISIZE: {d}", .{size});
         try writer.writeInt(u32, size, .little);
     }
 };

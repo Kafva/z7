@@ -11,6 +11,7 @@ const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
 const CompressContext = struct {
     allocator: std.mem.Allocator,
+    crc: *std.hash.Crc32,
     /// The current type of block to write
     block_type: FlateBlockType,
     bit_writer: std.io.BitWriter(Flate.writer_endian, std.io.AnyWriter),
@@ -26,9 +27,11 @@ pub const Compress = struct {
         allocator: std.mem.Allocator,
         instream: std.fs.File,
         outstream: std.fs.File,
+        crc: *std.hash.Crc32,
     ) !void {
         var ctx = CompressContext {
             .allocator = allocator,
+            .crc = crc,
             .block_type = FlateBlockType.FIXED_HUFFMAN,
             .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
             .reader = instream.reader().any(),
@@ -333,6 +336,12 @@ pub const Compress = struct {
         const b = try ctx.reader.readByte();
         util.print_char("Input read", b);
         ctx.processed_bits += 8;
+
+        // The final crc should be the crc of the entire input file, update
+        // it incrementally as we process each byte.
+        const bytearr = [1]u8 { b };
+        ctx.crc.update(&bytearr);
+
         return b;
     }
 };

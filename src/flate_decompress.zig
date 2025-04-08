@@ -16,6 +16,7 @@ const DecompressError = error {
 
 const DecompressContext = struct {
     allocator: std.mem.Allocator,
+    crc: *std.hash.Crc32,
     /// The current type of block to decode
     block_type: FlateBlockType,
     writer: std.io.AnyWriter,
@@ -37,10 +38,12 @@ pub const Decompress = struct {
         instream: std.fs.File,
         outstream: std.fs.File,
         instream_offset: usize,
+        crc: *std.hash.Crc32,
     ) !void {
         var done = false;
         var ctx = DecompressContext {
             .allocator = allocator,
+            .crc = crc,
             .block_type = FlateBlockType.RESERVED,
             .writer = outstream.writer().any(),
             .bit_reader = std.io.bitReader(Flate.writer_endian, instream.reader().any()),
@@ -330,6 +333,12 @@ pub const Decompress = struct {
         try ctx.writer.writeByte(c);
         util.print_char("Output write", c);
         ctx.written_bits += 8;
+
+        // The crc in the trailer of the gzip format is performed on the
+        // original input file calculate the crc for the output file we are
+        // writing incrementally as we process each byte.
+        const bytearr = [1]u8 { c };
+        ctx.crc.update(&bytearr);
     }
 };
 
