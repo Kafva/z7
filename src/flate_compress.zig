@@ -300,7 +300,8 @@ pub const Compress = struct {
         num_bits: u16,
     ) !void {
         try ctx.bit_writer.writeBits(value, num_bits);
-        util.print_bits(T, "Output write", value, num_bits);
+        const offset = @divFloor(ctx.processed_bits, 8);
+        util.print_bits(T, "Output write", value, num_bits, offset);
         ctx.written_bits += num_bits;
     }
 

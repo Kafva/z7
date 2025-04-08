@@ -20,6 +20,7 @@ const DecompressContext = struct {
     block_type: FlateBlockType,
     writer: std.io.AnyWriter,
     bit_reader: std.io.BitReader(Flate.writer_endian, std.io.AnyReader),
+    start_offset: usize,
     written_bits: usize,
     processed_bits: usize,
     /// Cache of the last 32K read bytes to support backreferences
@@ -43,6 +44,7 @@ pub const Decompress = struct {
             .block_type = FlateBlockType.RESERVED,
             .writer = outstream.writer().any(),
             .bit_reader = std.io.bitReader(Flate.writer_endian, instream.reader().any()),
+            .start_offset = instream_offset,
             .written_bits = 0,
             .processed_bits = 0,
             .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
@@ -72,10 +74,10 @@ pub const Decompress = struct {
             log.debug(@src(), "Reading type-{d} block", .{block_type_int});
             switch (ctx.block_type) {
                 FlateBlockType.NO_COMPRESSION => {
-                    return Decompress.no_compression_decompress_block(&ctx);
+                    try Decompress.no_compression_decompress_block(&ctx);
                 },
                 FlateBlockType.FIXED_HUFFMAN => {
-                    return Decompress.fixed_code_decompress_block(&ctx);
+                    try Decompress.fixed_code_decompress_block(&ctx);
                 },
                 FlateBlockType.DYNAMIC_HUFFMAN => {
                     return FlateError.NotImplemented;
@@ -295,7 +297,8 @@ pub const Decompress = struct {
         const bits = ctx.bit_reader.readBitsNoEof(T, num_bits) catch |e| {
             return e;
         };
-        util.print_bits(T, "Input read", bits, num_bits);
+        const offset = ctx.start_offset + @divFloor(ctx.processed_bits, 8);
+        util.print_bits(T, "Input read", bits, num_bits, offset);
         ctx.processed_bits += num_bits;
         return bits;
     }

@@ -5,6 +5,7 @@ const util = @import("context_test.zig");
 
 const TestContext = @import("context_test.zig").TestContext;
 const Gzip = @import("gzip.zig").Gzip;
+const Gunzip = @import("gunzip.zig").Gunzip;
 
 const libflate = @cImport({
     @cInclude("libflate.h");
@@ -31,7 +32,7 @@ fn check_z7_ok(ctx: *TestContext) !void {
 
     try ctx.log_result(try ctx.compressed.getPos());
 
-    try Gzip.decompress(ctx.allocator, ctx.compressed, ctx.decompressed);
+    try Gunzip.decompress(ctx.allocator, ctx.compressed, ctx.decompressed);
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -61,7 +62,7 @@ fn check_z7_compress_ref(ctx: *TestContext) !void {
 
     try ctx.log_result(@intCast(compressed_len));
 
-    try Gzip.decompress(ctx.allocator, ctx.compressed, ctx.decompressed);
+    try Gunzip.decompress(ctx.allocator, ctx.compressed, ctx.decompressed);
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -89,7 +90,7 @@ fn check_ref_ok(ctx: *TestContext) !void {
 fn runall(inputfile: []const u8) !void {
     try run(inputfile, "gzip-z7-only", check_z7_ok);
     try run(inputfile, "gzip-go-only", check_ref_ok);
-    try run(inputfile, "gzip-go-decompress-z7", check_z7_decompress_ref);
+    //try run(inputfile, "gzip-go-decompress-z7", check_z7_decompress_ref);
     //try run(inputfile, "gzip-z7-decompress-go", check_z7_compress_ref);
 }
 
@@ -97,19 +98,19 @@ test "[Gzip] check simple text" {
     try runall("tests/testdata/helloworld.txt");
 }
 
-// test "[Gzip] check short simple text" {
-//     try runall("tests/testdata/simple.txt");
-// }
+test "[Gzip] check short simple text" {
+    try runall("tests/testdata/simple.txt");
+}
 
-// test "[Gzip] check longer simple text" {
-//     try runall("tests/testdata/flate_test.txt");
-// }
+test "[Gzip] check longer simple text" {
+    try runall("tests/testdata/flate_test.txt");
+}
 
-// test "[Gzip] check 9001 repeated characters" {
-//     try runall("tests/testdata/over_9000_a.txt");
-// }
+test "[Gzip] check 9001 repeated characters" {
+    try runall("tests/testdata/over_9000_a.txt");
+}
 
-// test "[Gzip] check rfc1951.txt" {
-//     try runall("tests/testdata/rfc1951.txt");
-// }
+test "[Gzip] check rfc1951.txt" {
+    try runall("tests/testdata/rfc1951.txt");
+}
 

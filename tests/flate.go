@@ -31,7 +31,12 @@ func FlateCompress(inputfile string, outputfile string) int64 {
         return -1
     }
 
-    _ = writer.Flush()
+    err = writer.Close()
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
+
     return getSize(out)
 }
 
@@ -53,7 +58,12 @@ func Gzip(inputfile string, outputfile string) int64 {
         return -1
     }
 
-    _ = writer.Flush()
+    err = writer.Close()
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
+
     return getSize(out)
 }
 
@@ -125,12 +135,15 @@ func compress(inputfile string, writer io.Writer) error {
     defer in.Close()
 
     // Write input file via the provided writer to the output file
-    _, err = io.Copy(writer, in)
-
-    if err != nil {
-        return err
+    for {
+        written, err := io.Copy(writer, in)
+        if err != nil {
+            return err
+        }
+        if written == 0 {
+            break
+        }
     }
-
     return nil
 }
 

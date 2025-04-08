@@ -10,7 +10,7 @@ zig build run -- --help
 ```bash
 # Flags:
 #   -Ddebug=true      Print debug logs
-#   -Dverbose=true    Print verbose results for each test case
+#   -Dquiet=true      Quiet test result output
 zig build test --summary all && ./zig-out/bin/z7-test
 
 # To only build tests for a specific file

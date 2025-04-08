@@ -63,7 +63,7 @@ pub const TestContext = struct {
     }
 
     pub fn log_result(self: *@This(), new_size: usize) !void {
-        if (!build_options.verbose) {
+        if (build_options.quiet) {
             return;
         }
 

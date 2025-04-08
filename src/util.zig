@@ -36,61 +36,62 @@ pub fn print_bits(
     comptime prefix: []const u8,
     bits: T,
     num_bits: usize,
+    offset: usize,
 ) void {
     switch (num_bits) {
         2 =>
             log.debug(
                 @src(),
-                "{s}: 0b{b:0>2} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b:0>2} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
         3 =>
             log.debug(
                 @src(),
-                "{s}: 0b{b:0>3} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b:0>3} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
         4 =>
             log.debug(
                 @src(),
-                "{s}: 0b{b:0>4} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b:0>4} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
         5 =>
             log.debug(
                 @src(),
-                "{s}: 0b{b:0>5} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b:0>5} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
         6 =>
             log.debug(
                 @src(),
-                "{s}: 0b{b:0>6} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b:0>6} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
         7 =>
             log.debug(
                 @src(),
-                "{s}: 0b{b:0>7} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b:0>7} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
         8 =>
             log.debug(
                 @src(),
-                "{s}: 0b{b:0>8} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b:0>8} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
         16 =>
             log.debug(
                 @src(),
-                "{s}: 0b{b:0>16} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b:0>16} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
         else =>
             log.debug(
                 @src(),
-                "{s}: 0b{b} ({d}) [{d} bits]",
-                .{prefix, bits, bits, num_bits}
+                "{s}: 0b{b} ({d}) [{d} bits] (0x{x})",
+                .{prefix, bits, bits, num_bits, offset}
             ),
     }
 }
