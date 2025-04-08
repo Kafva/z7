@@ -4,7 +4,7 @@ const log = @import("log.zig");
 const util = @import("context_test.zig");
 
 const TestContext = @import("context_test.zig").TestContext;
-const Gzip = @import("gzip.zig").Gzip;
+const gzip = @import("gzip.zig").compress;
 const gunzip = @import("gunzip.zig").decompress;
 
 const libflate = @cImport({
@@ -28,7 +28,7 @@ fn run(
 
 /// Verify that z7 can decompress its own output (gzip)
 fn check_z7_ok(ctx: *TestContext) !void {
-    try Gzip.compress(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, 0);
+    try gzip(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, 0);
 
     try ctx.log_result(try ctx.compressed.getPos());
 
@@ -53,7 +53,7 @@ fn check_go_decompress_z7(ctx: *TestContext) !void {
 
 /// Compress with z7 and decompress with Golang
 fn check_z7_decompress_go(ctx: *TestContext) !void {
-    try Gzip.compress(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, 0);
+    try gzip(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, 0);
 
     try ctx.log_result(try ctx.compressed.getPos());
 

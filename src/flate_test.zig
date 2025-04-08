@@ -3,9 +3,8 @@ const std = @import("std");
 const log = @import("log.zig");
 const TestContext = @import("context_test.zig").TestContext;
 
-const Decompress = @import("flate_decompress.zig").Decompress;
-const Compress = @import("flate_compress.zig").Compress;
-const Gzip = @import("gzip.zig").Gzip;
+const decompress = @import("flate_decompress.zig").decompress;
+const compress = @import("flate_compress.zig").compress;
 
 const libflate = @cImport({
     @cInclude("libflate.h");
@@ -29,13 +28,12 @@ fn run(
 /// Verify that z7 can decompress its own output
 fn check_z7_ok(ctx: *TestContext) !void {
     var crc = std.hash.Crc32.init();
-    try Compress.compress(ctx.allocator, &ctx.in, &ctx.compressed, &crc);
+    try compress(ctx.allocator, &ctx.in, &ctx.compressed, &crc);
 
     try ctx.log_result(try ctx.compressed.getPos());
 
     var crcd = std.hash.Crc32.init();
-    var inflate = try Decompress.init(ctx.allocator, &ctx.compressed, &ctx.decompressed, 0, &crcd);
-    try inflate.decompress();
+    try decompress(ctx.allocator, &ctx.compressed, &ctx.decompressed, 0, &crcd);
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -44,7 +42,7 @@ fn check_z7_ok(ctx: *TestContext) !void {
 /// Verify that the Golang flate implementation can decompress z7 output
 fn check_z7_decompress_ref(ctx: *TestContext) !void {
     var crc = std.hash.Crc32.init();
-    try Compress.compress(ctx.allocator, &ctx.in, &ctx.compressed, &crc);
+    try compress(ctx.allocator, &ctx.in, &ctx.compressed, &crc);
 
     try ctx.log_result(try ctx.compressed.getPos());
 
@@ -67,8 +65,7 @@ fn check_z7_compress_ref(ctx: *TestContext) !void {
     try ctx.log_result(@intCast(compressed_len));
 
     var crcd = std.hash.Crc32.init();
-    var inflate = try Decompress.init(ctx.allocator, &ctx.compressed, &ctx.decompressed, 0, &crcd);
-    try inflate.decompress();
+    try decompress(ctx.allocator, &ctx.compressed, &ctx.decompressed, 0, &crcd);
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -100,30 +97,30 @@ fn runall(inputfile: []const u8) !void {
     // try run(inputfile, "flate-z7-decompress-go", check_z7_compress_ref);
 }
 
-// test "[Flate] check empty file" {
-//     try run("tests/testdata/empty", "z7-flate", check_z7_ok);
-// }
+test "[Flate] check empty file" {
+    try run("tests/testdata/empty", "flate-z7-only", check_z7_ok);
+}
 
-// test "[Flate] check random data" {
-//     try run(TestContext.random_label, "z7-flate", check_z7_ok);
-// }
+test "[Flate] check random data" {
+    try run(TestContext.random_label, "flate-z7-only", check_z7_ok);
+}
 
 test "[Flate] check simple text" {
     try runall("tests/testdata/helloworld.txt");
 }
 
-// test "[Flate] check short simple text" {
-//     try runall("tests/testdata/simple.txt");
-// }
+test "[Flate] check short simple text" {
+    try runall("tests/testdata/simple.txt");
+}
 
-// test "[Flate] check longer simple text" {
-//     try runall("tests/testdata/flate_test.txt");
-// }
+test "[Flate] check longer simple text" {
+    try runall("tests/testdata/flate_test.txt");
+}
 
-// test "[Flate] check 9001 repeated characters" {
-//     try runall("tests/testdata/over_9000_a.txt");
-// }
+test "[Flate] check 9001 repeated characters" {
+    try runall("tests/testdata/over_9000_a.txt");
+}
 
-// test "[Flate] check rfc1951.txt" {
-//     try runall("tests/testdata/rfc1951.txt");
-// }
+test "[Flate] check rfc1951.txt" {
+    try runall("tests/testdata/rfc1951.txt");
+}
