@@ -42,7 +42,7 @@ pub fn compress(
     };
 
     const st = try instream.stat();
-    const insize: u16 = @truncate(st.size); // TODO
+    const insize: u16 = @truncate(st.size);
 
     // Write block header
     var header: u3 = 0;
@@ -76,10 +76,7 @@ pub fn compress(
     );
 }
 
-fn no_compression_compress_block(
-    ctx: *CompressContext,
-    length: u16,
-) !void {
+fn no_compression_compress_block(ctx: *CompressContext, length: u16) !void {
     // Fill up with zeroes to the next byte boundary
     try write_bits(ctx, u5, 0, 5);
     try write_bits(ctx, u16, length, 16);
@@ -95,9 +92,7 @@ fn no_compression_compress_block(
     }
 }
 
-fn fixed_code_compress_block(
-    ctx: *CompressContext,
-) !void {
+fn fixed_code_compress_block(ctx: *CompressContext) !void {
     var done = false;
     ctx.lookahead[0] = blk: {
         break :blk read_byte(ctx) catch {

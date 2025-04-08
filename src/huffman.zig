@@ -194,18 +194,6 @@ pub const Huffman = struct {
         return @This(){ .array = array, .enc_map = enc_map };
     }
 
-
-    // fn construct_fixed_tree(
-    //     allocator: std.mem.Allocator,
-    //     queue_initial: *[]Node,
-    //     queue_initial_cnt: usize,
-    //     array: *std.ArrayList(Node),
-    // ) !void {
-    //     // Pop the last two elements from the queue (largest weight)
-    //     // and create a new parent node, insert it back into the queue with a lower weight
-    // }
-
-
     /// Count the occurrences of each byte in `instream`
     pub fn get_frequencies(
         allocator: std.mem.Allocator,
@@ -294,14 +282,13 @@ pub const Huffman = struct {
             };
 
             if (char) |c| {
+                util.print_char("Output write", c);
                 try writer.writeByte(c);
             } else {
                 break;
             }
         }
     }
-
-
 
     /// Construct a Huffman tree from `queue_initial` into `array` which does
     /// not exceed the provided `max_depth`, returns an error if the provided
@@ -568,9 +555,7 @@ pub const Huffman = struct {
         }
     }
 
-    fn dump_encodings(
-        self: @This(),
-    ) void {
+    fn dump_encodings(self: @This()) void {
         for (0..self.enc_map.len) |i| {
             const char: u8 = @truncate(i);
             if (self.enc_map[i]) |enc| {

@@ -98,9 +98,7 @@ pub fn decompress(
     );
 }
 
-fn no_compression_decompress_block(
-    ctx: *DecompressContext,
-) !void {
+fn no_compression_decompress_block(ctx: *DecompressContext) !void {
     // Shift out zeroes up until the next byte boundary
     while (ctx.processed_bits % 8 != 0) {
         const b = try read_bits(ctx, u1, 1);
@@ -130,9 +128,7 @@ fn no_compression_decompress_block(
     }
 }
 
-fn fixed_code_decompress_block(
-    ctx: *DecompressContext,
-) !void {
+fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
     while (true) {
         const b = blk: {
             var key = read_bits_be(ctx, 7) catch {
@@ -257,9 +253,7 @@ fn fixed_code_decompress_block(
 ///                          0010111
 /// 280 - 287     8          11000000 through
 ///                          11000111
-fn fixed_code_decoding_map(
-    comptime num_bits: u8,
-) !std.AutoHashMap(u16, u16) {
+fn fixed_code_decoding_map(comptime num_bits: u8) !std.AutoHashMap(u16, u16) {
     var huffman_map = std.AutoHashMap(u16, u16).init(std.heap.page_allocator);
     switch (num_bits) {
         7 => {
@@ -290,11 +284,7 @@ fn fixed_code_decoding_map(
 }
 
 /// Read bits with the configured bit-ordering from the input stream
-fn read_bits(
-    ctx: *DecompressContext,
-    comptime T: type,
-    num_bits: u16,
-) !T {
+fn read_bits(ctx: *DecompressContext, comptime T: type, num_bits: u16) !T {
     const bits = ctx.bit_reader.readBitsNoEof(T, num_bits) catch |e| {
         return e;
     };
@@ -305,10 +295,7 @@ fn read_bits(
 }
 
 /// This stream: 11110xxx xxxxx000 should be interpreted as 0b01111_000
-fn read_bits_be(
-    ctx: *DecompressContext,
-    num_bits: u16,
-) !u16 {
+fn read_bits_be(ctx: *DecompressContext, num_bits: u16) !u16 {
     var out: u16 = 0;
     for (1..num_bits) |i_usize| {
         const i: u4 = @intCast(i_usize);
@@ -332,7 +319,7 @@ fn write_byte(ctx: *DecompressContext, c: u8) !void {
     ctx.written_bits += 8;
 
     // The crc in the trailer of the gzip format is performed on the
-    // original input file calculate the crc for the output file we are
+    // original input file, calculate the crc for the output file we are
     // writing incrementally as we process each byte.
     const bytearr = [1]u8 { c };
     ctx.crc.update(&bytearr);

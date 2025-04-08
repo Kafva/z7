@@ -63,13 +63,13 @@ test "Huffman node sorting" {
     }
 }
 
-test "Huffman on empty file" {
-    try run("tests/testdata/empty", "huffman");
-}
-
-// test "Huffman on simple text" {
-//     try run("tests/testdata/helloworld.txt", "huffman");
+// test "Huffman on empty file" {
+//     try run("tests/testdata/empty", "huffman");
 // }
+
+test "Huffman on simple text" {
+    try run("tests/testdata/helloworld.txt", "huffman");
+}
 
 // test "Huffman on rfc1951.txt" {
 //     try run("tests/testdata/rfc1951.txt", "huffman");
