@@ -60,13 +60,10 @@ pub fn compress(
         log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
-                done = try no_compression_compress_block(&ctx, std.math.pow(u16, 2, 15));
+                done = try write_raw_block(&ctx, std.math.pow(u16, 2, 15));
             },
-            FlateBlockType.FIXED_HUFFMAN => {
-                done = try fixed_code_compress_block(&ctx, Flate.block_length);
-            },
-            FlateBlockType.DYNAMIC_HUFFMAN => {
-                done = try dynamic_code_compress_block(&ctx, Flate.block_length);
+            FlateBlockType.FIXED_HUFFMAN, FlateBlockType.DYNAMIC_HUFFMAN => {
+                done = try write_compressed_block(&ctx, Flate.block_length);
             },
             FlateBlockType.RESERVED => {
                 return FlateError.UnexpectedBlockType;
@@ -85,7 +82,7 @@ pub fn compress(
     );
 }
 
-fn no_compression_compress_block(ctx: *CompressContext, length: u16) !bool {
+fn write_raw_block(ctx: *CompressContext, length: u16) !bool {
     // Fill up with zeroes to the next byte boundary
     try write_bits(ctx, u5, 0, 5);
     try write_bits(ctx, u16, length, 16);
@@ -104,7 +101,7 @@ fn no_compression_compress_block(ctx: *CompressContext, length: u16) !bool {
     return false;
 }
 
-fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
+fn write_compressed_block(ctx: *CompressContext, block_length: usize) !bool {
     const end: usize = ctx.processed_bits + block_length*8;
     var done = false;
     ctx.lookahead[0] = blk: {
@@ -191,13 +188,6 @@ fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
             longest_match_distance
         );
 
-        // try fixed_code_write_match(
-        //     ctx,
-        //     lookahead_end,
-        //     longest_match_length,
-        //     longest_match_distance,
-        // );
-
         // Set starting byte for next iteration
         if (longest_match_length == 0 or
             longest_match_length == window_length or
@@ -219,9 +209,19 @@ fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
         }
     }
 
+    // TODO: analyze write queue and decide which type to use
+
     // Encode everything from the write queue onto the output stream
     for (0..ctx.write_queue_index) |i| {
-        try fixed_code_write_symbol(ctx, ctx.write_queue[i]);        
+        switch (ctx.block_type) {
+            FlateBlockType.FIXED_HUFFMAN => {
+                try fixed_code_write_symbol(ctx, ctx.write_queue[i]);
+            },
+            FlateBlockType.DYNAMIC_HUFFMAN => {
+                try dynamic_code_write_symbol(ctx, ctx.write_queue[i]);
+            },
+            else => unreachable
+        }
     }
     ctx.write_queue_index = 0;
 
@@ -230,10 +230,9 @@ fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
     return done;
 }
 
-fn dynamic_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
+fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
     _ = ctx;
-    _ = block_length;
-    return true;
+    _ = sym;
 }
 
 fn queue_symbol(
