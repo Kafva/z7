@@ -15,11 +15,16 @@ fn run(
     var ctx = try TestContext.init(allocator, inputfile, label);
     defer ctx.deinit();
 
-    const array = try compress(ctx.allocator, &ctx.in, &ctx.compressed);
-
+    var enc_len: usize = 0;
+    const dec_map = try compress(ctx.allocator, &enc_len, &ctx.in, &ctx.compressed);
     try ctx.log_result(try ctx.compressed.getPos());
 
-    try decompress(&array, &ctx.compressed, &ctx.decompressed);
+    try decompress(
+        &dec_map,
+        enc_len,
+        &ctx.compressed,
+        &ctx.decompressed
+    );
 
     // Verify correct decoding
     try ctx.eql(ctx.in, ctx.decompressed);

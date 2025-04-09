@@ -31,7 +31,7 @@ pub const NodeEncoding = struct {
             return std.fmt.invalidFmtError(fmt, self);
         }
 
-        return writer.print("{{ .bit_shift = {}, .bits = 0x{b} }}",
+        return writer.print("{{ .bit_shift = {}, .bits = 0b{b:0>3} }}",
                             .{self.bit_shift, self.bits});
     }
 

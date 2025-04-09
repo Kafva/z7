@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("util.zig");
 const log = @import("log.zig");
 
 const Node = @import("huffman.zig").Node;
@@ -7,8 +8,7 @@ const HuffmanError = @import("huffman.zig").HuffmanError;
 const HuffmanContext = @import("huffman.zig").HuffmanContext;
 
 const HuffmanDecompressContext = struct {
-    /// Backing array for Huffman tree nodes
-    array: *const std.ArrayList(Node),
+    dec_map: *const std.AutoHashMap(NodeEncoding, u8),
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
     /// Decompression requires a bit_reader
@@ -18,7 +18,8 @@ const HuffmanDecompressContext = struct {
 };
 
 pub fn decompress(
-    array: *const std.ArrayList(Node),
+    dec_map: *const std.AutoHashMap(NodeEncoding, u8),
+    encoded_length: usize,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
 ) !void {
@@ -28,66 +29,37 @@ pub fn decompress(
         .bit_reader = std.io.bitReader(.little, instream.reader().any()),
         .writer = outstream.writer().any(),
         .processed_bits = 0,
-        .array = array
+        .dec_map = dec_map,
     };
 
     // Start from the first element in both streams
     try ctx.instream.seekTo(0);
     try ctx.outstream.seekTo(0);
 
-    if (ctx.array.items.len == 0) {
-        return;
-    }
-
-    while (true) {
-        const char = walk_decode(&ctx, ctx.array.items.len - 1) catch |err| {
-            log.err(@src(), "Decoding error: {any}", .{err});
+    var enc = NodeEncoding {
+        .bits = 0,
+        .bit_shift = 0,
+    };
+    while (ctx.processed_bits < encoded_length) {
+        const bit = read_bit(&ctx) catch {
             break;
         };
 
-        if (char) |c| {
+        enc.bits = enc.bits | (bit << enc.bit_shift);
+        enc.bit_shift += 1;
+
+        if (ctx.dec_map.get(enc)) |c| {
             try ctx.writer.writeByte(c);
-        } else {
-            break;
+            util.print_char("Output write", c);
+            enc.bits = 0;
+            enc.bit_shift = 0;
         }
     }
 }
 
-/// Read bits from the `reader` and return decoded bytes.
-fn walk_decode(ctx: *HuffmanDecompressContext, index: usize) !?u8 {
-    const bit = ctx.bit_reader.readBitsNoEof(u1, 1) catch {
-        return null;
-    };
+fn read_bit(ctx: *HuffmanDecompressContext) !u16 {
+    const bit = try ctx.bit_reader.readBitsNoEof(u16, 1);
+    util.print_bits(u16, "Input read", bit, 1, ctx.processed_bits);
     ctx.processed_bits += 1;
-
-    const left_child_index = ctx.array.items[index].left_child_index;
-    const right_child_index = ctx.array.items[index].right_child_index;
-
-    if (left_child_index == null and right_child_index == null) {
-        // Reached leaf
-        if (ctx.array.items[index].char) |char| {
-            return char;
-        } else {
-            log.err(@src(), "Missing character from leaf node", .{});
-            return HuffmanError.BadTreeStructure;
-        }
-
-    } else {
-        switch (bit) {
-            0 => {
-                if (left_child_index) |child_index| {
-                    return try walk_decode(ctx, child_index);
-                } else {
-                    return HuffmanError.UnexpectedEncodedSymbol;
-                }
-            },
-            1 => {
-                if (right_child_index) |child_index| {
-                    return try walk_decode(ctx, child_index);
-                } else {
-                    return HuffmanError.UnexpectedEncodedSymbol;
-                }
-            }
-        }
-    }
+    return bit;
 }

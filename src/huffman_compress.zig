@@ -1,4 +1,5 @@
 const std = @import("std");
+const util = @import("util.zig");
 const log = @import("log.zig");
 
 const Node = @import("huffman.zig").Node;
@@ -23,9 +24,10 @@ const HuffmanCompressContext = struct {
 
 pub fn compress(
     allocator: std.mem.Allocator,
+    enc_len: *usize,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
-) !std.ArrayList(Node) {
+) !std.AutoHashMap(NodeEncoding, u8) {
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
         .instream = instream,
@@ -39,29 +41,27 @@ pub fn compress(
         .array = try std.ArrayList(Node).initCapacity(allocator, 2*256),
     };
 
-    try build_huffman_tree(&ctx);
+    const dec_map = try build_huffman_tree(&ctx);
 
     if (ctx.array.items.len == 0) {
         log.debug(@src(), "Nothing to compress", .{});
-        return ctx.array;
+        return dec_map;
     }
 
-    // Dump tree for debugging
+    log.debug(@src(), "Non-canonical tree:", .{});
     dump_tree(&ctx, 0, ctx.array.items.len - 1);
+
+    log.debug(@src(), "Canonical encodings:", .{});
     dump_encodings(ctx.enc_map);
 
+    // Write the translations to the output stream
     while (true) {
         const c = ctx.reader.readByte() catch {
             break;
         };
-
         if (ctx.enc_map[@intCast(c)]) |enc| {
-            if (enc.bit_shift >= 15) {
-                log.err(@src(), "Unexpected bit shift: {any}", .{enc});
-                return HuffmanError.BadTreeStructure;
-            }
-            // Write the translation to the output stream
-            try write_bits(&ctx, enc.bits, enc.bit_shift + 1);
+            try write_bits(&ctx, enc.bits, enc.bit_shift);
+            util.print_char("Encoded", c);
         } else {
             log.err(@src(), "Unexpected byte: 0x{x}", .{c});
             return HuffmanError.UnexpectedCharacter;
@@ -71,15 +71,13 @@ pub fn compress(
     try ctx.bit_writer.flushBits();
     log.debug(@src(), "Wrote {} bits [{} bytes]", .{ctx.written_bits, ctx.written_bits / 8});
 
-    return ctx.array;
+    // The decoder needs to know the exact number of bits, otherwise the extra
+    // padding from flushing to a full byte will be read as garbage.
+    enc_len.* = ctx.written_bits;
+    return dec_map;
 }
 
-fn write_bits(ctx: *HuffmanCompressContext, bits: u16, num_bits: u4) !void {
-    try ctx.bit_writer.writeBits(bits, num_bits);
-    ctx.written_bits += num_bits;
-}
-
-fn build_huffman_tree(ctx: *HuffmanCompressContext) !void {
+fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(NodeEncoding, u8) {
     // 1. Get frequencies from the input stream
     const queue_cnt = try calculate_frequencies(ctx);
     dump_frequencies(ctx);
@@ -136,43 +134,21 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !void {
         break;
     }
 
+    // 4. Build the canonical version of the encoding
     try build_canonical_encoding(ctx);
-}
 
-/// Count the occurrences of each byte in `instream`
-fn calculate_frequencies(ctx: *HuffmanCompressContext) !usize {
-    var cnt: usize = 0;
-    while (true) {
-        const c = ctx.reader.readByte() catch {
-            break;
-        };
-        if (ctx.frequencies[c] == 0) {
-            cnt += 1;
-        }
-        ctx.frequencies[c] += 1;
-    }
-    // Reset the positiion in the input stream
-    try ctx.instream.seekTo(0);
-    return cnt;
-}
-
-fn dump_frequencies(ctx: *HuffmanCompressContext) void {
-    log.debug(@src(), "Frequencies:", .{});
-    for (0..ctx.frequencies.len) |i| {
-        if (ctx.frequencies[i] == 0) {
-            continue;
-        }
-        const c: u8 = @truncate(i);
-        if (std.ascii.isPrint(c) and c != '\n') {
-            log.debug(
-                @src(),
-                "{d}: {d} ('{c}')",
-                .{c, ctx.frequencies[c], c}
-            );
-        } else {
-            log.debug(@src(), "{d}: {d}", .{c, ctx.frequencies[c]});
+    // 5. Return the decoding map
+    var dec_map = std.AutoHashMap(NodeEncoding, u8).init(ctx.allocator);
+    // enc_map: Symbol       -> Huffman bits
+    // dec_map: Huffman bits -> Symbol
+    for (0..ctx.enc_map.len) |i| {
+        if (ctx.enc_map[i]) |enc| {
+            const c: u8 = @truncate(i);
+            try dec_map.putNoClobber(enc, c);
         }
     }
+
+    return dec_map;
 }
 
 /// Construct a Huffman tree from `queue_initial` into `array` which does
@@ -350,20 +326,60 @@ fn walk_generate_translation(
     } else {
         if (left_child_index) |child_index| {
             // left: 0
-            // Nothing to do, all bits start initialised to 0
-            try walk_generate_translation(ctx, child_index, bits, bit_shift + 1);
+            // Append the new bit to the END of the bit-string
+            try walk_generate_translation(ctx, child_index, (bits << 1), bit_shift + 1);
         }
         if (right_child_index) |child_index| {
             // right: 1
-            const one: u16 = 1;
-            const shift: u4 = @intCast(bit_shift);
-            const new_bit: u16 = one << shift;
             try walk_generate_translation(
                 ctx,
                 child_index,
-                bits | new_bit,
+                // Append the new bit to the END of the bit-string
+                (bits << 1) | 1,
                 bit_shift + 1
             );
+        }
+    }
+}
+
+fn write_bits(ctx: *HuffmanCompressContext, bits: u16, num_bits: u4) !void {
+    try ctx.bit_writer.writeBits(bits, num_bits);
+    util.print_bits(u16, "Output write", bits, @intCast(num_bits), ctx.written_bits);
+    ctx.written_bits += num_bits;
+}
+
+/// Count the occurrences of each byte in `instream`
+fn calculate_frequencies(ctx: *HuffmanCompressContext) !usize {
+    var cnt: usize = 0;
+    while (true) {
+        const c = ctx.reader.readByte() catch {
+            break;
+        };
+        if (ctx.frequencies[c] == 0) {
+            cnt += 1;
+        }
+        ctx.frequencies[c] += 1;
+    }
+    // Reset the positiion in the input stream
+    try ctx.instream.seekTo(0);
+    return cnt;
+}
+
+fn dump_frequencies(ctx: *HuffmanCompressContext) void {
+    log.debug(@src(), "Frequencies:", .{});
+    for (0..ctx.frequencies.len) |i| {
+        if (ctx.frequencies[i] == 0) {
+            continue;
+        }
+        const c: u8 = @truncate(i);
+        if (std.ascii.isPrint(c) and c != '\n') {
+            log.debug(
+                @src(),
+                "{d}: {d} ('{c}')",
+                .{c, ctx.frequencies[c], c}
+            );
+        } else {
+            log.debug(@src(), "{d}: {d}", .{c, ctx.frequencies[c]});
         }
     }
 }
