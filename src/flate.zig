@@ -1,6 +1,13 @@
 const std = @import("std");
 const log = @import("log.zig");
 
+/// Contains either a literal, a length encoding or a distance encoding.
+pub const FlateSymbol = union(enum) {
+    char: u8,
+    length: TokenEncoding,
+    distance: TokenEncoding,
+};
+
 pub const TokenEncoding = struct {
     /// The symbol used to encode a length or distance (1..2**15)
     code: u16,
@@ -250,4 +257,6 @@ pub const Flate = struct {
     pub const lookahead_length: usize = 258;
     /// Valid distances must be within the window length, i.e. (1..2**15)
     pub const window_length: usize = std.math.pow(usize, 2, 15);
+    /// Hardcoded size to split the input into
+    pub const block_length: usize = std.math.pow(usize, 2, 16);
 };

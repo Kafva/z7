@@ -5,6 +5,7 @@ const util = @import("util.zig");
 const Flate = @import("flate.zig").Flate;
 const FlateBlockType = @import("flate.zig").FlateBlockType;
 const FlateError = @import("flate.zig").FlateError;
+const FlateSymbol = @import("flate.zig").FlateSymbol;
 const Token = @import("flate.zig").Token;
 const TokenEncoding = @import("flate.zig").TokenEncoding;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
@@ -20,6 +21,10 @@ const CompressContext = struct {
     processed_bits: usize,
     sliding_window: RingBuffer(u8),
     lookahead: []u8,
+    /// Queue of symbols to write to the output stream, we need to keep this
+    /// in memory so that we can create huffman trees for these symbols in
+    /// block type-2.
+    write_queue: []FlateSymbol,
 };
 
 pub fn compress(
@@ -39,30 +44,32 @@ pub fn compress(
         // Initialize sliding window for backreferences
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
+        .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length),
     };
-
-    const st = try instream.stat();
-    const insize: u16 = @truncate(st.size);
 
     // Write block header
     var header: u3 = 0;
     header |= @intFromEnum(ctx.block_type) << 1; // BTYPE
     header |= 1; // BFINAL
-
     try write_bits(&ctx, u3, header, 3);
 
-    log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
-    switch (ctx.block_type) {
-        FlateBlockType.NO_COMPRESSION => {
-            try no_compression_compress_block(&ctx, insize);
-        },
-        FlateBlockType.FIXED_HUFFMAN => {
-            try fixed_code_compress_block(&ctx, insize);
-        },
-        FlateBlockType.DYNAMIC_HUFFMAN => {
-            try dynamic_code_compress_block(&ctx, insize);
-        },
-        else => unreachable
+    var done = false;
+    while (!done) {
+        log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
+        switch (ctx.block_type) {
+            FlateBlockType.NO_COMPRESSION => {
+                done = try no_compression_compress_block(&ctx, std.math.pow(u16, 2, 15));
+            },
+            FlateBlockType.FIXED_HUFFMAN => {
+                done = try fixed_code_compress_block(&ctx, Flate.block_length);
+            },
+            FlateBlockType.DYNAMIC_HUFFMAN => {
+                done = try dynamic_code_compress_block(&ctx, Flate.block_length);
+            },
+            FlateBlockType.RESERVED => {
+                return FlateError.UnexpectedBlockType;
+            }
+        }
     }
 
     // Incomplete bytes will be padded when flushing, wait until all
@@ -76,7 +83,7 @@ pub fn compress(
     );
 }
 
-fn no_compression_compress_block(ctx: *CompressContext, length: u16) !void {
+fn no_compression_compress_block(ctx: *CompressContext, length: u16) !bool {
     // Fill up with zeroes to the next byte boundary
     try write_bits(ctx, u5, 0, 5);
     try write_bits(ctx, u16, length, 16);
@@ -90,9 +97,12 @@ fn no_compression_compress_block(ctx: *CompressContext, length: u16) !void {
         ctx.sliding_window.push(b);
         try write_bits(ctx, u8, b, 8);
     }
+
+    // TODO TODO: only return false when we know there is more input!
+    return false;
 }
 
-fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !void {
+fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
     const end: usize = ctx.processed_bits + block_length*8;
     var done = false;
     ctx.lookahead[0] = blk: {
@@ -203,11 +213,13 @@ fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !void {
 
     // End-of-block marker (with static Huffman encoding: 0000_000 -> 256)
     try write_bits(ctx, u7, @as(u7, 0), 7);
+    return done;
 }
 
-fn dynamic_code_compress_block(ctx: *CompressContext, block_length: usize) !void {
+fn dynamic_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
     _ = ctx;
     _ = block_length;
+    return true;
 }
 
 /// Write the bits for the provided match length and distance to the output
