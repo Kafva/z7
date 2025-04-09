@@ -18,19 +18,6 @@ pub fn repeat(comptime c: u8, comptime count: u8) ![]const u8 {
     return result.toOwnedSlice();
 }
 
-pub fn dump_hashmap(
-    comptime Key: type,
-    comptime Value: type,
-    map: *const std.AutoHashMap(Key, Value),
-) void {
-    var keys = map.keyIterator();
-    while (keys.next()) |key| {
-        if (map.get(key.*)) |enc| {
-            log.debug(@src(), "0b{b} ({d}) -> {any}", .{key.*, key.*, enc});
-        }
-    }
-}
-
 pub fn print_bits(
     comptime T: type,
     comptime prefix: []const u8,
@@ -104,7 +91,7 @@ pub fn print_char(
     if (std.ascii.isPrint(byte) and byte != '\n') {
         log.debug(@src(), "{s}: '{c}'", .{prefix, byte});
     } else {
-        log.debug(@src(), "{s}: '0x{x}'", .{prefix, byte});
+        log.debug(@src(), "{s}: 0x{x}", .{prefix, byte});
     }
 }
 

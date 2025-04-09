@@ -1,8 +1,8 @@
 const std = @import("std");
-const util = @import("context_test.zig");
 const TestContext = @import("context_test.zig").TestContext;
-const Huffman = @import("huffman.zig").Huffman;
 const Node = @import("huffman.zig").Node;
+const compress = @import("huffman_compress.zig").compress;
+const decompress = @import("huffman_decompress.zig").decompress;
 
 fn run(
     inputfile: []const u8,
@@ -15,17 +15,11 @@ fn run(
     var ctx = try TestContext.init(allocator, inputfile, label);
     defer ctx.deinit();
 
-    var freq = try Huffman.get_frequencies(ctx.allocator, ctx.in);
-    defer freq.deinit();
-    const huffman = try Huffman.init(ctx.allocator, &freq);
-
-    // Reset input stream for second pass
-    try ctx.in.seekTo(0);
-    try huffman.compress(ctx.in, ctx.compressed, std.math.maxInt(usize));
+    const array = try compress(ctx.allocator, &ctx.in, &ctx.compressed);
 
     try ctx.log_result(try ctx.compressed.getPos());
 
-    try huffman.decompress(ctx.compressed, ctx.decompressed);
+    try decompress(&array, &ctx.compressed, &ctx.decompressed);
 
     // Verify correct decoding
     try ctx.eql(ctx.in, ctx.decompressed);
