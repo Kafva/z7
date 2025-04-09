@@ -9,6 +9,7 @@ const FlateSymbol = @import("flate.zig").FlateSymbol;
 const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
+const symbols_size = @import("huffman.zig").symbols_size;
 
 const CompressContext = struct {
     allocator: std.mem.Allocator,
@@ -263,6 +264,30 @@ fn queue_symbol(
         const dsymbol = FlateSymbol { .distance = denc };
         ctx.write_queue[ctx.write_queue_index] = dsymbol;
         ctx.write_queue_index += 1;
+    }
+}
+
+fn dynamic_huffman_code_gen(ctx: *CompressContext) !void {
+    var ll_freq = [_]u16{0} ** symbols_size;
+    var d_freq = [_]u16{0} ** 31;
+
+    // Calculate the frequency of each `FlateSymbol`
+    for (ctx.write_queue) |sym| {
+        switch (sym) {
+            .length => {
+                if (sym.length.value) |v| {
+                    ll_freq[v] += 1;
+                }
+            },
+            .distance => {
+                if (sym.distance.value) |v| {
+                    d_freq[v] += 1;
+                }
+            },
+            .char => {
+                ll_freq[sym.length.char] += 1;
+            }
+        }
     }
 }
 

@@ -8,6 +8,7 @@ const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
+const symbols_size = @import("huffman.zig").symbols_size;
 
 const DecompressError = error {
     UndecodableBitStream,
