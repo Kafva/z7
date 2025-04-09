@@ -12,7 +12,8 @@ pub const HuffmanError = error {
     MaxDepthInsufficent,
 };
 
-pub const NodeEncoding = struct {
+/// Represents a path in a Huffman tree as a u16 integer.
+pub const HuffmanEncoding = struct {
     /// It is seldom efficient to use encodings longer than 15 (2**4 - 1) bits
     /// for a character.
     ///
@@ -20,6 +21,8 @@ pub const NodeEncoding = struct {
     ///   "[...] the maximum number of bits that should be used to encode any literal.
     ///   It must be less than 16."
     bit_shift: u4,
+    /// The bits should be read from most-to-least-significant when traversing
+    /// a Huffman tree from the top.
     bits: u16,
 
     pub fn format(
@@ -32,7 +35,7 @@ pub const NodeEncoding = struct {
             return std.fmt.invalidFmtError(fmt, self);
         }
 
-        return writer.print("{{ .bit_shift = {}, .bits = 0b{b:0>3} }}",
+        return writer.print("{{ .bit_shift = {}, .bits = {b:>8} }}",
                             .{self.bit_shift, self.bits});
     }
 
@@ -43,28 +46,28 @@ pub const NodeEncoding = struct {
             if (istty) {
                 log.debug(
                     @src(),
-                    "(0x{x}) '{c}' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                    "(0x{x:0>2}) '{c}' -> \x1b[38;5;{d}m{any}\x1b[0m",
                     .{char, char, color, self}
                 );
             }
             else {
-                log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{char, char, self});
+                log.debug(@src(), "(0x{x:0>2}) '{c}' -> {any}", .{char, char, self});
             }
         } else {
             if (istty) {
                 log.debug(
                     @src(),
-                    "(0x{x}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                    "(0x{x:0>2}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
                     .{char, color, self}
                 );
             } else {
-                log.debug(@src(), "(0x{x}) ' ' -> {any}", .{char, self});
+                log.debug(@src(), "(0x{x:0>2}) ' ' -> {any}", .{char, self});
             }
         }
     }
 };
 
-pub const Node = struct {
+pub const HuffmanTreeNode = struct {
     /// Only leaf nodes contain a character
     char: ?u8,
     freq: usize,

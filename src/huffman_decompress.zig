@@ -2,13 +2,12 @@ const std = @import("std");
 const util = @import("util.zig");
 const log = @import("log.zig");
 
-const Node = @import("huffman.zig").Node;
-const NodeEncoding = @import("huffman.zig").NodeEncoding;
+const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const HuffmanError = @import("huffman.zig").HuffmanError;
 const HuffmanContext = @import("huffman.zig").HuffmanContext;
 
 const HuffmanDecompressContext = struct {
-    dec_map: *const std.AutoHashMap(NodeEncoding, u8),
+    dec_map: *const std.AutoHashMap(HuffmanEncoding, u8),
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
     /// Decompression requires a bit_reader
@@ -18,7 +17,7 @@ const HuffmanDecompressContext = struct {
 };
 
 pub fn decompress(
-    dec_map: *const std.AutoHashMap(NodeEncoding, u8),
+    dec_map: *const std.AutoHashMap(HuffmanEncoding, u8),
     encoded_length: usize,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
@@ -36,7 +35,7 @@ pub fn decompress(
     try ctx.instream.seekTo(0);
     try ctx.outstream.seekTo(0);
 
-    var enc = NodeEncoding {
+    var enc = HuffmanEncoding {
         .bits = 0,
         .bit_shift = 0,
     };
@@ -48,7 +47,8 @@ pub fn decompress(
             return HuffmanError.BadEncoding;
         }
 
-        enc.bits = enc.bits | (bit << enc.bit_shift);
+        // The most-significant bit is read first
+        enc.bits = (enc.bits << 1) | bit;
         enc.bit_shift += 1;
 
         if (ctx.dec_map.get(enc)) |c| {

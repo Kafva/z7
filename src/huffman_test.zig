@@ -1,6 +1,6 @@
 const std = @import("std");
 const TestContext = @import("context_test.zig").TestContext;
-const Node = @import("huffman.zig").Node;
+const HuffmanTreeNode = @import("huffman.zig").HuffmanTreeNode;
 const compress = @import("huffman_compress.zig").compress;
 const decompress = @import("huffman_decompress.zig").decompress;
 
@@ -34,7 +34,7 @@ fn run(
 
 test "Huffman node sorting" {
     const size = 20;
-    var arr: [size]Node = undefined;
+    var arr: [size]HuffmanTreeNode = undefined;
     var prng = std.Random.DefaultPrng.init(blk: {
         var seed: u64 = undefined;
         try std.posix.getrandom(std.mem.asBytes(&seed));
@@ -43,14 +43,14 @@ test "Huffman node sorting" {
     const random = prng.random();
 
     for (0..size) |i| {
-       arr[i] = Node {
+       arr[i] = HuffmanTreeNode {
             .char = null,
             .weight = random.int(u4) % 4,
             .freq = random.int(usize) % 1000,
             .left_child_index = undefined,
             .right_child_index = undefined
        };
-       std.sort.insertion(Node, arr[0..i+1], {}, Node.greater_than);
+       std.sort.insertion(HuffmanTreeNode, arr[0..i+1], {}, HuffmanTreeNode.greater_than);
     }
 
     for (0..size-1) |i| {
@@ -62,23 +62,23 @@ test "Huffman node sorting" {
     }
 }
 
-// test "Huffman check simple text" {
-//     try run("tests/testdata/helloworld.txt", "huffman");
-// }
+test "Huffman check simple text" {
+    try run("tests/testdata/helloworld.txt", "huffman");
+}
 
-// test "Huffman check short simple text" {
-//     try run("tests/testdata/simple.txt", "huffman");
-// }
+test "Huffman check short simple text" {
+    try run("tests/testdata/simple.txt", "huffman");
+}
 
 test "Huffman check longer simple text" {
     try run("tests/testdata/flate_test.txt", "huffman");
 }
 
-// test "Huffman check 9001 repeated characters" {
-//     try run("tests/testdata/over_9000_a.txt", "huffman");
-// }
+test "Huffman check 9001 repeated characters" {
+    try run("tests/testdata/over_9000_a.txt", "huffman");
+}
 
-// test "Huffman check rfc1951.txt" {
-//     try run("tests/testdata/rfc1951.txt", "huffman");
-// }
+test "Huffman check rfc1951.txt" {
+    try run("tests/testdata/rfc1951.txt", "huffman");
+}
 

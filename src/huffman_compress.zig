@@ -2,8 +2,8 @@ const std = @import("std");
 const util = @import("util.zig");
 const log = @import("log.zig");
 
-const Node = @import("huffman.zig").Node;
-const NodeEncoding = @import("huffman.zig").NodeEncoding;
+const HuffmanTreeNode = @import("huffman.zig").HuffmanTreeNode;
+const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const HuffmanError = @import("huffman.zig").HuffmanError;
 
 const HuffmanCompressContext = struct {
@@ -17,9 +17,9 @@ const HuffmanCompressContext = struct {
     /// Huffman code
     frequencies: [256]usize,
     /// Mappings from 1 byte symbols onto 256-bit encodings
-    enc_map: [256]?NodeEncoding,
+    enc_map: [256]?HuffmanEncoding,
     /// Backing array for Huffman tree nodes
-    array: std.ArrayList(Node),
+    array: std.ArrayList(HuffmanTreeNode),
 };
 
 pub fn compress(
@@ -27,7 +27,7 @@ pub fn compress(
     enc_len: *usize,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
-) !std.AutoHashMap(NodeEncoding, u8) {
+) !std.AutoHashMap(HuffmanEncoding, u8) {
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
         .instream = instream,
@@ -36,9 +36,9 @@ pub fn compress(
         .bit_writer = std.io.bitWriter(.little, outstream.writer().any()),
         .written_bits = 0,
         .frequencies = [_]usize{0} ** 256,
-        .enc_map = [_]?NodeEncoding{null} ** 256,
+        .enc_map = [_]?HuffmanEncoding{null} ** 256,
         // The array will grow if the capacity turns out to be too low
-        .array = try std.ArrayList(Node).initCapacity(allocator, 2*256),
+        .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*256),
     };
 
     const dec_map = try build_huffman_tree(&ctx);
@@ -60,7 +60,7 @@ pub fn compress(
             break;
         };
         if (ctx.enc_map[@intCast(c)]) |enc| {
-            try write_bits(&ctx, enc.bits, enc.bit_shift);
+            try write_bits_be(&ctx, enc.bits, enc.bit_shift);
             util.print_char("Encoded", c);
         } else {
             log.err(@src(), "Unexpected byte: 0x{x}", .{c});
@@ -77,20 +77,20 @@ pub fn compress(
     return dec_map;
 }
 
-fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(NodeEncoding, u8) {
+fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEncoding, u8) {
     // 1. Get frequencies from the input stream
     const queue_cnt = try calculate_frequencies(ctx);
     dump_frequencies(ctx);
 
     // 2. Create a queue of nodes to place into the tree
-    var queue = try ctx.allocator.alloc(Node, queue_cnt);
+    var queue = try ctx.allocator.alloc(HuffmanTreeNode, queue_cnt);
     var index: usize = 0;
     for (0..ctx.frequencies.len) |i| {
         const c: u8 = @truncate(i);
         if (ctx.frequencies[c] == 0) {
             continue;
         }
-        queue[index] = Node {
+        queue[index] = HuffmanTreeNode {
             .char = c,
             .weight = 15, // placeholder
             .freq = ctx.frequencies[c],
@@ -99,7 +99,7 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(NodeEncodin
         };
         // Sort in descending order with the highest frequency+weight first
         index += 1;
-        std.sort.insertion(Node, queue[0..index], {}, Node.greater_than);
+        std.sort.insertion(HuffmanTreeNode, queue[0..index], {}, HuffmanTreeNode.greater_than);
     }
     log.debug(@src(), "Initial node count: {}", .{queue_cnt});
 
@@ -138,7 +138,7 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(NodeEncodin
     try build_canonical_encoding(ctx);
 
     // 5. Return the decoding map
-    var dec_map = std.AutoHashMap(NodeEncoding, u8).init(ctx.allocator);
+    var dec_map = std.AutoHashMap(HuffmanEncoding, u8).init(ctx.allocator);
     // enc_map: Symbol       -> Huffman bits
     // dec_map: Huffman bits -> Symbol
     for (0..ctx.enc_map.len) |i| {
@@ -156,7 +156,7 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(NodeEncodin
 /// `max_depth` is insufficient.
 fn construct_max_depth_tree(
     ctx: *HuffmanCompressContext,
-    queue_initial: *[]Node,
+    queue_initial: *[]HuffmanTreeNode,
     queue_initial_cnt: usize,
     max_depth: u4,
 ) !void {
@@ -164,14 +164,14 @@ fn construct_max_depth_tree(
     var array_cnt: usize = 0;
     var filled_cnt: usize = 0;
     var current_depth: u4 = max_depth;
-    var queue = try ctx.allocator.alloc(Node, queue_initial_cnt);
+    var queue = try ctx.allocator.alloc(HuffmanTreeNode, queue_initial_cnt);
 
     // Start from an empty array
     ctx.array.clearRetainingCapacity();
 
     // Let all nodes start at the bottom (lowest possible weight value)
     for (0..queue_initial_cnt) |i| {
-        queue[i] = Node {
+        queue[i] = HuffmanTreeNode {
             .char = queue_initial.*[i].char,
             .weight = 0,
             .freq = queue_initial.*[i].freq,
@@ -219,7 +219,7 @@ fn construct_max_depth_tree(
                              else right_child.weight + 1;
 
         // Save the children from the queue into the backing array
-        // XXX: the backing array is unsorted, the tree structure is derived from each `Node`
+        // XXX: the backing array is unsorted, the tree structure is derived from each `HuffmanTreeNode`
         try ctx.array.append(left_child);
         try ctx.array.append(right_child);
         array_cnt += 2;
@@ -228,7 +228,7 @@ fn construct_max_depth_tree(
         // Create the parent node
         // We always create parent nodes with both child positions filled,
         // the child pointers of this node will not change after creation.
-        const parent_node = Node {
+        const parent_node = HuffmanTreeNode {
             .char = undefined,
             .freq = left_child.freq + right_child.freq,
             .weight = parent_weight,
@@ -240,7 +240,7 @@ fn construct_max_depth_tree(
         // one of the children and dropping the other
         queue_cnt -= 1;
         queue[queue_cnt - 1] = parent_node;
-        std.sort.insertion(Node, queue[0..queue_cnt], {}, Node.greater_than);
+        std.sort.insertion(HuffmanTreeNode, queue[0..queue_cnt], {}, HuffmanTreeNode.greater_than);
     }
 }
 
@@ -256,7 +256,8 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
         return;
     }
 
-    // Create the initial translation map from 1 byte characters onto encoded Huffman symbols.
+    // Create the initial translation map from 1 byte characters onto encoded
+    // Huffman symbols.
     try walk_generate_translation(ctx, ctx.array.items.len - 1, 0, 0);
 
     // 1. Count how many entries there are for each code length (bit length)
@@ -289,7 +290,7 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
     // all codes of the same length with the base values determined at step
     for (0..ctx.enc_map.len) |i| {
         if (ctx.enc_map[i]) |enc| {
-            const new_enc = NodeEncoding {
+            const new_enc = HuffmanEncoding {
                 .bit_shift = enc.bit_shift,
                 .bits = next_code[enc.bit_shift]
             };
@@ -317,7 +318,8 @@ fn walk_generate_translation(
     if (left_child_index == null and right_child_index == null) {
         // Reached leaf
         if (ctx.array.items[index].char) |char| {
-            const enc = NodeEncoding { .bit_shift = bit_shift, .bits = bits };
+            const shift = if (bit_shift == 0) 1 else bit_shift;
+            const enc = HuffmanEncoding { .bit_shift = shift, .bits = bits };
             ctx.enc_map[char] = enc;
         } else {
             log.err(@src(), "Missing character from leaf node", .{});
@@ -342,10 +344,24 @@ fn walk_generate_translation(
     }
 }
 
-fn write_bits(ctx: *HuffmanCompressContext, bits: u16, num_bits: u4) !void {
-    try ctx.bit_writer.writeBits(bits, num_bits);
-    util.print_bits(u16, "Output write", bits, num_bits, ctx.written_bits);
-    ctx.written_bits += num_bits;
+fn write_bits_be(ctx: *HuffmanCompressContext, value: u16, num_bits: u16) !void {
+    for (1..num_bits) |i_usize| {
+        const i: u4 = @intCast(i_usize);
+        const shift_by: u4 = @intCast(num_bits - i);
+
+        const bit: u1 = @truncate((value >> shift_by) & 1);
+        try write_bit(ctx, bit);
+    }
+
+    // Final least-significant bit
+    const bit: u1 = @truncate(value & 1);
+    try write_bit(ctx, bit);
+}
+
+fn write_bit(ctx: *HuffmanCompressContext, bit: u1) !void {
+    try ctx.bit_writer.writeBits(bit, 1);
+    util.print_bits(u16, "Output write", bit, 1, ctx.written_bits);
+    ctx.written_bits += 1;
 }
 
 /// Count the occurrences of each byte in `instream`
@@ -409,7 +425,7 @@ fn dump_tree(ctx: *HuffmanCompressContext, comptime depth: u4, index: usize) voi
     }
 }
 
-fn dump_encodings(enc_map: [256]?NodeEncoding) void {
+fn dump_encodings(enc_map: [256]?HuffmanEncoding) void {
     for (0..enc_map.len) |i| {
         const char: u8 = @truncate(i);
         if (enc_map[i]) |enc| {
