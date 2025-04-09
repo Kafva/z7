@@ -4,11 +4,13 @@ const log = @import("log.zig");
 /// Contains either a literal, a length encoding or a distance encoding.
 pub const FlateSymbol = union(enum) {
     char: u8,
-    length: TokenEncoding,
-    distance: TokenEncoding,
+    length: RangeSymbol,
+    distance: RangeSymbol,
 };
 
-pub const TokenEncoding = struct {
+pub const RangeSymbol = struct {
+    /// The exact length or distance that this symbol represents
+    value: ?u16,
     /// The symbol used to encode a length or distance (1..2**15)
     code: u16,
     /// The number of extra bits available for this code to represent more values
@@ -26,13 +28,21 @@ pub const TokenEncoding = struct {
         if (fmt.len != 0) {
             return std.fmt.invalidFmtError(fmt, self);
         }
-        return writer.print(
-            "{{ .code = {d}, .bit_count = {d}, .range_start = {d} }}",
-            .{self.code, self.bit_count, self.range_start}
-        );
+        if (self.value) |v| {
+            return writer.print(
+                "{{ .value = {d}, .code = {d}, .bit_count = {d}, .range_start = {d} }}",
+                .{v, self.code, self.bit_count, self.range_start}
+            );
+        }
+        else {
+            return writer.print(
+                "{{ .code = {d}, .bit_count = {d}, .range_start = {d} }}",
+                .{self.code, self.bit_count, self.range_start}
+            );
+        }
     }
 
-    /// Map a length onto a `TokenEncoding`
+    /// Map a length onto a `RangeSymbol`
     ///      Extra               Extra               Extra
     /// Code Bits Length(s) Code Bits Lengths   Code Bits Length(s)
     /// ---- ---- ------     ---- ---- -------   ---- ---- -------
@@ -46,7 +56,7 @@ pub const TokenEncoding = struct {
     ///  264   0    10       274   3   43-50     284   5  227-257
     ///  265   1  11,12      275   3   51-58     285   0    258
     ///  266   1  13,14      276   3   59-66
-    pub fn from_length(length: u16) TokenEncoding {
+    pub fn from_length(length: u16) RangeSymbol {
         const r: [3]u16 = switch (length) {
             3 => .{ 257, 0, 3 },
             4 => .{ 258, 0, 4 },
@@ -79,14 +89,15 @@ pub const TokenEncoding = struct {
             258 => .{ 285, 0, 258 },
             else => unreachable,
         };
-        return TokenEncoding {
+        return RangeSymbol {
+            .value = length,
             .code = r[0],
             .bit_count = @truncate(r[1]),
             .range_start = r[2]
         };
     }
 
-    /// Map a distance onto a `TokenEncoding`
+    /// Map a distance onto a `RangeSymbol`
     ///      Extra           Extra               Extra
     /// Code Bits Dist  Code Bits   Dist     Code Bits Distance
     /// ---- ---- ----  ---- ----  ------    ---- ---- --------
@@ -100,7 +111,7 @@ pub const TokenEncoding = struct {
     ///   7   2  13-16   17   7    385-512   27   12 12289-16384
     ///   8   3  17-24   18   8    513-768   28   13 16385-24576
     ///   9   3  25-32   19   8   769-1024   29   13 24577-32768
-    pub fn from_distance(distance: u16) TokenEncoding {
+    pub fn from_distance(distance: u16) RangeSymbol {
         const r: [3]u16 = switch (distance) {
             1 => .{0, 0, 1},
             2 => .{1, 0, 2},
@@ -134,15 +145,16 @@ pub const TokenEncoding = struct {
             24577...32768 => .{29, 13, 24577},
             else => unreachable,
         };
-        return TokenEncoding {
+        return RangeSymbol {
+            .value = distance,
             .code = r[0],
             .bit_count = @truncate(r[1]),
             .range_start = r[2]
         };
     }
 
-    /// Fetch the `TokenEncoding` for a given length 'Code'.
-    pub fn from_length_code(length_code: u16) TokenEncoding {
+    /// Fetch the `RangeSymbol` for a given length 'Code'.
+    pub fn from_length_code(length_code: u16) RangeSymbol {
         const r: [2]u16 = switch (length_code) {
             257 => .{ 0, 3 },
             258 => .{ 0, 4 },
@@ -175,15 +187,16 @@ pub const TokenEncoding = struct {
             285 => .{ 0, 258 },
             else => unreachable,
         };
-        return TokenEncoding {
+        return RangeSymbol {
+            .value = null,
             .code = length_code,
             .bit_count = @truncate(r[0]),
             .range_start = r[1]
         };
     }
 
-    /// Fetch the `TokenEncoding` for a given distance 'Code'.
-    pub fn from_distance_code(distance_code: u5) TokenEncoding {
+    /// Fetch the `RangeSymbol` for a given distance 'Code'.
+    pub fn from_distance_code(distance_code: u5) RangeSymbol {
         const r: [2]u16 = switch (distance_code) {
             0 => .{0, 1},
             1 => .{0, 2},
@@ -217,7 +230,8 @@ pub const TokenEncoding = struct {
             29 => .{13, 24577},
             else => unreachable,
         };
-        return TokenEncoding {
+        return RangeSymbol {
+            .value = null,
             .code = distance_code,
             .bit_count = @truncate(r[0]),
             .range_start = r[1]
@@ -232,6 +246,7 @@ pub const FlateError = error {
     InvalidLiteralLength,
     InvalidDistance,
     MissingTokenLiteral,
+    OutOfQueueSpace,
 };
 
 pub const FlateBlockType = enum(u2) {

@@ -7,7 +7,7 @@ const FlateBlockType = @import("flate.zig").FlateBlockType;
 const FlateError = @import("flate.zig").FlateError;
 const FlateSymbol = @import("flate.zig").FlateSymbol;
 const Token = @import("flate.zig").Token;
-const TokenEncoding = @import("flate.zig").TokenEncoding;
+const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
 const CompressContext = struct {
@@ -25,6 +25,7 @@ const CompressContext = struct {
     /// in memory so that we can create huffman trees for these symbols in
     /// block type-2.
     write_queue: []FlateSymbol,
+    write_queue_index: usize,
 };
 
 pub fn compress(
@@ -45,6 +46,7 @@ pub fn compress(
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length),
+        .write_queue_index = 0,
     };
 
     // Write block header
@@ -181,14 +183,20 @@ fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
             ctx.sliding_window.push(ctx.lookahead[i]);
         }
 
-        // Write the compressed representation of the lookahead characters
-        // onto the output stream
-        try fixed_code_write_match(
+        // Save the symbols for the characters in the lookahead
+        try queue_symbol(
             ctx,
             lookahead_end,
             longest_match_length,
-            longest_match_distance,
+            longest_match_distance
         );
+
+        // try fixed_code_write_match(
+        //     ctx,
+        //     lookahead_end,
+        //     longest_match_length,
+        //     longest_match_distance,
+        // );
 
         // Set starting byte for next iteration
         if (longest_match_length == 0 or
@@ -211,6 +219,12 @@ fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !bool {
         }
     }
 
+    // Encode everything from the write queue onto the output stream
+    for (0..ctx.write_queue_index) |i| {
+        try fixed_code_write_symbol(ctx, ctx.write_queue[i]);        
+    }
+    ctx.write_queue_index = 0;
+
     // End-of-block marker (with static Huffman encoding: 0000_000 -> 256)
     try write_bits(ctx, u7, @as(u7, 0), 7);
     return done;
@@ -222,9 +236,7 @@ fn dynamic_code_compress_block(ctx: *CompressContext, block_length: usize) !bool
     return true;
 }
 
-/// Write the bits for the provided match length and distance to the output
-/// stream.
-fn fixed_code_write_match(
+fn queue_symbol(
     ctx: *CompressContext,
     lookahead_end: u16,
     longest_match_length: u16,
@@ -233,77 +245,101 @@ fn fixed_code_write_match(
     if (longest_match_length <= Flate.min_length_match) {
         // Prefer raw characters for small matches
         for (0..lookahead_end) |i| {
-            const char = ctx.lookahead[i];
+            if (ctx.write_queue_index + 1 >= Flate.block_length) {
+                return FlateError.OutOfQueueSpace;
+            }
+            const symbol = FlateSymbol { .char = ctx.lookahead[i] };
+            ctx.write_queue[ctx.write_queue_index] = symbol;
+            ctx.write_queue_index += 1;
+        }
+    }
+    else {
+        if (ctx.write_queue_index + 2 >= Flate.block_length) {
+            return FlateError.OutOfQueueSpace;
+        }
+
+        // Add the length symbol for the back-reference
+        const lenc = RangeSymbol.from_length(longest_match_length);
+        const lsymbol = FlateSymbol { .length = lenc };
+        ctx.write_queue[ctx.write_queue_index] = lsymbol;
+        ctx.write_queue_index += 1;
+
+        // Add the distance symbol for the back-reference
+        const denc = RangeSymbol.from_distance(longest_match_distance);
+        const dsymbol = FlateSymbol { .distance = denc };
+        ctx.write_queue[ctx.write_queue_index] = dsymbol;
+        ctx.write_queue_index += 1;
+    }
+}
+
+/// Write the bits for the provided match length and distance to the output
+/// stream.
+fn fixed_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
+    log.debug(@src(), "{any}", .{sym});
+    switch (sym) {
+        .char => {
             // Lit Value    Bits        Codes
             // ---------    ----        -----
             //   0 - 143     8          00110000 through
             //                          10111111
             // 144 - 255     9          110010000 through
             //                          111111111
-            if (char < 144) {
-                try write_bits_be(ctx, u8, 0b0011_0000 + char, 8);
+            if (sym.char < 144) {
+                try write_bits_be(ctx, u8, 0b0011_0000 + sym.char, 8);
             }
             else {
-                const char_9: u9 = 0b1_1001_0000 + @as(u9, char - 144);
+                const char_9: u9 = 0b1_1001_0000 + @as(u9, sym.char - 144);
                 try write_bits_be(ctx, u9, char_9, 9);
             }
-        }
-    }
-    else {
-        // Lookup the encoding for the token length
-        const enc = TokenEncoding.from_length(longest_match_length);
-        log.debug(@src(), "backref(length): {any} ({d})", .{enc, longest_match_length});
+        },
+        .length => {
+            // Translate the length to the corresponding code
+            //
+            // 256 - 279     7          000_0000 through
+            //                          001_0111
+            // 280 - 287     8          1100_0000 through
+            //                          1100_0111
+            if (sym.length.code < 280) {
+                // Write the Huffman encoding of 'Code'
+                const hcode: u7 = @truncate(sym.length.code - 256);
+                try write_bits_be(ctx, u7, 0b000_0000 + hcode, 7);
+            }
+            else {
+                const hcode: u8 = @truncate(sym.length.code - 280);
+                try write_bits_be(ctx, u8, 0b1100_0000 + hcode, 8);
+            }
+            log.debug(@src(), "backref(length): {any}", .{sym.length});
 
-        if (enc.code < 256 or enc.code > 285) {
-            return FlateError.InvalidLiteralLength;
-        }
+            // Write the 'Extra Bits', i.e. the offset that indicate
+            // the exact offset to use in the range.
+            if (sym.length.code != 0) {
+                const offset = sym.length.value.? - sym.length.range_start;
+                try write_bits(
+                    ctx,
+                    u16,
+                    offset,
+                    sym.length.bit_count
+                );
+                log.debug(@src(), "backref(length-offset): {d}", .{offset});
+            }
+        },
+        .distance => {
+            const denc_code: u5 = @truncate(sym.distance.code);
+            try write_bits_be(ctx, u5, denc_code, 5);
+            log.debug(@src(), "backref(distance): {any}", .{sym.distance});
 
-        // Translate the length to the corresponding code
-        //
-        // 256 - 279     7          000_0000 through
-        //                          001_0111
-        // 280 - 287     8          1100_0000 through
-        //                          1100_0111
-        if (enc.code < 280) {
-            // Write the huffman encoding of 'Code'
-            const hcode: u7 = @truncate(enc.code - 256);
-            try write_bits_be(ctx, u7, 0b000_0000 + hcode, 7);
-        }
-        else {
-            const hcode: u8 = @truncate(enc.code - 280);
-            try write_bits_be(ctx, u8, 0b1100_0000 + hcode, 8);
-        }
-
-        // Write the 'Extra Bits', i.e. the offset that indicate
-        // the exact offset to use in the range.
-        if (enc.code != 0) {
-            const offset = longest_match_length - enc.range_start;
-            try write_bits(
-                ctx,
-                u16,
-                offset,
-                enc.bit_count
-            );
-            log.debug(@src(), "backref(length-offset): {d}", .{offset});
-        }
-
-        // Write the 'Distance' encoding
-        const denc = TokenEncoding.from_distance(longest_match_distance);
-        log.debug(@src(), "backref(distance): {any} ({d})", .{denc, longest_match_distance});
-        const denc_code: u5 = @truncate(denc.code);
-        try write_bits_be(ctx, u5, denc_code, 5);
-
-        // Write the offset bits for the distance
-        if (denc.bit_count != 0) {
-            const offset = longest_match_distance - denc.range_start;
-            try write_bits(
-                ctx,
-                u16,
-                offset,
-                denc.bit_count
-            );
-            log.debug(@src(), "backref(distance-offset): {d}", .{offset});
-        }
+            // Write the offset bits for the distance
+            if (sym.distance.bit_count != 0) {
+                const offset = sym.distance.value.? - sym.distance.range_start;
+                try write_bits(
+                    ctx,
+                    u16,
+                    offset,
+                    sym.distance.bit_count
+                );
+                log.debug(@src(), "backref(distance-offset): {d}", .{offset});
+            }
+        },
     }
 }
 

@@ -6,7 +6,7 @@ const Flate = @import("flate.zig").Flate;
 const FlateBlockType = @import("flate.zig").FlateBlockType;
 const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
-const TokenEncoding = @import("flate.zig").TokenEncoding;
+const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
 const DecompressError = error {
@@ -182,8 +182,8 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
         else if (b < 285) {
             log.debug(@src(), "backref(length-code): {d}", .{b});
 
-            // Get the corresponding `TokenEncoding` for the 'Code'
-            const enc = TokenEncoding.from_length_code(b);
+            // Get the corresponding `RangeSymbol` for the 'Code'
+            const enc = RangeSymbol.from_length_code(b);
 
             // 2. Determine the length of the match
             const length: u16 = blk: {
@@ -205,7 +205,7 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
             const distance_code = read_bits_be(ctx, 5) catch {
                 return FlateError.UnexpectedEof;
             };
-            const denc = TokenEncoding.from_distance_code(@truncate(distance_code));
+            const denc = RangeSymbol.from_distance_code(@truncate(distance_code));
             log.debug(@src(), "backref(distance-code): {d}", .{distance_code});
 
             const distance: u16 = blk: {

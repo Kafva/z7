@@ -172,7 +172,7 @@ fn parse_string(ctx: *GunzipContext, prefix: []const u8) !void {
     if (b != 0) {
         return GunzipError.TruncatedHeaderFname;
     }
-    log.debug(@src(), "{s}: '{s}'", .{prefix, str});
+    log.debug(@src(), "{s}: '{s}'", .{prefix, str[0..i-1]});
 }
 
 /// +---+---+---+---+---+---+==================================+
