@@ -57,10 +57,10 @@ pub fn compress(
             try no_compression_compress_block(&ctx, insize);
         },
         FlateBlockType.FIXED_HUFFMAN => {
-            try fixed_code_compress_block(&ctx);
+            try fixed_code_compress_block(&ctx, insize);
         },
         FlateBlockType.DYNAMIC_HUFFMAN => {
-            return FlateError.NotImplemented;
+            try dynamic_code_compress_block(&ctx, insize);
         },
         else => unreachable
     }
@@ -92,7 +92,8 @@ fn no_compression_compress_block(ctx: *CompressContext, length: u16) !void {
     }
 }
 
-fn fixed_code_compress_block(ctx: *CompressContext) !void {
+fn fixed_code_compress_block(ctx: *CompressContext, block_length: usize) !void {
+    const end: usize = ctx.processed_bits + block_length*8;
     var done = false;
     ctx.lookahead[0] = blk: {
         break :blk read_byte(ctx) catch {
@@ -101,7 +102,7 @@ fn fixed_code_compress_block(ctx: *CompressContext) !void {
         };
     };
 
-    while (!done) {
+    while (!done and ctx.processed_bits - 1 < end) {
         // The current number of matches within the lookahead
         var match_length: u16 = 0;
         // Max number of matches in the lookahead this iteration
@@ -202,6 +203,11 @@ fn fixed_code_compress_block(ctx: *CompressContext) !void {
 
     // End-of-block marker (with static Huffman encoding: 0000_000 -> 256)
     try write_bits(ctx, u7, @as(u7, 0), 7);
+}
+
+fn dynamic_code_compress_block(ctx: *CompressContext, block_length: usize) !void {
+    _ = ctx;
+    _ = block_length;
 }
 
 /// Write the bits for the provided match length and distance to the output
