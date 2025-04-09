@@ -9,10 +9,9 @@ const symbols_size = @import("huffman.zig").symbols_size;
 
 const HuffmanCompressContext = struct {
     allocator: std.mem.Allocator,
-    instream: *const std.fs.File,
-    outstream: *const std.fs.File,
-    reader: std.io.AnyReader,
-    bit_writer: std.io.BitWriter(.little, std.io.AnyWriter),
+    instream: ?*const std.fs.File,
+    reader: ?std.io.AnyReader,
+    bit_writer: ?std.io.BitWriter(.little, std.io.AnyWriter),
     written_bits: usize,
     /// The frequency of each byte value to rely on when constructing the
     /// Huffman code
@@ -32,7 +31,6 @@ pub fn compress(
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
         .instream = instream,
-        .outstream = outstream,
         .reader = instream.reader().any(),
         .bit_writer = std.io.bitWriter(.little, outstream.writer().any()),
         .written_bits = 0,
@@ -41,6 +39,10 @@ pub fn compress(
         // The array will grow if the capacity turns out to be too low
         .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbols_size),
     };
+
+    // Get frequencies from the input stream
+    _ = try calculate_frequencies(&ctx);
+    dump_frequencies(&ctx);
 
     const dec_map = try build_huffman_tree(&ctx);
 
@@ -51,7 +53,7 @@ pub fn compress(
 
     // Write the translations to the output stream
     while (true) {
-        const c = ctx.reader.readByte() catch {
+        const c = ctx.reader.?.readByte() catch {
             break;
         };
         if (ctx.enc_map[@intCast(c)]) |enc| {
@@ -63,7 +65,7 @@ pub fn compress(
         }
     }
 
-    try ctx.bit_writer.flushBits();
+    try ctx.bit_writer.?.flushBits();
     log.debug(@src(), "Wrote {} bits [{} bytes]", .{ctx.written_bits, ctx.written_bits / 8});
 
     // The decoder needs to know the exact number of bits, otherwise the extra
@@ -72,34 +74,28 @@ pub fn compress(
     return dec_map;
 }
 
-// pub fn build_context(
-//     allocator: std.mem.Allocator,
-//     instream: *const std.fs.File,
-//     outstream: *const std.fs.File,
-// ) !std.AutoHashMap(HuffmanEncoding, u16) {
-//     var ctx = HuffmanCompressContext {
-//         .allocator = allocator,
-//         .instream = instream,
-//         .outstream = outstream,
-//         .reader = instream.reader().any(),
-//         .bit_writer = std.io.bitWriter(.little, outstream.writer().any()),
-//         .written_bits = 0,
-//         .frequencies = [_]usize{0} ** symbols_size,
-//         .enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
-//         // The array will grow if the capacity turns out to be too low
-//         .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbols_size),
-//     };
+pub fn build_encoding(
+    allocator: std.mem.Allocator,
+    frequencies: []u16,
+) !std.AutoHashMap(HuffmanEncoding, u16) {
+    var ctx = HuffmanCompressContext {
+        .allocator = allocator,
+        .instream = null,
+        .reader = null,
+        .bit_writer = null,
+        .written_bits = 0,
+        .frequencies = frequencies,
+        .enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
+        .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbols_size),
+    };
 
-//     return try build_huffman_tree(&ctx);
-// }
+    return try build_huffman_tree(&ctx);
+}
 
+/// Assumes that `ctx.frequencies` has already been populated
 fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEncoding, u16) {
-    // 1. Get frequencies from the input stream
-    const queue_cnt = try calculate_frequencies(ctx);
-    dump_frequencies(ctx);
-
-    // 2. Create a queue of nodes to place into the tree
-    var queue = try ctx.allocator.alloc(HuffmanTreeNode, queue_cnt);
+    // 1. Create a queue of nodes to place into the tree
+    var queue = try ctx.allocator.alloc(HuffmanTreeNode, ctx.frequencies.len);
     var index: usize = 0;
     for (0..ctx.frequencies.len) |i| {
         const v: u16 = @truncate(i);
@@ -117,6 +113,7 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEnco
         index += 1;
         std.sort.insertion(HuffmanTreeNode, queue[0..index], {}, HuffmanTreeNode.greater_than);
     }
+    const queue_cnt = index;
     log.debug(@src(), "Initial node count: {}", .{queue_cnt});
 
     // 3. Create the tree, we need to make sure that we do not grow
@@ -381,7 +378,7 @@ fn write_bits_be(ctx: *HuffmanCompressContext, value: u16, num_bits: u16) !void 
 }
 
 fn write_bit(ctx: *HuffmanCompressContext, bit: u1) !void {
-    try ctx.bit_writer.writeBits(bit, 1);
+    try ctx.bit_writer.?.writeBits(bit, 1);
     util.print_bits(u16, "Output write", bit, 1, ctx.written_bits);
     ctx.written_bits += 1;
 }
@@ -390,7 +387,7 @@ fn write_bit(ctx: *HuffmanCompressContext, bit: u1) !void {
 fn calculate_frequencies(ctx: *HuffmanCompressContext) !usize {
     var cnt: usize = 0;
     while (true) {
-        const c = ctx.reader.readByte() catch {
+        const c = ctx.reader.?.readByte() catch {
             break;
         };
         if (ctx.frequencies[c] == 0) {
@@ -399,7 +396,7 @@ fn calculate_frequencies(ctx: *HuffmanCompressContext) !usize {
         ctx.frequencies[c] += 1;
     }
     // Reset the positiion in the input stream
-    try ctx.instream.seekTo(0);
+    try ctx.instream.?.seekTo(0);
     return cnt;
 }
 

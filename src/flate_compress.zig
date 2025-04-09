@@ -9,7 +9,9 @@ const FlateSymbol = @import("flate.zig").FlateSymbol;
 const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
+const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const symbols_size = @import("huffman.zig").symbols_size;
+const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
 
 const CompressContext = struct {
     allocator: std.mem.Allocator,
@@ -27,6 +29,10 @@ const CompressContext = struct {
     /// block type-2.
     write_queue: []FlateSymbol,
     write_queue_index: usize,
+    /// Literal/Length Huffman encoding mappings for block type-2
+    ll_enc_map: ?[symbols_size]?HuffmanEncoding,
+    /// Distance Huffman encoding mappings for block type-2
+    d_enc_map: ?[31]?HuffmanEncoding,
 };
 
 pub fn compress(
@@ -48,6 +54,8 @@ pub fn compress(
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length),
         .write_queue_index = 0,
+        .ll_enc_map = null,
+        .d_enc_map = null,
     };
 
     // Write block header
@@ -212,6 +220,11 @@ fn write_compressed_block(ctx: *CompressContext, block_length: usize) !bool {
 
     // TODO: analyze write queue and decide which type to use
 
+    if (ctx.block_type == FlateBlockType.DYNAMIC_HUFFMAN) {
+        // TODO: write dynamic block header
+        // TODO: write encoded ll_enc_map and d_enc_map
+    }
+
     // Encode everything from the write queue onto the output stream
     for (0..ctx.write_queue_index) |i| {
         switch (ctx.block_type) {
@@ -289,13 +302,67 @@ fn dynamic_huffman_code_gen(ctx: *CompressContext) !void {
             }
         }
     }
+
+    ctx.ll_enc_map = try huffman_build_encoding(ctx.allocator, ll_freq);
+    ctx.d_enc_map = try huffman_build_encoding(ctx.allocator, d_freq);
 }
 
 fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
-    _ = ctx;
-    _ = sym;
-    // var enc_len: usize = 0;
-    // const dec_map = huffman_compress(ctx.allocator, &enc_len, ,);
+    const enc: ?HuffmanEncoding = blk: {
+        switch (sym) {
+            .length => {
+                break :blk ctx.ll_enc_map.?[sym.length.value.?];
+            },
+            .distance => {
+                break :blk ctx.d_enc_map.?[sym.distance.value.?];
+            },
+            .char => {
+                break :blk ctx.ll_enc_map.?[@intCast(sym.char)];
+            },
+        }
+    };
+
+    // Write the encoded symbol
+    if (enc) |v| {
+        if (v.bit_shift == 9) {
+            try write_bits_be(ctx, u9, @truncate(v.bits), v.bit_shift);
+        }
+        else if (v.bit_shift <= 8) {
+            try write_bits_be(ctx, u8, @truncate(v.bits), v.bit_shift);
+        }
+        else unreachable;
+    } else {
+        return FlateError.InvalidSymbol;
+    }
+
+    // Write the offset bits
+    switch (sym) {
+        .length => {
+            if (sym.length.code != 0) {
+                const offset = sym.length.value.? - sym.length.range_start;
+                try write_bits(
+                    ctx,
+                    u16,
+                    offset,
+                    sym.length.bit_count
+                );
+                log.debug(@src(), "backref(length-offset): {d}", .{offset});
+            }
+        },
+        .distance => {
+            if (sym.distance.bit_count != 0) {
+                const offset = sym.distance.value.? - sym.distance.range_start;
+                try write_bits(
+                    ctx,
+                    u16,
+                    offset,
+                    sym.distance.bit_count
+                );
+                log.debug(@src(), "backref(distance-offset): {d}", .{offset});
+            }
+        },
+        else => {}
+    }
 }
 
 /// Write the bits for the provided match length and distance to the output

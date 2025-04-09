@@ -2,8 +2,9 @@ const std = @import("std");
 const util = @import("util.zig");
 const log = @import("log.zig");
 
-/// The maximum number of different possible `FlateSymbol` values
-pub const symbols_size: u16 = 286; // 256;
+/// The maximum number of different possible `FlateSymbol` values,
+/// 285 is the largest valid length/literal symbol for deflate.
+pub const symbols_size: u16 = 286;
 const color_base: u8 = 214;
 
 pub const HuffmanError = error {

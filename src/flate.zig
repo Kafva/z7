@@ -244,6 +244,7 @@ pub const FlateError = error {
     UnexpectedBlockType,
     UnexpectedEof,
     InvalidLiteralLength,
+    InvalidSymbol,
     InvalidDistance,
     MissingTokenLiteral,
     OutOfQueueSpace,
