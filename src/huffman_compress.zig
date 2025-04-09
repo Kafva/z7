@@ -41,10 +41,10 @@ pub fn compress(
     };
 
     // Get frequencies from the input stream
-    _ = try calculate_frequencies(&ctx);
+    const symbol_count = try calculate_frequencies(&ctx);
     dump_frequencies(&ctx);
 
-    const dec_map = try build_huffman_tree(&ctx);
+    const dec_map = try build_huffman_tree(&ctx, symbol_count);
 
     if (ctx.array.items.len == 0) {
         log.debug(@src(), "Nothing to compress", .{});
@@ -76,8 +76,10 @@ pub fn compress(
 
 pub fn build_encoding(
     allocator: std.mem.Allocator,
-    frequencies: []u16,
-) !std.AutoHashMap(HuffmanEncoding, u16) {
+    enc_map: *[symbols_size]?HuffmanEncoding,
+    frequencies: [symbols_size]usize,
+    symbol_count: usize,
+) !void {
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
         .instream = null,
@@ -89,13 +91,21 @@ pub fn build_encoding(
         .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbols_size),
     };
 
-    return try build_huffman_tree(&ctx);
+    _ = try build_huffman_tree(&ctx, symbol_count);
+
+    // Save the encoding
+    for (0..ctx.enc_map.len) |i| {
+        enc_map.*[i] = ctx.enc_map[i];
+    }
 }
 
 /// Assumes that `ctx.frequencies` has already been populated
-fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEncoding, u16) {
+fn build_huffman_tree(
+    ctx: *HuffmanCompressContext,
+    symbol_count: usize,
+) !std.AutoHashMap(HuffmanEncoding, u16) {
     // 1. Create a queue of nodes to place into the tree
-    var queue = try ctx.allocator.alloc(HuffmanTreeNode, ctx.frequencies.len);
+    var queue = try ctx.allocator.alloc(HuffmanTreeNode, symbol_count);
     var index: usize = 0;
     for (0..ctx.frequencies.len) |i| {
         const v: u16 = @truncate(i);
@@ -113,8 +123,7 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEnco
         index += 1;
         std.sort.insertion(HuffmanTreeNode, queue[0..index], {}, HuffmanTreeNode.greater_than);
     }
-    const queue_cnt = index;
-    log.debug(@src(), "Initial node count: {}", .{queue_cnt});
+    log.debug(@src(), "Initial node count: {}", .{symbol_count});
 
     // 3. Create the tree, we need to make sure that we do not grow
     // the tree deeper than 15 levels so that every leaf can be encoded
@@ -129,15 +138,15 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEnco
     // Iterative approach, try to create a tree with all slots filled up to depth x
     // On failure, try again with all slots up to depth x+1, etc.
     const maxdepth_start = blk: {
-        if (queue_cnt == 0) {
+        if (symbol_count == 0) {
             break :blk 0;
         }
         // log2(queue_count) + 1 will give us the maxdepth at which all of our nodes
         // fit on the lowest depth, we start from one depth before this.
-        break :blk std.math.log2(queue_cnt);
+        break :blk std.math.log2(symbol_count);
     };
     for (maxdepth_start..16) |i| {
-        construct_max_depth_tree(ctx, &queue, queue_cnt, @truncate(i)) catch |e| {
+        construct_max_depth_tree(ctx, &queue, symbol_count, @truncate(i)) catch |e| {
             if (e == HuffmanError.MaxDepthInsufficent and i < 15) {
                 continue;
             }
@@ -161,11 +170,13 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEnco
         }
     }
 
-    log.debug(@src(), "Non-canonical tree:", .{});
-    dump_tree(ctx, 0, ctx.array.items.len - 1);
+    if (ctx.array.items.len > 0) {
+        log.debug(@src(), "Non-canonical tree:", .{});
+        dump_tree(ctx, 0, ctx.array.items.len - 1);
 
-    log.debug(@src(), "Canonical encodings:", .{});
-    dump_encodings(ctx.enc_map);
+        log.debug(@src(), "Canonical encodings:", .{});
+        dump_encodings(ctx.enc_map);
+    }
 
     return dec_map;
 }

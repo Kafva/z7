@@ -30,9 +30,9 @@ const CompressContext = struct {
     write_queue: []FlateSymbol,
     write_queue_index: usize,
     /// Literal/Length Huffman encoding mappings for block type-2
-    ll_enc_map: ?[symbols_size]?HuffmanEncoding,
+    ll_enc_map: [symbols_size]?HuffmanEncoding,
     /// Distance Huffman encoding mappings for block type-2
-    d_enc_map: ?[31]?HuffmanEncoding,
+    d_enc_map: [symbols_size]?HuffmanEncoding, // Maxsize is actually 31
 };
 
 pub fn compress(
@@ -54,8 +54,8 @@ pub fn compress(
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length),
         .write_queue_index = 0,
-        .ll_enc_map = null,
-        .d_enc_map = null,
+        .ll_enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
+        .d_enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
     };
 
     // Write block header
@@ -221,6 +221,9 @@ fn write_compressed_block(ctx: *CompressContext, block_length: usize) !bool {
     // TODO: analyze write queue and decide which type to use
 
     if (ctx.block_type == FlateBlockType.DYNAMIC_HUFFMAN) {
+        // Generate `ll_enc_map` and `d_enc_map` based on the current
+        // `write_queue` content.
+        try dynamic_huffman_code_gen(ctx);
         // TODO: write dynamic block header
         // TODO: write encoded ll_enc_map and d_enc_map
     }
@@ -281,43 +284,55 @@ fn queue_symbol(
 }
 
 fn dynamic_huffman_code_gen(ctx: *CompressContext) !void {
-    var ll_freq = [_]u16{0} ** symbols_size;
-    var d_freq = [_]u16{0} ** 31;
+    var ll_freq = [_]usize{0} ** symbols_size;
+    var d_freq = [_]usize{0} ** symbols_size; // 31
+    var ll_cnt: usize = 0;
+    var d_cnt: usize = 0;
 
     // Calculate the frequency of each `FlateSymbol`
-    for (ctx.write_queue) |sym| {
+    for (0..ctx.write_queue_index) |i| {
+        const sym = ctx.write_queue[i];
         switch (sym) {
             .length => {
                 if (sym.length.value) |v| {
+                    if (ll_freq[v] == 0) {
+                        ll_cnt += 1;
+                    }
                     ll_freq[v] += 1;
                 }
             },
             .distance => {
                 if (sym.distance.value) |v| {
+                    if (d_freq[v] == 0) {
+                        d_cnt += 1;
+                    }
                     d_freq[v] += 1;
                 }
             },
             .char => {
-                ll_freq[sym.length.char] += 1;
+                if (ll_freq[sym.char] == 0) {
+                    ll_cnt += 1;
+                }
+                ll_freq[sym.char] += 1;
             }
         }
     }
 
-    ctx.ll_enc_map = try huffman_build_encoding(ctx.allocator, ll_freq);
-    ctx.d_enc_map = try huffman_build_encoding(ctx.allocator, d_freq);
+    try huffman_build_encoding(ctx.allocator, &ctx.ll_enc_map, ll_freq, ll_cnt);
+    try huffman_build_encoding(ctx.allocator, &ctx.d_enc_map, d_freq, d_cnt);
 }
 
 fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
     const enc: ?HuffmanEncoding = blk: {
         switch (sym) {
             .length => {
-                break :blk ctx.ll_enc_map.?[sym.length.value.?];
+                break :blk ctx.ll_enc_map[sym.length.value.?];
             },
             .distance => {
-                break :blk ctx.d_enc_map.?[sym.distance.value.?];
+                break :blk ctx.d_enc_map[sym.distance.value.?];
             },
             .char => {
-                break :blk ctx.ll_enc_map.?[@intCast(sym.char)];
+                break :blk ctx.ll_enc_map[@intCast(sym.char)];
             },
         }
     };
