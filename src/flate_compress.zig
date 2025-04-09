@@ -230,11 +230,6 @@ fn write_compressed_block(ctx: *CompressContext, block_length: usize) !bool {
     return done;
 }
 
-fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
-    _ = ctx;
-    _ = sym;
-}
-
 fn queue_symbol(
     ctx: *CompressContext,
     lookahead_end: u16,
@@ -271,10 +266,16 @@ fn queue_symbol(
     }
 }
 
+fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
+    _ = ctx;
+    _ = sym;
+    // var enc_len: usize = 0;
+    // const dec_map = huffman_compress(ctx.allocator, &enc_len, ,);
+}
+
 /// Write the bits for the provided match length and distance to the output
 /// stream.
 fn fixed_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
-    log.debug(@src(), "{any}", .{sym});
     switch (sym) {
         .char => {
             // Lit Value    Bits        Codes

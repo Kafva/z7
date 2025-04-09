@@ -48,12 +48,6 @@ pub fn compress(
         return dec_map;
     }
 
-    log.debug(@src(), "Non-canonical tree:", .{});
-    dump_tree(&ctx, 0, ctx.array.items.len - 1);
-
-    log.debug(@src(), "Canonical encodings:", .{});
-    dump_encodings(ctx.enc_map);
-
     // Write the translations to the output stream
     while (true) {
         const c = ctx.reader.readByte() catch {
@@ -75,6 +69,27 @@ pub fn compress(
     // padding from flushing to a full byte will be read as garbage.
     enc_len.* = ctx.written_bits;
     return dec_map;
+}
+
+pub fn build_context(
+    allocator: std.mem.Allocator,
+    instream: *const std.fs.File,
+    outstream: *const std.fs.File,
+) !std.AutoHashMap(HuffmanEncoding, u8) {
+    var ctx = HuffmanCompressContext {
+        .allocator = allocator,
+        .instream = instream,
+        .outstream = outstream,
+        .reader = instream.reader().any(),
+        .bit_writer = std.io.bitWriter(.little, outstream.writer().any()),
+        .written_bits = 0,
+        .frequencies = [_]usize{0} ** 256,
+        .enc_map = [_]?HuffmanEncoding{null} ** 256,
+        // The array will grow if the capacity turns out to be too low
+        .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*256),
+    };
+
+    return try build_huffman_tree(&ctx);
 }
 
 fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEncoding, u8) {
@@ -147,6 +162,12 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEnco
             try dec_map.putNoClobber(enc, c);
         }
     }
+
+    log.debug(@src(), "Non-canonical tree:", .{});
+    dump_tree(&ctx, 0, ctx.array.items.len - 1);
+
+    log.debug(@src(), "Canonical encodings:", .{});
+    dump_encodings(ctx.enc_map);
 
     return dec_map;
 }
