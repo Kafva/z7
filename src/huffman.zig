@@ -3,7 +3,7 @@ const util = @import("util.zig");
 const log = @import("log.zig");
 
 /// The maximum number of different possible `FlateSymbol` values
-pub const symbols_size: u16 = 286;
+pub const symbols_size: u16 = 286; // 256;
 const color_base: u8 = 214;
 
 pub const HuffmanError = error {
@@ -41,29 +41,43 @@ pub const HuffmanEncoding = struct {
                             .{self.bit_shift, self.bits});
     }
 
-    pub fn dump_mapping(self: *const @This(), char: u8) void {
+    pub fn dump_mapping(self: *const @This(), value: u16) void {
         const istty = std.io.getStdErr().isTty();
         const color: u8 = color_base + @as(u8, self.bit_shift);
-        if (std.ascii.isPrint(char)) {
-            if (istty) {
-                log.debug(
-                    @src(),
-                    "(0x{x:0>2}) '{c}' -> \x1b[38;5;{d}m{any}\x1b[0m",
-                    .{char, char, color, self}
-                );
+        if (value < 256) {
+            const char: u8 = @truncate(value);
+            if (std.ascii.isPrint(char)) {
+                if (istty) {
+                    log.debug(
+                        @src(),
+                        "(0x{x:0>2}) '{c}' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                        .{char, char, color, self}
+                    );
+                }
+                else {
+                    log.debug(@src(), "(0x{x:0>2}) '{c}' -> {any}", .{char, char, self});
+                }
+            } else {
+                if (istty) {
+                    log.debug(
+                        @src(),
+                        "(0x{x:0>2}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                        .{char, color, self}
+                    );
+                } else {
+                    log.debug(@src(), "(0x{x:0>2}) ' ' -> {any}", .{char, self});
+                }
             }
-            else {
-                log.debug(@src(), "(0x{x:0>2}) '{c}' -> {any}", .{char, char, self});
-            }
-        } else {
+        }
+        else {
             if (istty) {
                 log.debug(
                     @src(),
                     "(0x{x:0>2}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
-                    .{char, color, self}
+                    .{value, color, self}
                 );
             } else {
-                log.debug(@src(), "(0x{x:0>2}) ' ' -> {any}", .{char, self});
+                log.debug(@src(), "(0x{x:0>2}) ' ' -> {any}", .{value, self});
             }
         }
     }
@@ -71,7 +85,7 @@ pub const HuffmanEncoding = struct {
 
 pub const HuffmanTreeNode = struct {
     /// Only leaf nodes contain a character
-    char: ?u8,
+    value: ?u16,
     freq: usize,
     /// A lower weight has lower priority (minimum weight is 0).
     /// The maximum weight represents the maximum depth of the tree,
@@ -118,13 +132,20 @@ pub const HuffmanTreeNode = struct {
             return std.fmt.invalidFmtError(fmt, self);
         }
 
-        if (self.char) |char| {
-            if (std.ascii.isPrint(char) and char != '\n') {
-                return writer.print("{{ .weight = {d}, .freq = {d}, .char = '{c}' }}",
-                                  .{self.weight, self.freq, char});
-            } else {
-                return writer.print("{{ .weight = {d}, .freq = {d}, .char = 0x{x} }}",
-                                  .{self.weight, self.freq, char});
+        if (self.value) |value| {
+            if (value < 256) {
+                const char: u8 = @truncate(value);
+                if (std.ascii.isPrint(char) and char != '\n') {
+                    return writer.print("{{ .weight = {d}, .freq = {d}, .value = '{c}' }}",
+                                      .{self.weight, self.freq, char});
+                } else {
+                    return writer.print("{{ .weight = {d}, .freq = {d}, .value = 0x{x} }}",
+                                      .{self.weight, self.freq, char});
+                }
+            }
+            else {
+                return writer.print("{{ .weight = {d}, .freq = {d}, .value = 0x{x} }}",
+                                  .{self.weight, self.freq, value});
             }
         } else {
             return writer.print("{{ .weight = {d}, .freq = {d} }}", .{self.weight, self.freq});

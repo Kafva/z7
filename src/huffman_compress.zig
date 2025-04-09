@@ -28,7 +28,7 @@ pub fn compress(
     enc_len: *usize,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
-) !std.AutoHashMap(HuffmanEncoding, u8) {
+) !std.AutoHashMap(HuffmanEncoding, u16) {
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
         .instream = instream,
@@ -72,28 +72,28 @@ pub fn compress(
     return dec_map;
 }
 
-pub fn build_context(
-    allocator: std.mem.Allocator,
-    instream: *const std.fs.File,
-    outstream: *const std.fs.File,
-) !std.AutoHashMap(HuffmanEncoding, u8) {
-    var ctx = HuffmanCompressContext {
-        .allocator = allocator,
-        .instream = instream,
-        .outstream = outstream,
-        .reader = instream.reader().any(),
-        .bit_writer = std.io.bitWriter(.little, outstream.writer().any()),
-        .written_bits = 0,
-        .frequencies = [_]usize{0} ** symbols_size,
-        .enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
-        // The array will grow if the capacity turns out to be too low
-        .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbols_size),
-    };
+// pub fn build_context(
+//     allocator: std.mem.Allocator,
+//     instream: *const std.fs.File,
+//     outstream: *const std.fs.File,
+// ) !std.AutoHashMap(HuffmanEncoding, u16) {
+//     var ctx = HuffmanCompressContext {
+//         .allocator = allocator,
+//         .instream = instream,
+//         .outstream = outstream,
+//         .reader = instream.reader().any(),
+//         .bit_writer = std.io.bitWriter(.little, outstream.writer().any()),
+//         .written_bits = 0,
+//         .frequencies = [_]usize{0} ** symbols_size,
+//         .enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
+//         // The array will grow if the capacity turns out to be too low
+//         .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbols_size),
+//     };
 
-    return try build_huffman_tree(&ctx);
-}
+//     return try build_huffman_tree(&ctx);
+// }
 
-fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEncoding, u8) {
+fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEncoding, u16) {
     // 1. Get frequencies from the input stream
     const queue_cnt = try calculate_frequencies(ctx);
     dump_frequencies(ctx);
@@ -102,14 +102,14 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEnco
     var queue = try ctx.allocator.alloc(HuffmanTreeNode, queue_cnt);
     var index: usize = 0;
     for (0..ctx.frequencies.len) |i| {
-        const c: u8 = @truncate(i);
-        if (ctx.frequencies[c] == 0) {
+        const v: u16 = @truncate(i);
+        if (ctx.frequencies[v] == 0) {
             continue;
         }
         queue[index] = HuffmanTreeNode {
-            .char = c,
+            .value = v,
             .weight = 15, // placeholder
-            .freq = ctx.frequencies[c],
+            .freq = ctx.frequencies[v],
             .left_child_index = undefined,
             .right_child_index = undefined
         };
@@ -154,18 +154,18 @@ fn build_huffman_tree(ctx: *HuffmanCompressContext) !std.AutoHashMap(HuffmanEnco
     try build_canonical_encoding(ctx);
 
     // 5. Return the decoding map
-    var dec_map = std.AutoHashMap(HuffmanEncoding, u8).init(ctx.allocator);
+    var dec_map = std.AutoHashMap(HuffmanEncoding, u16).init(ctx.allocator);
     // enc_map: Symbol       -> Huffman bits
     // dec_map: Huffman bits -> Symbol
     for (0..ctx.enc_map.len) |i| {
         if (ctx.enc_map[i]) |enc| {
-            const c: u8 = @truncate(i);
-            try dec_map.putNoClobber(enc, c);
+            const v: u16 = @truncate(i);
+            try dec_map.putNoClobber(enc, v);
         }
     }
 
     log.debug(@src(), "Non-canonical tree:", .{});
-    dump_tree(&ctx, 0, ctx.array.items.len - 1);
+    dump_tree(ctx, 0, ctx.array.items.len - 1);
 
     log.debug(@src(), "Canonical encodings:", .{});
     dump_encodings(ctx.enc_map);
@@ -194,7 +194,7 @@ fn construct_max_depth_tree(
     // Let all nodes start at the bottom (lowest possible weight value)
     for (0..queue_initial_cnt) |i| {
         queue[i] = HuffmanTreeNode {
-            .char = queue_initial.*[i].char,
+            .value = queue_initial.*[i].value,
             .weight = 0,
             .freq = queue_initial.*[i].freq,
             .left_child_index = undefined,
@@ -251,7 +251,7 @@ fn construct_max_depth_tree(
         // We always create parent nodes with both child positions filled,
         // the child pointers of this node will not change after creation.
         const parent_node = HuffmanTreeNode {
-            .char = undefined,
+            .value = undefined,
             .freq = left_child.freq + right_child.freq,
             .weight = parent_weight,
             .left_child_index = array_cnt - 2,
@@ -339,10 +339,10 @@ fn walk_generate_translation(
 
     if (left_child_index == null and right_child_index == null) {
         // Reached leaf
-        if (ctx.array.items[index].char) |char| {
+        if (ctx.array.items[index].value) |value| {
             const shift = if (bit_shift == 0) 1 else bit_shift;
             const enc = HuffmanEncoding { .bit_shift = shift, .bits = bits };
-            ctx.enc_map[char] = enc;
+            ctx.enc_map[value] = enc;
         } else {
             log.err(@src(), "Missing character from leaf node", .{});
             return HuffmanError.BadTreeStructure;
@@ -409,15 +409,20 @@ fn dump_frequencies(ctx: *HuffmanCompressContext) void {
         if (ctx.frequencies[i] == 0) {
             continue;
         }
-        const c: u8 = @truncate(i);
-        if (std.ascii.isPrint(c) and c != '\n') {
-            log.debug(
-                @src(),
-                "{d}: {d} ('{c}')",
-                .{c, ctx.frequencies[c], c}
-            );
-        } else {
-            log.debug(@src(), "{d}: {d}", .{c, ctx.frequencies[c]});
+        if (i < 256) {
+            const c: u8 = @truncate(i);
+            if (std.ascii.isPrint(c) and c != '\n') {
+                log.debug(
+                    @src(),
+                    "{d}: {d} ('{c}')",
+                    .{c, ctx.frequencies[i], c}
+                );
+            } else {
+                log.debug(@src(), "{d}: {d}", .{c, ctx.frequencies[i]});
+            }
+        }
+        else {
+            log.debug(@src(), "{d}: {d}", .{i, ctx.frequencies[i]});
         }
     }
 }
@@ -449,9 +454,9 @@ fn dump_tree(ctx: *HuffmanCompressContext, comptime depth: u4, index: usize) voi
 
 fn dump_encodings(enc_map: [symbols_size]?HuffmanEncoding) void {
     for (0..enc_map.len) |i| {
-        const char: u8 = @truncate(i);
         if (enc_map[i]) |enc| {
-            enc.dump_mapping(char);
+            const v: u16 = @truncate(i);
+            enc.dump_mapping(v);
         }
     }
 }

@@ -7,7 +7,7 @@ const HuffmanError = @import("huffman.zig").HuffmanError;
 const HuffmanContext = @import("huffman.zig").HuffmanContext;
 
 const HuffmanDecompressContext = struct {
-    dec_map: *const std.AutoHashMap(HuffmanEncoding, u8),
+    dec_map: *const std.AutoHashMap(HuffmanEncoding, u16),
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
     /// Decompression requires a bit_reader
@@ -17,7 +17,7 @@ const HuffmanDecompressContext = struct {
 };
 
 pub fn decompress(
-    dec_map: *const std.AutoHashMap(HuffmanEncoding, u8),
+    dec_map: *const std.AutoHashMap(HuffmanEncoding, u16),
     encoded_length: usize,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
@@ -51,7 +51,11 @@ pub fn decompress(
         enc.bits = (enc.bits << 1) | bit;
         enc.bit_shift += 1;
 
-        if (ctx.dec_map.get(enc)) |c| {
+        if (ctx.dec_map.get(enc)) |v| {
+            if (v >= 256) {
+                return HuffmanError.BadEncoding;
+            }
+            const c: u8 = @truncate(v);
             try ctx.writer.writeByte(c);
             util.print_char("Output write", c);
             enc.bits = 0;
