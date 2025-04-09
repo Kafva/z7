@@ -44,6 +44,9 @@ pub fn decompress(
         const bit = read_bit(&ctx) catch {
             break;
         };
+        if (enc.bit_shift == 15) {
+            return HuffmanError.BadEncoding;
+        }
 
         enc.bits = enc.bits | (bit << enc.bit_shift);
         enc.bit_shift += 1;

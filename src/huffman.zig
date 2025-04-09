@@ -7,6 +7,7 @@ const color_base: u8 = 214;
 pub const HuffmanError = error {
     UnexpectedCharacter,
     UnexpectedEncodedSymbol,
+    BadEncoding,
     BadTreeStructure,
     MaxDepthInsufficent,
 };
@@ -36,11 +37,29 @@ pub const NodeEncoding = struct {
     }
 
     pub fn dump_mapping(self: *const @This(), char: u8) void {
+        const istty = std.io.getStdErr().isTty();
         const color: u8 = color_base + @as(u8, self.bit_shift);
         if (std.ascii.isPrint(char)) {
-            log.debug(@src(), "(0x{x}) '{c}' -> \x1b[38;5;{d}m{any}\x1b[0m", .{char, char, color, self});
+            if (istty) {
+                log.debug(
+                    @src(),
+                    "(0x{x}) '{c}' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                    .{char, char, color, self}
+                );
+            }
+            else {
+                log.debug(@src(), "(0x{x}) '{c}' -> {any}", .{char, char, self});
+            }
         } else {
-            log.debug(@src(), "(0x{x}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m", .{char, color, self});
+            if (istty) {
+                log.debug(
+                    @src(),
+                    "(0x{x}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                    .{char, color, self}
+                );
+            } else {
+                log.debug(@src(), "(0x{x}) ' ' -> {any}", .{char, self});
+            }
         }
     }
 };
@@ -108,14 +127,20 @@ pub const Node = struct {
     }
 
     pub fn dump(self: @This(), comptime weight: u4, pos: []const u8) void {
+        const istty = std.io.getStdErr().isTty();
         const prefix = util.repeat('-', weight) catch unreachable;
-        const side_color: u8 = if (std.mem.eql(u8, "1", pos)) 37 else 97;
-        const color: u8 = color_base + @as(u8, weight);
-        log.debug(
-            @src(),
-            "\x1b[{d}m`{s}{s}\x1b[0m: \x1b[38;5;{d}m{any}\x1b[0m",
-            .{side_color, prefix, pos, color, self}
-        );
+        if (istty) {
+            const side_color: u8 = if (std.mem.eql(u8, "1", pos)) 37 else 97;
+            const color: u8 = color_base + @as(u8, weight);
+            log.debug(
+                @src(),
+                "\x1b[{d}m`{s}{s}\x1b[0m: \x1b[38;5;{d}m{any}\x1b[0m",
+                .{side_color, prefix, pos, color, self}
+            );
+        }
+        else {
+            log.debug(@src(), "`{s}{s}: {any}", .{prefix, pos, self});
+        }
         std.heap.page_allocator.free(prefix);
     }
 };

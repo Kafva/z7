@@ -62,22 +62,23 @@ test "Huffman node sorting" {
     }
 }
 
-// test "Huffman on empty file" {
-//     try run("tests/testdata/empty", "huffman");
+// test "Huffman check simple text" {
+//     try run("tests/testdata/helloworld.txt", "huffman");
 // }
 
-test "Huffman on simple text" {
-    try run("tests/testdata/helloworld.txt", "huffman");
+// test "Huffman check short simple text" {
+//     try run("tests/testdata/simple.txt", "huffman");
+// }
+
+test "Huffman check longer simple text" {
+    try run("tests/testdata/flate_test.txt", "huffman");
 }
 
-// test "Huffman on rfc1951.txt" {
-//     try run("tests/testdata/rfc1951.txt", "huffman");
-// }
-
-// test "Huffman on 9001 repeated characters" {
+// test "Huffman check 9001 repeated characters" {
 //     try run("tests/testdata/over_9000_a.txt", "huffman");
 // }
 
-// test "Huffman on random data" {
-//     try run(TestContext.random_label, "huffman");
+// test "Huffman check rfc1951.txt" {
+//     try run("tests/testdata/rfc1951.txt", "huffman");
 // }
+

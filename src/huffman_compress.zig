@@ -344,7 +344,7 @@ fn walk_generate_translation(
 
 fn write_bits(ctx: *HuffmanCompressContext, bits: u16, num_bits: u4) !void {
     try ctx.bit_writer.writeBits(bits, num_bits);
-    util.print_bits(u16, "Output write", bits, @intCast(num_bits), ctx.written_bits);
+    util.print_bits(u16, "Output write", bits, num_bits, ctx.written_bits);
     ctx.written_bits += num_bits;
 }
 
