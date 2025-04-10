@@ -16,7 +16,7 @@ fn run(
     defer ctx.deinit();
 
     var enc_len: usize = 0;
-    const dec_map = try compress(ctx.allocator, &enc_len, &ctx.in, &ctx.compressed);
+    const dec_map = try compress(ctx.allocator, &enc_len, 256, &ctx.in, &ctx.compressed);
     try ctx.log_result(try ctx.compressed.getPos());
 
     try decompress(

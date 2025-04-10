@@ -5,19 +5,21 @@ const log = @import("log.zig");
 const HuffmanTreeNode = @import("huffman.zig").HuffmanTreeNode;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const HuffmanError = @import("huffman.zig").HuffmanError;
-const symbols_size = @import("huffman.zig").symbols_size;
 
 const HuffmanCompressContext = struct {
     allocator: std.mem.Allocator,
+    /// The maximum value of symbols from the input stream, 256 for regular
+    /// input from a file, 286 for deflate.
+    symbol_max: u16,
     instream: ?*const std.fs.File,
     reader: ?std.io.AnyReader,
     bit_writer: ?std.io.BitWriter(.little, std.io.AnyWriter),
     written_bits: usize,
     /// The frequency of each byte value to rely on when constructing the
     /// Huffman code
-    frequencies: [symbols_size]usize,
+    frequencies: []usize,
     /// Mappings from symbols onto huffman encodings
-    enc_map: [symbols_size]?HuffmanEncoding,
+    enc_map: []?HuffmanEncoding,
     /// Backing array for Huffman tree nodes
     array: std.ArrayList(HuffmanTreeNode),
 };
@@ -25,20 +27,23 @@ const HuffmanCompressContext = struct {
 pub fn compress(
     allocator: std.mem.Allocator,
     enc_len: *usize,
+    symbol_max: u16,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
 ) !std.AutoHashMap(HuffmanEncoding, u16) {
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
+        .symbol_max = symbol_max,
         .instream = instream,
         .reader = instream.reader().any(),
         .bit_writer = std.io.bitWriter(.little, outstream.writer().any()),
         .written_bits = 0,
-        .frequencies = [_]usize{0} ** symbols_size,
-        .enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
+        .frequencies = try allocator.alloc(usize, symbol_max),
+        .enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
         // The array will grow if the capacity turns out to be too low
-        .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbols_size),
+        .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbol_max),
     };
+    @memset(ctx.frequencies, 0);
 
     // Get frequencies from the input stream
     const symbol_count = try calculate_frequencies(&ctx);
@@ -76,22 +81,24 @@ pub fn compress(
 
 pub fn build_encoding(
     allocator: std.mem.Allocator,
-    enc_map: *[symbols_size]?HuffmanEncoding,
-    frequencies: [symbols_size]usize,
-    symbol_count: usize,
+    enc_map: *[]?HuffmanEncoding,
+    frequencies: []usize,
+    frequencies_cnt: usize,
 ) !void {
+    const symbol_max: u16 = @intCast(frequencies.len);
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
+        .symbol_max = symbol_max,
         .instream = null,
         .reader = null,
         .bit_writer = null,
         .written_bits = 0,
         .frequencies = frequencies,
-        .enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
-        .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbols_size),
+        .enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
+        .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbol_max),
     };
 
-    _ = try build_huffman_tree(&ctx, symbol_count);
+    _ = try build_huffman_tree(&ctx, frequencies_cnt);
 
     // Save the encoding
     for (0..ctx.enc_map.len) |i| {
@@ -155,6 +162,7 @@ fn build_huffman_tree(
         log.debug(@src(), "Successfully constructed Huffman tree (maxdepth {})", .{i});
         break;
     }
+    log.debug(@src(), "Complete tree node count: {}", .{ctx.array.items.len});
 
     // 4. Build the canonical version of the encoding
     try build_canonical_encoding(ctx);
@@ -292,7 +300,9 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
 
     // 1. Count how many entries there are for each code length (bit length)
     // We only allow code lengths that fit into a u16
-    var bit_length_counts = [_]u16{0} ** symbols_size;
+    var bit_length_counts = try ctx.allocator.alloc(u16, ctx.symbol_max);
+    @memset(bit_length_counts, 0);
+
     var max_seen_bits: u4 = 0;
     for (0..ctx.enc_map.len) |i| {
         if (ctx.enc_map[i]) |enc| {
@@ -306,7 +316,8 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
 
     // 2. For each bit length (up to the maximum we observed in step 1),
     // determine the starting code value.
-    var next_code = [_]u16{0} ** symbols_size;
+    var next_code = try ctx.allocator.alloc(u16, ctx.symbol_max);
+    @memset(next_code, 0);
 
     var code: u16 = 0;
     const end: usize = @intCast(max_seen_bits);
@@ -443,7 +454,6 @@ fn dump_tree(ctx: *HuffmanCompressContext, comptime depth: u4, index: usize) voi
     }
 
     if (index == ctx.array.items.len - 1) {
-        log.debug(@src(), "Complete tree node count: {}", .{ctx.array.items.len});
         const node = ctx.array.items[index];
         node.dump(0, "root");
     }
@@ -460,7 +470,7 @@ fn dump_tree(ctx: *HuffmanCompressContext, comptime depth: u4, index: usize) voi
     }
 }
 
-fn dump_encodings(enc_map: [symbols_size]?HuffmanEncoding) void {
+fn dump_encodings(enc_map: []?HuffmanEncoding) void {
     for (0..enc_map.len) |i| {
         if (enc_map[i]) |enc| {
             const v: u16 = @truncate(i);

@@ -96,29 +96,29 @@ fn check_ref_ok(ctx: *TestContext) !void {
 
 fn runall(inputfile: []const u8) !void {
     try run(inputfile, "gzip-z7-only", check_z7_ok);
-    // try run(inputfile, "gzip-go-only", check_ref_ok);
+    try run(inputfile, "gzip-go-only", check_ref_ok);
     // TODO: block type 2
     // try run(inputfile, "gzip-go-decompress-z7", check_go_decompress_z7);
-    // try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go);
+    try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go);
 }
 
 test "Gzip check simple text" {
     try runall("tests/testdata/helloworld.txt");
 }
 
-// test "Gzip check short simple text" {
-//     try runall("tests/testdata/simple.txt");
-// }
+test "Gzip check short simple text" {
+    try runall("tests/testdata/simple.txt");
+}
 
-// test "Gzip check longer simple text" {
-//     try runall("tests/testdata/flate_test.txt");
-// }
+test "Gzip check longer simple text" {
+    try runall("tests/testdata/flate_test.txt");
+}
 
-// test "Gzip check 9001 repeated characters" {
-//     try runall("tests/testdata/over_9000_a.txt");
-// }
+test "Gzip check 9001 repeated characters" {
+    try runall("tests/testdata/over_9000_a.txt");
+}
 
-// test "Gzip check rfc1951.txt" {
-//     try runall("tests/testdata/rfc1951.txt");
-// }
+test "Gzip check rfc1951.txt" {
+    try runall("tests/testdata/rfc1951.txt");
+}
 

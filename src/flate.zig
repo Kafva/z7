@@ -246,6 +246,8 @@ pub const FlateError = error {
     InvalidLiteralLength,
     InvalidSymbol,
     InvalidDistance,
+    InvalidLength,
+    InvalidBlockLength,
     MissingTokenLiteral,
     OutOfQueueSpace,
 };
@@ -273,6 +275,7 @@ pub const Flate = struct {
     pub const lookahead_length: usize = 258;
     /// Valid distances must be within the window length, i.e. (1..2**15)
     pub const window_length: usize = std.math.pow(usize, 2, 15);
-    /// Hardcoded size to split the input into
+    /// Hardcoded size to split the input into, maximum valid length for
+    /// uncompressed blocks is the window length.
     pub const block_length: usize = std.math.pow(usize, 2, 16);
 };

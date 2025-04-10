@@ -10,8 +10,10 @@ const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
-const symbols_size = @import("huffman.zig").symbols_size;
 const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
+
+const compress_block_type =  FlateBlockType.FIXED_HUFFMAN;
+const symbol_max: usize = 286;
 
 const CompressContext = struct {
     allocator: std.mem.Allocator,
@@ -30,9 +32,9 @@ const CompressContext = struct {
     write_queue: []FlateSymbol,
     write_queue_index: usize,
     /// Literal/Length Huffman encoding mappings for block type-2
-    ll_enc_map: [symbols_size]?HuffmanEncoding,
+    ll_enc_map: []?HuffmanEncoding,
     /// Distance Huffman encoding mappings for block type-2
-    d_enc_map: [symbols_size]?HuffmanEncoding, // Maxsize is actually 31
+    d_enc_map: []?HuffmanEncoding,
 };
 
 pub fn compress(
@@ -44,7 +46,7 @@ pub fn compress(
     var ctx = CompressContext {
         .allocator = allocator,
         .crc = crc,
-        .block_type = FlateBlockType.FIXED_HUFFMAN,
+        .block_type = compress_block_type,
         .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
         .reader = instream.reader().any(),
         .written_bits = 0,
@@ -54,8 +56,8 @@ pub fn compress(
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length),
         .write_queue_index = 0,
-        .ll_enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
-        .d_enc_map = [_]?HuffmanEncoding{null} ** symbols_size,
+        .ll_enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
+        .d_enc_map = try allocator.alloc(?HuffmanEncoding, 31),
     };
 
     // Write block header
@@ -66,18 +68,9 @@ pub fn compress(
 
     var done = false;
     while (!done) {
-        log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
-        switch (ctx.block_type) {
-            FlateBlockType.NO_COMPRESSION => {
-                done = try write_raw_block(&ctx, std.math.pow(u16, 2, 15));
-            },
-            FlateBlockType.FIXED_HUFFMAN, FlateBlockType.DYNAMIC_HUFFMAN => {
-                done = try write_compressed_block(&ctx, Flate.block_length);
-            },
-            FlateBlockType.RESERVED => {
-                return FlateError.UnexpectedBlockType;
-            }
-        }
+        // TODO: Use `window_length` as the block length so that type-0 blocks
+        // can be generated.
+        done = try write_block(&ctx, Flate.window_length);
     }
 
     // Incomplete bytes will be padded when flushing, wait until all
@@ -91,26 +84,7 @@ pub fn compress(
     );
 }
 
-fn write_raw_block(ctx: *CompressContext, length: u16) !bool {
-    // Fill up with zeroes to the next byte boundary
-    try write_bits(ctx, u5, 0, 5);
-    try write_bits(ctx, u16, length, 16);
-    try write_bits(ctx, u16, ~length, 16);
-
-    log.debug(@src(), "Compressing {d} bytes into type-0 block", .{length});
-    for (0..length) |_| {
-        const b = read_byte(ctx) catch {
-            return FlateError.UnexpectedEof;
-        };
-        ctx.sliding_window.push(b);
-        try write_bits(ctx, u8, b, 8);
-    }
-
-    // TODO TODO: only return false when we know there is more input!
-    return false;
-}
-
-fn write_compressed_block(ctx: *CompressContext, block_length: usize) !bool {
+fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     const end: usize = ctx.processed_bits + block_length*8;
     var done = false;
     ctx.lookahead[0] = blk: {
@@ -220,24 +194,43 @@ fn write_compressed_block(ctx: *CompressContext, block_length: usize) !bool {
 
     // TODO: analyze write queue and decide which type to use
 
-    if (ctx.block_type == FlateBlockType.DYNAMIC_HUFFMAN) {
-        // Generate `ll_enc_map` and `d_enc_map` based on the current
-        // `write_queue` content.
-        try dynamic_huffman_code_gen(ctx);
-        // TODO: write dynamic block header
-        // TODO: write encoded ll_enc_map and d_enc_map
-    }
+    log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
 
     // Encode everything from the write queue onto the output stream
-    for (0..ctx.write_queue_index) |i| {
-        switch (ctx.block_type) {
-            FlateBlockType.FIXED_HUFFMAN => {
+    switch (ctx.block_type) {
+        FlateBlockType.NO_COMPRESSION => {
+            if (block_length > Flate.window_length) {
+                return FlateError.InvalidBlockLength;
+            }
+            // Fill up with zeroes to the next byte boundary
+            while (ctx.written_bits % 8 != 0) {
+                try write_bits(ctx, u1, 0, 1);
+            }
+            // Write length header
+            const len: u16 = @truncate(block_length);
+            try write_bits(ctx, u16, len, 16);
+            try write_bits(ctx, u16, ~len, 16);
+            // Write the uncompressed content from the write_queue
+            try no_compression_dequeue_symbols(ctx);
+        },
+        FlateBlockType.FIXED_HUFFMAN => {
+            for (0..ctx.write_queue_index) |i| {
                 try fixed_code_write_symbol(ctx, ctx.write_queue[i]);
-            },
-            FlateBlockType.DYNAMIC_HUFFMAN => {
+            }
+        },
+        FlateBlockType.DYNAMIC_HUFFMAN => {
+            // Generate `ll_enc_map` and `d_enc_map` based on the current
+            // `write_queue` content.
+            try dynamic_huffman_code_gen(ctx);
+            // TODO: write dynamic block header
+            // TODO: write encoded ll_enc_map and d_enc_map
+
+            for (0..ctx.write_queue_index) |i| {
                 try dynamic_code_write_symbol(ctx, ctx.write_queue[i]);
-            },
-            else => unreachable
+            }
+        },
+        FlateBlockType.RESERVED => {
+            return FlateError.UnexpectedBlockType;
         }
     }
     ctx.write_queue_index = 0;
@@ -284,10 +277,12 @@ fn queue_symbol(
 }
 
 fn dynamic_huffman_code_gen(ctx: *CompressContext) !void {
-    var ll_freq = [_]usize{0} ** symbols_size;
-    var d_freq = [_]usize{0} ** symbols_size; // 31
+    var ll_freq = try ctx.allocator.alloc(usize, 286);
+    var d_freq = try ctx.allocator.alloc(usize, 31);
     var ll_cnt: usize = 0;
     var d_cnt: usize = 0;
+    @memset(ll_freq, 0);
+    @memset(d_freq, 0);
 
     // Calculate the frequency of each `FlateSymbol`
     for (0..ctx.write_queue_index) |i| {
@@ -377,6 +372,38 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
             }
         },
         else => {}
+    }
+}
+
+/// Write the bits for the provided match length and distance to the output
+/// stream.
+fn no_compression_dequeue_symbols(ctx: *CompressContext) !void {
+    var length: u16 = 0;
+    for (0..ctx.write_queue_index) |i| {
+        const sym = ctx.write_queue[i];
+        switch (sym) {
+            .char => {
+                try write_bits(ctx, u8, sym.char, 8);
+            },
+            .length => {
+                length = sym.length.value.?;
+            },
+            .distance => {
+                // Write the `length` number of symbols at the provided
+                // distance back into the `sliding_window`
+                // This is basically type-01 decompression.
+                if (length == 0) {
+                    return FlateError.InvalidLength;
+                }
+                const distance = sym.distance.value.?;
+                for (0..length) |_| {
+                    // use the base offset that was present when this match was found
+                    const offset: i32 = @intCast((ctx.write_queue_index - i) + distance - 1);
+                    const c: u8 = try ctx.sliding_window.read_offset_end(offset);
+                    try write_bits(ctx, u8, c, 8);
+                }
+            },
+        }
     }
 }
 
