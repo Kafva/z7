@@ -64,16 +64,17 @@ pub fn decompress(
     // Decode the stream
     while (!done) {
         const header = try read_bits(&ctx, u3, 3);
-
-        if ((header & 1) == 1) {
-            log.debug(@src(), "Last block marker found", .{});
-            done = true;
-        }
+        done = (header & 1) == 1;
 
         const block_type_int: u2 = @truncate(header >> 1);
         ctx.block_type = @enumFromInt(block_type_int);
 
-        log.debug(@src(), "Reading type-{d} block", .{block_type_int});
+        log.debug(
+            @src(),
+            "Reading type-{d} block{s}",
+            .{block_type_int, if (done) " (final)" else ""}
+        );
+
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
                 try no_compression_decompress_block(&ctx);

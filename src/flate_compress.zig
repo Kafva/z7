@@ -14,6 +14,7 @@ const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
 
 const compress_block_type =  FlateBlockType.FIXED_HUFFMAN;
 const symbol_max: usize = 286;
+const block_length_max: usize = Flate.window_length;
 
 const CompressContext = struct {
     allocator: std.mem.Allocator,
@@ -54,23 +55,18 @@ pub fn compress(
         // Initialize sliding window for backreferences
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
-        .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length),
+        .write_queue = try allocator.alloc(FlateSymbol, block_length_max),
         .write_queue_index = 0,
         .ll_enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
         .d_enc_map = try allocator.alloc(?HuffmanEncoding, 31),
     };
 
-    // Write block header
-    var header: u3 = 0;
-    header |= @intFromEnum(ctx.block_type) << 1; // BTYPE
-    header |= 1; // BFINAL
-    try write_bits(&ctx, u3, header, 3);
-
     var done = false;
     while (!done) {
-        // TODO: Use `window_length` as the block length so that type-0 blocks
-        // can be generated.
-        done = try write_block(&ctx, Flate.window_length);
+        // Always use `window_length` as the block length to ensure that type-0
+        // blocks can be generated.
+        // TODO: splitting into blocks, not properly handled
+        done = try write_block(&ctx, std.math.pow(usize, 2, 16));
     }
 
     // Incomplete bytes will be padded when flushing, wait until all
@@ -181,7 +177,8 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
                 done = true;
                 break;
             };
-        } else {
+        }
+        else {
             // The final char from the lookahead should be passed to
             // the next iteration
             util.print_char(
@@ -194,7 +191,17 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
 
     // TODO: analyze write queue and decide which type to use
 
-    log.debug(@src(), "Writing type-{d} block", .{@intFromEnum(ctx.block_type)});
+    log.debug(
+        @src(),
+        "Writing type-{d} block{s}",
+        .{@intFromEnum(ctx.block_type), if (done) " (final)" else ""}
+    );
+
+    // Write block header
+    var header: u3 = 0;
+    header |= @intFromEnum(ctx.block_type) << 1; // BTYPE
+    header |= @intFromBool(done);                // BFINAL
+    try write_bits(ctx, u3, header, 3);
 
     // Encode everything from the write queue onto the output stream
     switch (ctx.block_type) {
@@ -235,7 +242,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     }
     ctx.write_queue_index = 0;
 
-    // End-of-block marker (with static Huffman encoding: 0000_000 -> 256)
+    // Write end-of-block marker
     try write_bits(ctx, u7, @as(u7, 0), 7);
     return done;
 }
@@ -249,7 +256,7 @@ fn queue_symbol(
     if (longest_match_length <= Flate.min_length_match) {
         // Prefer raw characters for small matches
         for (0..lookahead_end) |i| {
-            if (ctx.write_queue_index + 1 >= Flate.block_length) {
+            if (ctx.write_queue_index + 1 >= block_length_max) {
                 return FlateError.OutOfQueueSpace;
             }
             const symbol = FlateSymbol { .char = ctx.lookahead[i] };
@@ -258,7 +265,7 @@ fn queue_symbol(
         }
     }
     else {
-        if (ctx.write_queue_index + 2 >= Flate.block_length) {
+        if (ctx.write_queue_index + 2 >= block_length_max) {
             return FlateError.OutOfQueueSpace;
         }
 
@@ -485,7 +492,7 @@ fn write_bits(
     num_bits: u16,
 ) !void {
     try ctx.bit_writer.writeBits(value, num_bits);
-    const offset = @divFloor(ctx.processed_bits, 8);
+    const offset = @divFloor(ctx.written_bits, 8);
     util.print_bits(T, "Output write", value, num_bits, offset);
     ctx.written_bits += num_bits;
 }
