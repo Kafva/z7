@@ -1,8 +1,8 @@
 const std = @import("std");
-const log = @import("log.zig");
-const RingBuffer = @import("ring_buffer.zig").RingBuffer;
-const RingBufferError = @import("ring_buffer.zig").RingBufferError;
-
+const z7 = @import("z7");
+const log = z7.log; 
+const RingBuffer = z7.ring_buffer.RingBuffer;
+const RingBufferError = z7.ring_buffer.RingBufferError;
 
 test "Ring buffer push" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

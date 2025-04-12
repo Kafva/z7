@@ -1,13 +1,13 @@
 const std = @import("std");
-
-const log = @import("log.zig");
-const util = @import("context_test.zig");
+const z7 = @import("z7");
 
 const TestContext = @import("context_test.zig").TestContext;
-const GzipFlag = @import("gzip.zig").GzipFlag;
-const FlateCompressMode = @import("flate_compress.zig").FlateCompressMode;
-const gzip = @import("gzip.zig").compress;
-const gunzip = @import("gunzip.zig").decompress;
+
+const log = z7.log; 
+const GzipFlag = z7.gzip.GzipFlag;
+const FlateCompressMode = z7.flate_compress.FlateCompressMode;
+const gzip = z7.gzip.compress;
+const gunzip = z7.gunzip.decompress;
 
 const libflate = @cImport({
     @cInclude("libflate.h");

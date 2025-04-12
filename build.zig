@@ -42,12 +42,18 @@ fn build_tests(
     build_options: *std.Build.Step.Options,
 ) void {
     // Support overriding the test file via `zig build test -- <file>`
-    var root_source_file: []const u8 = "src/test.zig";
+    var root_source_file: []const u8 = "tests/test.zig";
     if (b.args) |args| {
         for (args) |arg| {
             root_source_file = arg;
         }
     }
+
+    // Create a module of the src/ folder
+    const z7_module = b.createModule(.{
+        .root_source_file = b.path("src/root_test.zig"),
+    });
+    z7_module.addOptions("build_options", build_options);
 
     const tests = b.addTest(.{
         .name = "z7-test",
@@ -55,7 +61,6 @@ fn build_tests(
         .target = target,
         .optimize = optimize,
     });
-    tests.root_module.addOptions("build_options", build_options);
 
     // Build reference implementation library for testing
     // There is a reference implementation in zig stdlib but we use this
@@ -73,6 +78,7 @@ fn build_tests(
     std.fs.cwd().makeDir(go_out) catch {};
     const go_run = b.addSystemCommand(&go_args);
 
+    tests.root_module.addImport("z7", z7_module);
     tests.addLibraryPath(.{ .cwd_relative = go_out });
     tests.linkSystemLibrary("flate");
     tests.addIncludePath(.{ .cwd_relative = go_out });

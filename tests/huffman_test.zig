@@ -1,8 +1,11 @@
 const std = @import("std");
+const z7 = @import("z7");
+
 const TestContext = @import("context_test.zig").TestContext;
-const HuffmanTreeNode = @import("huffman.zig").HuffmanTreeNode;
-const compress = @import("huffman_compress.zig").compress;
-const decompress = @import("huffman_decompress.zig").decompress;
+
+const HuffmanTreeNode = z7.huffman.HuffmanTreeNode;
+const compress = z7.huffman_compress.compress;
+const decompress = z7.huffman_decompress.decompress;
 
 fn run(
     inputfile: []const u8,

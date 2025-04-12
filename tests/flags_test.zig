@@ -1,7 +1,8 @@
 const std = @import("std");
-const Flag = @import("flags.zig").Flag;
-const FlagError = @import("flags.zig").FlagError;
-const FlagIterator = @import("flags.zig").FlagIterator;
+const z7 = @import("z7");
+const Flag = z7.flags.Flag;
+const FlagError = z7.flags.FlagError;
+const FlagIterator = z7.flags.FlagIterator;
 
 const opt_a = "alpha";
 const opt_b = "beta";

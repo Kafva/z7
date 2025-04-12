@@ -1,8 +1,9 @@
 const std = @import("std");
-const log = @import("log.zig");
-const build_options = @import("build_options");
+const z7 = @import("z7");
+const build_options = z7.build_options;
 
-const FlateCompressMode = @import("flate_compress.zig").FlateCompressMode;
+const log = z7.log;
+const FlateCompressMode = z7.flate_compress.FlateCompressMode;
 
 const libflate = @cImport({
     @cInclude("libflate.h");
