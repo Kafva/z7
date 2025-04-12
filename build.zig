@@ -1,7 +1,9 @@
 const std = @import("std");
 
 // TODO: Importing `.version` from build.zig.zon should work in future zig
-// versions: https://github.com/ziglang/zig/pull/20271
+// versions: 
+//  https://github.com/ziglang/zig/pull/20271 [OK]
+//  https://github.com/ziglang/zig/issues/22775
 const version = "0.0.0";
 
 fn build_exe(
