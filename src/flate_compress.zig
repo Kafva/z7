@@ -17,13 +17,14 @@ const block_length_max: usize = Flate.window_length;
 
 const CompressContext = struct {
     allocator: std.mem.Allocator,
+    mode: FlateCompressMode,
     crc: *std.hash.Crc32,
     /// The current type of block to write
     block_type: FlateBlockType,
     bit_writer: std.io.BitWriter(Flate.writer_endian, std.io.AnyWriter),
     reader: std.io.AnyReader,
     written_bits: usize,
-    processed_bits: usize,
+    processed_bytes: usize,
     block_start: usize,
     /// Left over input byte to use from previous block
     next_byte: ?u8,
@@ -41,9 +42,9 @@ const CompressContext = struct {
 };
 
 pub const FlateCompressMode = enum {
-    NoCompression,
-    BestSpeed,
-    BestCompression,
+    NO_COMPRESSION,
+    BEST_SPEED,
+    BEST_SIZE,
 };
 
 pub fn compress(
@@ -55,12 +56,13 @@ pub fn compress(
 ) !void {
     var ctx = CompressContext {
         .allocator = allocator,
+        .mode = mode,
         .crc = crc,
         .block_type = FlateBlockType.RESERVED,
         .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
         .reader = instream.reader().any(),
         .written_bits = 0,
-        .processed_bits = 0,
+        .processed_bytes = 0,
         .block_start = 0,
         .next_byte = null,
         // Initialize sliding window for backreferences
@@ -71,12 +73,6 @@ pub fn compress(
         .ll_enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
         .d_enc_map = try allocator.alloc(?HuffmanEncoding, 31),
     };
-
-    switch (mode) {
-        .NoCompression => ctx.block_type = FlateBlockType.NO_COMPRESSION,
-        .BestCompression => ctx.block_type = FlateBlockType.FIXED_HUFFMAN,
-        .BestSpeed => ctx.block_type = FlateBlockType.FIXED_HUFFMAN,
-    }
 
     var done = false;
     while (!done) {
@@ -90,17 +86,16 @@ pub fn compress(
     try ctx.bit_writer.flushBits();
     log.debug(
         @src(),
-        "Compression done: {} [{} bytes] -> {} bits [{} bytes]",
-        .{ctx.processed_bits, ctx.processed_bits / 8,
-          ctx.written_bits, ctx.written_bits / 8}
+        "Compression done: {} -> {} bytes",
+        .{ctx.processed_bytes, @divFloor(ctx.written_bits, 8)}
     );
 }
 
 /// Go over `block_length` bytes in the input stream with lzss and store
 /// the resulting `FlateSymbol` objects into the write queue.
 fn lzss(ctx: *CompressContext, block_length: usize) !bool {
-    ctx.block_start = ctx.processed_bits * 8;
-    const end: usize = ctx.processed_bits + block_length*8;
+    ctx.block_start = ctx.processed_bytes;
+    const end: usize = ctx.processed_bytes + block_length*8;
     var done = false;
     ctx.lookahead[0] = blk: {
         if (ctx.next_byte) |b| {
@@ -113,7 +108,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         };
     };
 
-    while (!done and ctx.processed_bits < end) {
+    while (!done and ctx.processed_bytes < end) {
         // The current number of matches within the lookahead
         var match_length: u16 = 0;
         // Max number of matches in the lookahead this iteration
@@ -215,7 +210,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
     log.debug(
         @src(),
         "Done processing input for new block [{}+{} bytes]",
-        .{ctx.block_start, @divExact(ctx.processed_bits, 8) - ctx.block_start}
+        .{ctx.block_start, ctx.processed_bytes - ctx.block_start}
     );
     util.print_char("Saving for next block", ctx.lookahead[0]);
     ctx.next_byte = ctx.lookahead[0];
@@ -228,6 +223,11 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     const done = try lzss(ctx, block_length);
 
     // TODO: analyze write queue and decide which type to use
+    ctx.block_type = switch (ctx.mode) {
+        .NO_COMPRESSION => FlateBlockType.NO_COMPRESSION,
+        .BEST_SPEED => FlateBlockType.FIXED_HUFFMAN,
+        .BEST_SIZE => FlateBlockType.FIXED_HUFFMAN,
+    };
 
     log.debug(
         @src(),
@@ -252,9 +252,9 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
                 try write_bits(ctx, u1, 0, 1);
             }
             // Write length header
-            const processed_bytes = @divExact(ctx.processed_bits, 8) - ctx.block_start;
-            const len: u16 = if (processed_bytes < block_length)
-                                  @truncate(processed_bytes)
+            const processed_bytes_block = ctx.processed_bytes - ctx.block_start;
+            const len: u16 = if (processed_bytes_block < block_length)
+                                  @truncate(processed_bytes_block)
                              else
                                   @truncate(block_length);
             try write_bits(ctx, u16, len, 16);
@@ -284,8 +284,10 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     }
     ctx.write_queue_index = 0;
 
-    // Write end-of-block marker
-    try write_bits(ctx, u7, @as(u7, 0), 7);
+    if (ctx.block_type != FlateBlockType.NO_COMPRESSION) {
+        // Write end-of-block marker
+        try write_bits(ctx, u7, @as(u7, 0), 7);
+    }
     return done;
 }
 
@@ -569,7 +571,7 @@ fn write_bits_be(
 fn read_byte(ctx: *CompressContext) !u8 {
     const b = try ctx.reader.readByte();
     util.print_char("Input read", b);
-    ctx.processed_bits += 8;
+    ctx.processed_bytes += 1;
 
     // The final crc should be the crc of the entire input file, update
     // it incrementally as we process each byte.

@@ -47,14 +47,14 @@ pub fn compress(
     // MTIME
     var mtime: u32 = 0;
     blk: {
-        // Use zero size and mtime if stat() fails
+        // Use zero size as mtime if stat() fails
         const st = instream.stat() catch break :blk;
         const mtime_sec = @divFloor(st.mtime, std.math.pow(i128, 10, 9));
         mtime = @intCast(mtime_sec);
         size = @truncate(st.size);
     }
     try write_hdr_int(&ctx, u32, mtime);
-    if (mode == FlateCompressMode.BestCompression) {
+    if (mode == FlateCompressMode.BEST_SIZE) {
         // XFL = 2 - compressor used maximum compression, slowest algorithm
         try write_hdr_byte(&ctx, 2);
     }
@@ -89,7 +89,7 @@ pub fn compress(
 
     // Trailer
     const crc_value = crc.final();
-    log.debug(@src(), "Writing CRC: 0x{x}", .{crc_value});
+    log.debug(@src(), "Writing CRC32: 0x{x}", .{crc_value});
     try write_hdr_int(&ctx, u32, crc_value);
 
     log.debug(@src(), "Writing ISIZE: {d}", .{size});

@@ -22,7 +22,7 @@ const DecompressContext = struct {
     writer: std.io.AnyWriter,
     bit_reader: std.io.BitReader(Flate.writer_endian, std.io.AnyReader),
     start_offset: usize,
-    written_bits: usize,
+    written_bytes: usize,
     processed_bits: usize,
     /// Cache of the last 32K read bytes to support backreferences
     sliding_window: RingBuffer(u8),
@@ -47,7 +47,7 @@ pub fn decompress(
         .writer = outstream.writer().any(),
         .bit_reader = std.io.bitReader(Flate.writer_endian, instream.reader().any()),
         .start_offset = instream_offset,
-        .written_bits = 0,
+        .written_bytes = 0,
         .processed_bits = 0,
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .seven_bit_decode = try fixed_code_decoding_map(7),
@@ -93,9 +93,8 @@ pub fn decompress(
 
     log.debug(
         @src(),
-        "Decompression done: {} [{} bytes] -> {} bits [{} bytes]",
-        .{ctx.processed_bits, ctx.processed_bits / 8,
-          ctx.written_bits, ctx.written_bits / 8}
+        "Decompression done: {} -> {} bytes",
+        .{@divFloor(ctx.processed_bits, 8), ctx.written_bytes}
     );
 }
 
@@ -317,7 +316,7 @@ fn write_byte(ctx: *DecompressContext, c: u8) !void {
     ctx.sliding_window.push(c);
     try ctx.writer.writeByte(c);
     util.print_char("Output write", c);
-    ctx.written_bits += 8;
+    ctx.written_bytes += 1;
 
     // The crc in the trailer of the gzip format is performed on the
     // original input file, calculate the crc for the output file we are
