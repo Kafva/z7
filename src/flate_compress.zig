@@ -82,7 +82,7 @@ pub fn compress(
     );
 }
 
-fn write_block(ctx: *CompressContext, block_length: usize) !bool {
+fn lzss(ctx: *CompressContext, block_length: usize) !bool {
     const start: usize = ctx.processed_bits * 8;
     const end: usize = ctx.processed_bits + block_length*8;
     var done = false;
@@ -203,6 +203,14 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     );
     util.print_char("Saving for next block", ctx.lookahead[0]);
     ctx.next_byte = ctx.lookahead[0];
+
+    return done;
+}
+
+fn write_block(ctx: *CompressContext, block_length: usize) !bool {
+    // Go over `block_length` bytes in the input stream with lzss and store
+    // the resulting `FlateSymbol` objects into the write queue.
+    const done = try lzss(ctx, block_length);
 
     // TODO: analyze write queue and decide which type to use
 
