@@ -24,6 +24,7 @@ const CompressContext = struct {
     reader: std.io.AnyReader,
     written_bits: usize,
     processed_bits: usize,
+    block_start: usize,
     /// Left over input byte to use from previous block
     next_byte: ?u8,
     sliding_window: RingBuffer(u8),
@@ -40,9 +41,9 @@ const CompressContext = struct {
 };
 
 pub const FlateCompressMode = enum {
-	NoCompression,
-	BestSpeed,   
-	BestCompression,
+    NoCompression,
+    BestSpeed,
+    BestCompression,
 };
 
 pub fn compress(
@@ -60,6 +61,7 @@ pub fn compress(
         .reader = instream.reader().any(),
         .written_bits = 0,
         .processed_bits = 0,
+        .block_start = 0,
         .next_byte = null,
         // Initialize sliding window for backreferences
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
@@ -97,7 +99,7 @@ pub fn compress(
 /// Go over `block_length` bytes in the input stream with lzss and store
 /// the resulting `FlateSymbol` objects into the write queue.
 fn lzss(ctx: *CompressContext, block_length: usize) !bool {
-    const start: usize = ctx.processed_bits * 8;
+    ctx.block_start = ctx.processed_bits * 8;
     const end: usize = ctx.processed_bits + block_length*8;
     var done = false;
     ctx.lookahead[0] = blk: {
@@ -213,7 +215,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
     log.debug(
         @src(),
         "Done processing input for new block [{}+{} bytes]",
-        .{start, block_length}
+        .{ctx.block_start, @divExact(ctx.processed_bits, 8) - ctx.block_start}
     );
     util.print_char("Saving for next block", ctx.lookahead[0]);
     ctx.next_byte = ctx.lookahead[0];
@@ -250,7 +252,11 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
                 try write_bits(ctx, u1, 0, 1);
             }
             // Write length header
-            const len: u16 = @truncate(block_length);
+            const processed_bytes = @divExact(ctx.processed_bits, 8) - ctx.block_start;
+            const len: u16 = if (processed_bytes < block_length)
+                                  @truncate(processed_bytes)
+                             else
+                                  @truncate(block_length);
             try write_bits(ctx, u16, len, 16);
             try write_bits(ctx, u16, ~len, 16);
             // Write the uncompressed content from the write_queue
@@ -434,7 +440,7 @@ fn no_compression_dequeue_symbols(ctx: *CompressContext) !void {
             .distance => {
                 // Write the `length` number of symbols at the provided
                 // distance back into the `sliding_window`
-                // This is basically type-01 decompression.
+                // This is basically what we do during lzss decompression.
                 if (length == 0) {
                     return FlateError.InvalidLength;
                 }
