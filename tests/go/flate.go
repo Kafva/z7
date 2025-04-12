@@ -3,47 +3,15 @@ package main
 import "C"
 
 import (
-	"compress/flate"
-	"compress/gzip"
-	"io"
-	"os"
-	"path"
-	"time"
+    "compress/gzip"
+    "io"
+    "os"
+    "path"
+    "time"
 )
 
-//export FlateCompress
-func FlateCompress(inputfile string, outputfile string) int64 {
-    out, err := os.OpenFile(outputfile, os.O_WRONLY|os.O_TRUNC, 0644)
-    if err != nil {
-        println(err.Error())
-        return -1
-    }
-    defer out.Close()
-
-    // Create flate writer
-    writer, err := flate.NewWriter(out, flate.DefaultCompression)
-    if err != nil {
-        println(err.Error())
-        return -1
-    }
-
-    err = compress(inputfile, writer)
-    if err != nil {
-        println(err.Error())
-        return -1
-    }
-
-    err = writer.Close()
-    if err != nil {
-        println(err.Error())
-        return -1
-    }
-
-    return getSize(out)
-}
-
 //export Gzip
-func Gzip(inputfile string, outputfile string) int64 {
+func Gzip(inputfile string, outputfile string, level int) int64 {
     out, err := os.OpenFile(outputfile, os.O_WRONLY|os.O_TRUNC, 0644)
     if err != nil {
         println(err.Error())
@@ -52,7 +20,11 @@ func Gzip(inputfile string, outputfile string) int64 {
     defer out.Close()
 
     // Create gzip writer
-    writer := gzip.NewWriter(out)
+    writer, err := gzip.NewWriterLevel(out, level)
+    if err != nil {
+        println(err.Error())
+        return -1
+    }
 
     // Set custom metadata
     writer.ModTime = time.Now();
@@ -68,34 +40,6 @@ func Gzip(inputfile string, outputfile string) int64 {
     }
 
     err = writer.Close()
-    if err != nil {
-        println(err.Error())
-        return -1
-    }
-
-    return getSize(out)
-}
-
-//export FlateDecompress
-func FlateDecompress(inputfile string, outputfile string) int64 {
-    in, err := os.Open(inputfile)
-    if err != nil {
-        println(err.Error())
-        return -1
-    }
-    defer in.Close()
-
-    out, err := os.OpenFile(outputfile, os.O_WRONLY|os.O_TRUNC, 0644)
-    if err != nil {
-        println(err.Error())
-        return -1
-    }
-    defer out.Close()
-
-    // Wrap input file in flate reader
-    reader := flate.NewReader(in)
-
-    err = decompress(out, reader)
     if err != nil {
         println(err.Error())
         return -1

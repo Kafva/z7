@@ -51,7 +51,11 @@ fn check_z7_ok(ctx: *TestContext) !void {
 
 /// Compress with Golang and decompress with z7
 fn check_go_decompress_z7(ctx: *TestContext) !void {
-    const compressed_len = libflate.Gzip(ctx.inputfile_s(), try ctx.compressed_path_s());
+    const compressed_len = libflate.Gzip(
+        ctx.inputfile_s(),
+        try ctx.compressed_path_s(),
+        @intFromEnum(ctx.mode.?),
+    );
     try std.testing.expect(compressed_len > 0);
 
     try ctx.log_result(@intCast(compressed_len));
@@ -81,7 +85,11 @@ fn check_z7_decompress_go(ctx: *TestContext) !void {
 
 /// Verify that the Golang implementation is ok for ffi
 fn check_ref_ok(ctx: *TestContext) !void {
-    const compressed_len = libflate.Gzip(ctx.inputfile_s(), try ctx.compressed_path_s());
+    const compressed_len = libflate.Gzip(
+        ctx.inputfile_s(),
+        try ctx.compressed_path_s(),
+        @intFromEnum(ctx.mode.?),
+    );
     try std.testing.expect(compressed_len > 0);
 
     try ctx.log_result(@intCast(compressed_len));
@@ -113,16 +121,20 @@ test "Gzip check simple text" {
 
 test "Gzip check short simple text" {
     try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SIZE);
+    try runall("tests/testdata/simple.txt", FlateCompressMode.NO_COMPRESSION);
 }
 
 test "Gzip check longer simple text" {
     try runall("tests/testdata/flate_test.txt", FlateCompressMode.BEST_SIZE);
+    try runall("tests/testdata/flate_test.txt", FlateCompressMode.NO_COMPRESSION);
 }
 
 test "Gzip check 9001 repeated characters" {
     try runall("tests/testdata/over_9000_a.txt", FlateCompressMode.BEST_SIZE);
+    try runall("tests/testdata/over_9000_a.txt", FlateCompressMode.NO_COMPRESSION);
 }
 
 test "Gzip check rfc1951.txt" {
     try runall("tests/testdata/rfc1951.txt", FlateCompressMode.BEST_SIZE);
+    try runall("tests/testdata/rfc1951.txt", FlateCompressMode.NO_COMPRESSION);
 }

@@ -41,10 +41,12 @@ const CompressContext = struct {
     d_enc_map: []?HuffmanEncoding,
 };
 
-pub const FlateCompressMode = enum {
-    NO_COMPRESSION,
-    BEST_SPEED,
-    BEST_SIZE,
+/// Integer representation needs to match enums in Golang for unit tests!
+///   src/compress/flate/deflate.go
+pub const FlateCompressMode = enum(u8) {
+    NO_COMPRESSION = 0,
+    BEST_SPEED = 1,
+    BEST_SIZE = 9,
 };
 
 pub fn compress(
