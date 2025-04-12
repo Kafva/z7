@@ -2,6 +2,8 @@ const std = @import("std");
 const log = @import("log.zig");
 const build_options = @import("build_options");
 
+const FlateCompressMode = @import("flate_compress.zig").FlateCompressMode;
+
 const libflate = @cImport({
     @cInclude("libflate.h");
 });
@@ -18,6 +20,7 @@ pub const TestContext = struct {
     compressed: std.fs.File,
     decompressed: std.fs.File,
     label: []const u8,
+    mode: ?FlateCompressMode,
 
     /// Maximum input/output file size to handle (0.5 MB)
     const max_size = 512*1024;
@@ -50,7 +53,8 @@ pub const TestContext = struct {
             .in_size = in_size,
             .compressed = compressed,
             .decompressed = decompressed,
-            .label = label
+            .label = label,
+            .mode = null,
         };
     }
 
@@ -87,8 +91,17 @@ pub const TestContext = struct {
         const m: f64 = @floatFromInt(self.in_size);
         const percent = if (m == 0) 0 else 100 * (k / m);
         const ansi_post = if (istty) "\x1b[0m" else "";
-        std.debug.print("{d:<7} -> {d:<7} ({s}{d:5.1}{s} %) [{s}({s})]\n",
-                        .{self.in_size, new_size, sign, percent, ansi_post, self.label, filename});
+        std.debug.print("{d:<7} -> {d:<7} ({s}{d:5.1}{s} %) [{s}({s})] {s}\n",
+                        .{
+                            self.in_size,
+                            new_size,
+                            sign,
+                            percent,
+                            ansi_post,
+                            self.label,
+                            filename,
+                            if (self.mode) |mode| @tagName(mode) else "",
+                        });
     }
 
     pub fn compressed_path_s(self: *@This()) !libflate.GoString {

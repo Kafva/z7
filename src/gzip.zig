@@ -3,6 +3,7 @@ const log = @import("log.zig");
 const util = @import("util.zig");
 
 const deflate = @import("flate_compress.zig").compress;
+const FlateCompressMode = @import("flate_compress.zig").FlateCompressMode;
 
 const GzipError = error {
     InvalidStringCharacter,
@@ -29,6 +30,7 @@ pub fn compress(
     inputfile: []const u8,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
+    mode: FlateCompressMode,
     flags: u8,
 ) !void {
     var ctx = GzipContext {
@@ -52,8 +54,14 @@ pub fn compress(
         size = @truncate(st.size);
     }
     try write_hdr_int(&ctx, u32, mtime);
-    // XFL = 2 - compressor used maximum compression, slowest algorithm
-    try write_hdr_byte(&ctx, 2);
+    if (mode == FlateCompressMode.BestCompression) {
+        // XFL = 2 - compressor used maximum compression, slowest algorithm
+        try write_hdr_byte(&ctx, 2);
+    }
+    else {
+        // XFL = 4 - compressor used fastest algorithm
+        try write_hdr_byte(&ctx, 4);
+    }
     try write_hdr_byte(&ctx, 255); // OS (unknown)
     // FLG
     if ((flags & @intFromEnum(GzipFlag.FEXTRA)) != 0) {
@@ -77,7 +85,7 @@ pub fn compress(
     }
 
     // Compressed data block
-    try deflate(allocator, instream, outstream, &crc);
+    try deflate(allocator, instream, outstream, mode, &crc);
 
     // Trailer
     const crc_value = crc.final();

@@ -12,7 +12,6 @@ const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
 
-const compress_block_type =  FlateBlockType.FIXED_HUFFMAN;
 const symbol_max: usize = 286;
 const block_length_max: usize = Flate.window_length;
 
@@ -40,16 +39,23 @@ const CompressContext = struct {
     d_enc_map: []?HuffmanEncoding,
 };
 
+pub const FlateCompressMode = enum {
+	NoCompression,
+	BestSpeed,   
+	BestCompression,
+};
+
 pub fn compress(
     allocator: std.mem.Allocator,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
+    mode: FlateCompressMode,
     crc: *std.hash.Crc32,
 ) !void {
     var ctx = CompressContext {
         .allocator = allocator,
         .crc = crc,
-        .block_type = compress_block_type,
+        .block_type = FlateBlockType.RESERVED,
         .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
         .reader = instream.reader().any(),
         .written_bits = 0,
@@ -63,6 +69,12 @@ pub fn compress(
         .ll_enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
         .d_enc_map = try allocator.alloc(?HuffmanEncoding, 31),
     };
+
+    switch (mode) {
+        .NoCompression => ctx.block_type = FlateBlockType.NO_COMPRESSION,
+        .BestCompression => ctx.block_type = FlateBlockType.FIXED_HUFFMAN,
+        .BestSpeed => ctx.block_type = FlateBlockType.FIXED_HUFFMAN,
+    }
 
     var done = false;
     while (!done) {
@@ -82,6 +94,8 @@ pub fn compress(
     );
 }
 
+/// Go over `block_length` bytes in the input stream with lzss and store
+/// the resulting `FlateSymbol` objects into the write queue.
 fn lzss(ctx: *CompressContext, block_length: usize) !bool {
     const start: usize = ctx.processed_bits * 8;
     const end: usize = ctx.processed_bits + block_length*8;
@@ -208,8 +222,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
 }
 
 fn write_block(ctx: *CompressContext, block_length: usize) !bool {
-    // Go over `block_length` bytes in the input stream with lzss and store
-    // the resulting `FlateSymbol` objects into the write queue.
+    // Populate the write_queue
     const done = try lzss(ctx, block_length);
 
     // TODO: analyze write queue and decide which type to use
