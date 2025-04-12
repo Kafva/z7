@@ -73,7 +73,7 @@ fn build_tests(
         "-buildmode=c-shared",
         "-o",
         go_lib,
-        "tests/flate.go",
+        "tests/go/flate.go",
     };
     std.fs.cwd().makeDir(go_out) catch {};
     const go_run = b.addSystemCommand(&go_args);
