@@ -25,6 +25,8 @@ const CompressContext = struct {
     reader: std.io.AnyReader,
     written_bits: usize,
     processed_bits: usize,
+    /// Left over input byte to use from previous block
+    next_byte: ?u8,
     sliding_window: RingBuffer(u8),
     lookahead: []u8,
     /// Queue of symbols to write to the output stream, we need to keep this
@@ -52,6 +54,7 @@ pub fn compress(
         .reader = instream.reader().any(),
         .written_bits = 0,
         .processed_bits = 0,
+        .next_byte = null,
         // Initialize sliding window for backreferences
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
@@ -65,8 +68,7 @@ pub fn compress(
     while (!done) {
         // Always use `window_length` as the block length to ensure that type-0
         // blocks can be generated.
-        // TODO: splitting into blocks, not properly handled
-        done = try write_block(&ctx, std.math.pow(usize, 2, 16));
+        done = try write_block(&ctx, Flate.window_length);
     }
 
     // Incomplete bytes will be padded when flushing, wait until all
@@ -81,16 +83,21 @@ pub fn compress(
 }
 
 fn write_block(ctx: *CompressContext, block_length: usize) !bool {
+    const start: usize = ctx.processed_bits * 8;
     const end: usize = ctx.processed_bits + block_length*8;
     var done = false;
     ctx.lookahead[0] = blk: {
+        if (ctx.next_byte) |b| {
+            ctx.next_byte = null;
+            break :blk b;
+        }
         break :blk read_byte(ctx) catch {
             done = true;
             break :blk 0;
         };
     };
 
-    while (!done and ctx.processed_bits - 1 < end) {
+    while (!done and ctx.processed_bits < end) {
         // The current number of matches within the lookahead
         var match_length: u16 = 0;
         // Max number of matches in the lookahead this iteration
@@ -170,8 +177,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
         // Set starting byte for next iteration
         if (longest_match_length == 0 or
             longest_match_length == window_length or
-            longest_match_length == Flate.lookahead_length - 1
-        ) {
+            longest_match_length == Flate.lookahead_length - 1) {
             // We need a new byte
             ctx.lookahead[0] = read_byte(ctx) catch {
                 done = true;
@@ -180,7 +186,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
         }
         else {
             // The final char from the lookahead should be passed to
-            // the next iteration
+            // the next iteration.
             util.print_char(
                 "Pushing to next iteration",
                 ctx.lookahead[longest_match_length]
@@ -188,6 +194,15 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
             ctx.lookahead[0] = ctx.lookahead[longest_match_length];
         }
     }
+
+    // Save starting byte for next block
+    log.debug(
+        @src(),
+        "Done processing input for new block [{}+{} bytes]",
+        .{start, block_length}
+    );
+    util.print_char("Saving for next block", ctx.lookahead[0]);
+    ctx.next_byte = ctx.lookahead[0];
 
     // TODO: analyze write queue and decide which type to use
 
