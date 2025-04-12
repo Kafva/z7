@@ -35,6 +35,9 @@ const CompressContext = struct {
     /// block type-2.
     write_queue: []FlateSymbol,
     write_queue_index: usize,
+    /// Queue of raw bytes for type-0 blocks.
+    write_queue_raw: []u8,
+    write_queue_raw_index: usize,
     /// Literal/Length Huffman encoding mappings for block type-2
     ll_enc_map: []?HuffmanEncoding,
     /// Distance Huffman encoding mappings for block type-2
@@ -72,6 +75,8 @@ pub fn compress(
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         .write_queue = try allocator.alloc(FlateSymbol, block_length_max),
         .write_queue_index = 0,
+        .write_queue_raw = try allocator.alloc(u8, block_length_max),
+        .write_queue_raw_index = 0,
         .ll_enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
         .d_enc_map = try allocator.alloc(?HuffmanEncoding, 31),
     };
@@ -80,7 +85,8 @@ pub fn compress(
     while (!done) {
         // Always use `window_length` as the block length to ensure that type-0
         // blocks can be generated.
-        done = try write_block(&ctx, Flate.window_length);
+        //done = try write_block(&ctx, Flate.window_length);
+        done = try write_block(&ctx, 32);
     }
 
     // Incomplete bytes will be padded when flushing, wait until all
@@ -97,7 +103,7 @@ pub fn compress(
 /// the resulting `FlateSymbol` objects into the write queue.
 fn lzss(ctx: *CompressContext, block_length: usize) !bool {
     ctx.block_start = ctx.processed_bytes;
-    const end: usize = ctx.processed_bytes + block_length*8;
+    const end: usize = ctx.processed_bytes + block_length;
     var done = false;
     ctx.lookahead[0] = blk: {
         if (ctx.next_byte) |b| {
@@ -177,6 +183,9 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         // Update the sliding window with the characters from the lookahead
         for (0..lookahead_end) |i| {
             ctx.sliding_window.push(ctx.lookahead[i]);
+            // ... and the `write_queue_raw`
+            ctx.write_queue_raw[ctx.write_queue_raw_index] = ctx.lookahead[i];
+            ctx.write_queue_raw_index += 1;
         }
 
         // Save the symbols for the characters in the lookahead
@@ -246,7 +255,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // Encode everything from the write queue onto the output stream
     switch (ctx.block_type) {
         FlateBlockType.NO_COMPRESSION => {
-            if (block_length > Flate.window_length) {
+            if (block_length > Flate.window_length) { // TOOD: max is 2**16
                 return FlateError.InvalidBlockLength;
             }
             // Fill up with zeroes to the next byte boundary
@@ -262,12 +271,22 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
             try write_bits(ctx, u16, len, 16);
             try write_bits(ctx, u16, ~len, 16);
             // Write the uncompressed content from the write_queue
-            try no_compression_dequeue_symbols(ctx);
+            for (0..ctx.write_queue_raw_index) |i| {
+                try write_bits(ctx, u8, ctx.write_queue_raw[i], 8);
+            }
+            // ... including the extra byte if any
+            if (ctx.next_byte) |b| {
+                ctx.next_byte = null;
+                try write_bits(ctx, u8, b, 8);
+            }
+
         },
         FlateBlockType.FIXED_HUFFMAN => {
             for (0..ctx.write_queue_index) |i| {
                 try fixed_code_write_symbol(ctx, ctx.write_queue[i]);
             }
+            // Write end-of-block marker
+            try write_bits(ctx, u7, @as(u7, 0), 7);
         },
         FlateBlockType.DYNAMIC_HUFFMAN => {
             // Generate `ll_enc_map` and `d_enc_map` based on the current
@@ -279,17 +298,16 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
             for (0..ctx.write_queue_index) |i| {
                 try dynamic_code_write_symbol(ctx, ctx.write_queue[i]);
             }
+            // Write end-of-block marker
+            try write_bits(ctx, u7, @as(u7, 0), 7);
         },
         FlateBlockType.RESERVED => {
             return FlateError.UnexpectedBlockType;
         }
     }
     ctx.write_queue_index = 0;
+    ctx.write_queue_raw_index = 0;
 
-    if (ctx.block_type != FlateBlockType.NO_COMPRESSION) {
-        // Write end-of-block marker
-        try write_bits(ctx, u7, @as(u7, 0), 7);
-    }
     return done;
 }
 
@@ -425,38 +443,6 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
             }
         },
         else => {}
-    }
-}
-
-/// Write the bits for the provided match length and distance to the output
-/// stream.
-fn no_compression_dequeue_symbols(ctx: *CompressContext) !void {
-    var length: u16 = 0;
-    for (0..ctx.write_queue_index) |i| {
-        const sym = ctx.write_queue[i];
-        switch (sym) {
-            .char => {
-                try write_bits(ctx, u8, sym.char, 8);
-            },
-            .length => {
-                length = sym.length.value.?;
-            },
-            .distance => {
-                // Write the `length` number of symbols at the provided
-                // distance back into the `sliding_window`
-                // This is basically what we do during lzss decompression.
-                if (length == 0) {
-                    return FlateError.InvalidLength;
-                }
-                const distance = sym.distance.value.?;
-                for (0..length) |_| {
-                    // use the base offset that was present when this match was found
-                    const offset: i32 = @intCast((ctx.write_queue_index - i) + distance - 1);
-                    const c: u8 = try ctx.sliding_window.read_offset_end(offset);
-                    try write_bits(ctx, u8, c, 8);
-                }
-            },
-        }
     }
 }
 
