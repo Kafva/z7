@@ -12,9 +12,6 @@ const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
 
-const symbol_max: usize = 286;
-const block_length_max: usize = Flate.window_length;
-
 const CompressContext = struct {
     allocator: std.mem.Allocator,
     rng: std.Random.Xoshiro256,
@@ -77,20 +74,19 @@ pub fn compress(
         // Initialize sliding window for backreferences
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
-        .write_queue = try allocator.alloc(FlateSymbol, block_length_max),
+        .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length_max),
         .write_queue_index = 0,
-        .write_queue_raw = try allocator.alloc(u8, block_length_max),
+        .write_queue_raw = try allocator.alloc(u8, Flate.block_length_max),
         .write_queue_raw_index = 0,
-        .ll_enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
+        .ll_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.symbol_max),
         .d_enc_map = try allocator.alloc(?HuffmanEncoding, 31),
     };
 
     var done = false;
     while (!done) {
-        // Always use `window_length` as the block length to ensure that type-0
-        // blocks can be generated.
-        //done = try write_block(&ctx, Flate.window_length);
-        done = try write_block(&ctx, 32);
+        // TODO: fixed block length
+        done = try write_block(&ctx, Flate.block_length_max);
+        //done = try write_block(&ctx, 32);
     }
 
     // Incomplete bytes will be padded when flushing, wait until all
@@ -311,7 +307,7 @@ fn queue_symbol(
     if (longest_match_length <= Flate.min_length_match) {
         // Prefer raw characters for small matches
         for (0..lookahead_end) |i| {
-            if (ctx.write_queue_index + 1 >= block_length_max) {
+            if (ctx.write_queue_index + 1 >= Flate.block_length_max) {
                 return FlateError.OutOfQueueSpace;
             }
             const symbol = FlateSymbol { .char = ctx.lookahead[i] };
@@ -320,7 +316,7 @@ fn queue_symbol(
         }
     }
     else {
-        if (ctx.write_queue_index + 2 >= block_length_max) {
+        if (ctx.write_queue_index + 2 >= Flate.block_length_max) {
             return FlateError.OutOfQueueSpace;
         }
 
@@ -339,7 +335,7 @@ fn queue_symbol(
 }
 
 fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void {
-    if (block_length > Flate.window_length) { // TOOD: max is 2**16
+    if (block_length > Flate.block_length_max) {
         return FlateError.InvalidBlockLength;
     }
     // Fill up with zeroes to the next byte boundary
