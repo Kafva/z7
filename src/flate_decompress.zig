@@ -8,6 +8,8 @@ const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
+const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
+const HuffmanError = @import("huffman.zig").HuffmanError;
 
 const DecompressError = error {
     UndecodableBitStream,
@@ -27,10 +29,14 @@ const DecompressContext = struct {
     processed_bits: usize,
     /// Cache of the last 32K read bytes to support backreferences
     sliding_window: RingBuffer(u8),
-    /// Fixed huffman decoding maps
+    /// Decoding maps for block type-1
     seven_bit_decode: std.AutoHashMap(u16, u16),
     eight_bit_decode: std.AutoHashMap(u16, u16),
     nine_bit_decode: std.AutoHashMap(u16, u16),
+    /// Literal/Length Huffman decoding mappings for block type-2
+    ll_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
+    /// Distance Huffman decoding mappings for block type-2
+    d_dec_map: std.AutoHashMap(HuffmanEncoding, u16)
 };
 
 pub fn decompress(
@@ -55,6 +61,8 @@ pub fn decompress(
         .seven_bit_decode = try fixed_code_decoding_map(7),
         .eight_bit_decode = try fixed_code_decoding_map(8),
         .nine_bit_decode = try fixed_code_decoding_map(9),
+        .ll_dec_map = std.AutoHashMap(HuffmanEncoding, u16).init(allocator),
+        .d_dec_map = std.AutoHashMap(HuffmanEncoding, u16).init(allocator),
     };
 
     // We may want to start from an offset in the input stream
@@ -85,7 +93,7 @@ pub fn decompress(
                 try fixed_code_decompress_block(&ctx);
             },
             FlateBlockType.DYNAMIC_HUFFMAN => {
-                return FlateError.NotImplemented;
+                try dynamic_code_decompress_block(&ctx);
             },
             else => {
                 return FlateError.UnexpectedBlockType;
@@ -129,6 +137,69 @@ fn no_compression_decompress_block(ctx: *DecompressContext) !void {
             return FlateError.UnexpectedEof;
         };
         try write_byte(ctx, b);
+    }
+}
+
+fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
+    // Decode the serialised `ll_enc_map` and `d_enc_map` into a `ll_dec_map` and `d_dec_map`
+    try dynamic_code_decompress_enc_maps(ctx);
+
+    // Decode the stream using the `ll_dec_map` and `d_dec_map`
+    var enc = HuffmanEncoding {
+        .bits = 0,
+        .bit_shift = 0,
+    };
+
+    while (true) {
+        const bit = read_bits(ctx, u1, 1) catch {
+            break;
+        };
+        if (enc.bit_shift == 15) {
+            return HuffmanError.BadEncoding;
+        }
+
+        // The most-significant bit is read first
+        enc.bits = (enc.bits << 1) | bit;
+        enc.bit_shift += 1;
+
+        if (ctx.ll_dec_map.get(enc)) |v| {
+            if (v >= Flate.symbol_max) {
+                return HuffmanError.BadEncoding;
+            }
+
+            if (v < 256) {
+                const c: u8 = @truncate(v);
+                try write_byte(ctx, c);
+            }
+            else if (v == 256) {
+                log.debug(@src(), "End-of-block marker found", .{});
+                break;
+            }
+            enc.bits = 0;
+            enc.bit_shift = 0;
+        }
+        else if (ctx.d_dec_map.get(enc)) |v| {
+        }
+    }
+}
+
+fn dynamic_code_decompress_enc_maps(ctx: *DecompressContext) !void {
+    for (0..Flate.symbol_max) |c| {
+         const len = try read_bits(ctx, u8, 8);
+         if (len > 16) unreachable;
+         const bits = try read_bits(ctx, u16, len);
+
+         const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
+         ctx.ll_dec_map.putNoClobber(enc, c);
+    }
+
+    for (0..31) |c| {
+         const len = try read_bits(ctx, u8, 8);
+         if (len > 16) unreachable;
+         const bits = try read_bits(ctx, u16, len);
+
+         const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
+         ctx.d_dec_map.putNoClobber(enc, c);
     }
 }
 

@@ -269,9 +269,12 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
         FlateBlockType.DYNAMIC_HUFFMAN => {
             // Generate `ll_enc_map` and `d_enc_map` based on the current
             // `write_queue` content.
-            try dynamic_code_huffman_gen(ctx);
+            try dynamic_code_gen_enc_maps(ctx);
+
             // TODO: write dynamic block header
-            // TODO: write encoded ll_enc_map and d_enc_map
+
+            // Write encoded `ll_enc_map` and `d_enc_map`
+            try dynamic_code_write_enc_maps(ctx);
 
             for (0..ctx.write_queue_index) |i| {
                 try dynamic_code_write_symbol(ctx, ctx.write_queue[i]);
@@ -355,8 +358,8 @@ fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void 
     }
 }
 
-fn dynamic_code_huffman_gen(ctx: *CompressContext) !void {
-    var ll_freq = try ctx.allocator.alloc(usize, 286);
+fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
+    var ll_freq = try ctx.allocator.alloc(usize, Flate.symbol_max);
     var d_freq = try ctx.allocator.alloc(usize, 31);
     var ll_cnt: usize = 0;
     var d_cnt: usize = 0;
@@ -394,6 +397,35 @@ fn dynamic_code_huffman_gen(ctx: *CompressContext) !void {
 
     try huffman_build_encoding(ctx.allocator, &ctx.ll_enc_map, ll_freq, ll_cnt);
     try huffman_build_encoding(ctx.allocator, &ctx.d_enc_map, d_freq, d_cnt);
+}
+
+fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
+    // Each enc_map is simply a 'Symbol -> Huffman bits' mapping
+    // The decompresser knows the order of the symbols, it does not know
+    // the length of each 'Huffman bits' sequence
+    //
+    // Temp solution, write [ LEN | BITS ] entries
+    for (0..ctx.ll_enc_map) |i| {
+        if (ctx.ll_enc_map[i]) |enc| {
+            try write_bits(ctx, u8, enc.bit_shift, 4); // LEN
+            try write_bits(ctx, u16, enc.bits, enc.bit_shift); // BITS
+        }
+        else {
+            // Zero length entry
+            try write_bits(ctx, u8, 0, 8);
+        }
+    }
+
+    for (0..ctx.d_enc_map) |i| {
+        if (ctx.d_enc_map[i]) |enc| {
+            try write_bits(ctx, u8, enc.bit_shift, 4); // LEN
+            try write_bits(ctx, u16, enc.bits, enc.bit_shift); // BITS
+        }
+        else {
+            // Zero length entry
+            try write_bits(ctx, u8, 0, 8);
+        }
+    }
 }
 
 fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
