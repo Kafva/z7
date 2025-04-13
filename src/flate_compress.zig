@@ -183,9 +183,6 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         // Update the sliding window with the characters from the lookahead
         for (0..lookahead_end) |i| {
             ctx.sliding_window.push(ctx.lookahead[i]);
-            // ... and the `write_queue_raw`
-            ctx.write_queue_raw[ctx.write_queue_raw_index] = ctx.lookahead[i];
-            ctx.write_queue_raw_index += 1;
         }
 
         // Save the symbols for the characters in the lookahead
@@ -197,34 +194,39 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         );
 
         // Set starting byte for next iteration
-        if (longest_match_length == 0 or
-            longest_match_length == window_length or
-            longest_match_length == Flate.lookahead_length - 1) {
-            // We need a new byte
-            ctx.lookahead[0] = read_byte(ctx) catch {
-                done = true;
-                break;
-            };
-        }
-        else {
-            // The final char from the lookahead should be passed to
-            // the next iteration.
-            util.print_char(
-                "Pushing to next iteration",
-                ctx.lookahead[longest_match_length]
-            );
-            ctx.lookahead[0] = ctx.lookahead[longest_match_length];
+        if (!done) {
+            if (longest_match_length == 0 or
+                longest_match_length == window_length or
+                longest_match_length == Flate.lookahead_length - 1) {
+                // We need a new byte
+                ctx.lookahead[0] = read_byte(ctx) catch {
+                    done = true;
+                    break;
+                };
+            }
+            else {
+                // The final char from the lookahead should be passed to
+                // the next iteration.
+                util.print_char(
+                    "Pushing to next iteration",
+                    ctx.lookahead[longest_match_length]
+                );
+                ctx.lookahead[0] = ctx.lookahead[longest_match_length];
+            }
         }
     }
 
     // Save starting byte for next block
+    if (!done) {
+        util.print_char("Saving for next block", ctx.lookahead[0]);
+        ctx.next_byte = ctx.lookahead[0];
+    }
+
     log.debug(
         @src(),
         "Done processing input for new block [{}+{} bytes]",
         .{ctx.block_start, ctx.processed_bytes - ctx.block_start}
     );
-    util.print_char("Saving for next block", ctx.lookahead[0]);
-    ctx.next_byte = ctx.lookahead[0];
 
     return done;
 }
@@ -264,10 +266,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
             }
             // Write length header
             const processed_bytes_block = ctx.processed_bytes - ctx.block_start;
-            const len: u16 = if (processed_bytes_block < block_length)
-                                  @truncate(processed_bytes_block)
-                             else
-                                  @truncate(block_length);
+            const len: u16 = @truncate(processed_bytes_block);
             try write_bits(ctx, u16, len, 16);
             try write_bits(ctx, u16, ~len, 16);
             // Write the uncompressed content from the write_queue
@@ -277,6 +276,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
             // ... including the extra byte if any
             if (ctx.next_byte) |b| {
                 ctx.next_byte = null;
+                log.debug(@src(), "extra", .{});
                 try write_bits(ctx, u8, b, 8);
             }
 
@@ -317,6 +317,12 @@ fn queue_symbol(
     longest_match_length: u16,
     longest_match_distance: u16,
 ) !void {
+    // Save everything for the raw write queue
+    for (0..lookahead_end) |i| {
+        ctx.write_queue_raw[ctx.write_queue_raw_index] = ctx.lookahead[i];
+        ctx.write_queue_raw_index += 1;
+    }
+
     if (longest_match_length <= Flate.min_length_match) {
         // Prefer raw characters for small matches
         for (0..lookahead_end) |i| {
@@ -525,7 +531,12 @@ fn write_bits(
 ) !void {
     try ctx.bit_writer.writeBits(value, num_bits);
     const offset = @divFloor(ctx.written_bits, 8);
-    util.print_bits(T, "Output write", value, num_bits, offset);
+    if (T == u8 and num_bits == 8) {
+        util.print_char("Output write", value);
+    }
+    else {
+        util.print_bits(T, "Output write", value, num_bits, offset);
+    }
     ctx.written_bits += num_bits;
 }
 
