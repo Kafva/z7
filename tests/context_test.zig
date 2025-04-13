@@ -113,7 +113,10 @@ pub const TestContext = struct {
         return self.go_str_tmp_filepath("decompressed.bin");
     }
 
-    pub fn inputfile_s(self: @This()) libflate.GoString {
+    pub fn inputfile_s(self: *@This()) !libflate.GoString {
+        if (std.mem.eql(u8, self.inputfile, random_label)) {
+            return self.go_str_tmp_filepath("random.bin");
+        }
         return libflate.GoString{
             .p = self.inputfile.ptr,
             .n = @intCast(self.inputfile.len)

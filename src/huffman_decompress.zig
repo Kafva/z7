@@ -57,7 +57,7 @@ pub fn decompress(
             }
             const c: u8 = @truncate(v);
             try ctx.writer.writeByte(c);
-            util.print_char("Output write", c);
+            util.print_char(log.debug, "Output write", c);
             enc.bits = 0;
             enc.bit_shift = 0;
         }
@@ -66,7 +66,7 @@ pub fn decompress(
 
 fn read_bit(ctx: *HuffmanDecompressContext) !u16 {
     const bit = try ctx.bit_reader.readBitsNoEof(u16, 1);
-    util.print_bits(u16, "Input read", bit, 1, ctx.processed_bits);
+    util.print_bits(log.trace, u16, "Input read", bit, 1, ctx.processed_bits);
     ctx.processed_bits += 1;
     return bit;
 }

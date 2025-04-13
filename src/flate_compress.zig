@@ -17,10 +17,12 @@ const block_length_max: usize = Flate.window_length;
 
 const CompressContext = struct {
     allocator: std.mem.Allocator,
+    rng: std.Random.Xoshiro256,
     mode: FlateCompressMode,
     crc: *std.hash.Crc32,
     /// The current type of block to write
     block_type: FlateBlockType,
+    block_cnt: usize,
     bit_writer: std.io.BitWriter(Flate.writer_endian, std.io.AnyWriter),
     reader: std.io.AnyReader,
     written_bits: usize,
@@ -61,9 +63,11 @@ pub fn compress(
 ) !void {
     var ctx = CompressContext {
         .allocator = allocator,
+        .rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp())),
         .mode = mode,
         .crc = crc,
         .block_type = FlateBlockType.RESERVED,
+        .block_cnt = 0,
         .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
         .reader = instream.reader().any(),
         .written_bits = 0,
@@ -124,7 +128,6 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         // of the match!
         var longest_match_length: u16 = 0;
         var longest_match_distance: u16 = 0;
-
         // Look for matches in the sliding_window
         const window_length: u16 = @truncate(ctx.sliding_window.len());
         var ring_offset: u16 = 0;
@@ -171,11 +174,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
                 done = true;
                 break;
             };
-            log.debug(
-                @src(),
-                "Extending lookahead {d} item(s)",
-                .{longest_match_length}
-            );
+            log.trace(@src(), "Extending lookahead to {d}", .{longest_match_length});
         }
 
         const lookahead_end = if (longest_match_length == 0) 1
@@ -194,31 +193,26 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         );
 
         // Set starting byte for next iteration
-        if (!done) {
-            if (longest_match_length == 0 or
-                longest_match_length == window_length or
-                longest_match_length == Flate.lookahead_length - 1) {
-                // We need a new byte
-                ctx.lookahead[0] = read_byte(ctx) catch {
-                    done = true;
-                    break;
-                };
-            }
-            else {
-                // The final char from the lookahead should be passed to
-                // the next iteration.
-                util.print_char(
-                    "Pushing to next iteration",
-                    ctx.lookahead[longest_match_length]
-                );
-                ctx.lookahead[0] = ctx.lookahead[longest_match_length];
-            }
+        if (longest_match_length == 0 or
+            longest_match_length == window_length or
+            longest_match_length == Flate.lookahead_length - 1) {
+            // We need a new byte
+            ctx.lookahead[0] = read_byte(ctx) catch {
+                done = true;
+                break;
+            };
+        }
+        else {
+            // The final char from the lookahead should be passed to
+            // the next iteration.
+            util.print_char(log.trace, "Saving for next pass", ctx.lookahead[longest_match_length]);
+            ctx.lookahead[0] = ctx.lookahead[longest_match_length];
         }
     }
 
     // Save starting byte for next block
     if (!done) {
-        util.print_char("Saving for next block", ctx.lookahead[0]);
+        util.print_char(log.debug, "Saving for next block", ctx.lookahead[0]);
         ctx.next_byte = ctx.lookahead[0];
     }
 
@@ -228,24 +222,33 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         .{ctx.block_start, ctx.processed_bytes - ctx.block_start}
     );
 
+    if (done and ctx.next_byte != null) {
+        util.print_char(log.err, "Reached eof with extra byte present", ctx.next_byte.?);
+        return FlateError.InternalError;
+    }
+
     return done;
 }
 
 fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // Populate the write_queue
+    // We will always have a saved `next_byte` after this call except for
+    // when we reach eof in the input stream.
     const done = try lzss(ctx, block_length);
 
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
         .NO_COMPRESSION => FlateBlockType.NO_COMPRESSION,
-        .BEST_SPEED => FlateBlockType.FIXED_HUFFMAN,
-        .BEST_SIZE => FlateBlockType.FIXED_HUFFMAN,
+        else =>
+            @enumFromInt(ctx.rng.random().intRangeAtMost(u2, 0, 1)),
+            //@enumFromInt(ctx.block_cnt % 2)
     };
 
+    const final_s = if (done) " (final)" else "";
     log.debug(
         @src(),
-        "Writing type-{d} block{s}",
-        .{@intFromEnum(ctx.block_type), if (done) " (final)" else ""}
+        "Writing type-{d} block{s} #{}",
+        .{@intFromEnum(ctx.block_type), final_s, ctx.block_cnt}
     );
 
     // Write block header
@@ -257,29 +260,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // Encode everything from the write queue onto the output stream
     switch (ctx.block_type) {
         FlateBlockType.NO_COMPRESSION => {
-            if (block_length > Flate.window_length) { // TOOD: max is 2**16
-                return FlateError.InvalidBlockLength;
-            }
-            // Fill up with zeroes to the next byte boundary
-            while (ctx.written_bits % 8 != 0) {
-                try write_bits(ctx, u1, 0, 1);
-            }
-            // Write length header
-            const processed_bytes_block = ctx.processed_bytes - ctx.block_start;
-            const len: u16 = @truncate(processed_bytes_block);
-            try write_bits(ctx, u16, len, 16);
-            try write_bits(ctx, u16, ~len, 16);
-            // Write the uncompressed content from the write_queue
-            for (0..ctx.write_queue_raw_index) |i| {
-                try write_bits(ctx, u8, ctx.write_queue_raw[i], 8);
-            }
-            // ... including the extra byte if any
-            if (ctx.next_byte) |b| {
-                ctx.next_byte = null;
-                log.debug(@src(), "extra", .{});
-                try write_bits(ctx, u8, b, 8);
-            }
-
+            try no_compression_write_block(ctx, block_length);
         },
         FlateBlockType.FIXED_HUFFMAN => {
             for (0..ctx.write_queue_index) |i| {
@@ -305,9 +286,13 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
             return FlateError.UnexpectedBlockType;
         }
     }
+    log.debug(@src(), "Done compressing block #{d} [{d} bytes]", .{
+        ctx.block_cnt,
+        if (ctx.next_byte) |_| ctx.processed_bytes - 1 else ctx.processed_bytes,
+    });
     ctx.write_queue_index = 0;
     ctx.write_queue_raw_index = 0;
-
+    ctx.block_cnt += 1;
     return done;
 }
 
@@ -350,6 +335,26 @@ fn queue_symbol(
         const dsymbol = FlateSymbol { .distance = denc };
         ctx.write_queue[ctx.write_queue_index] = dsymbol;
         ctx.write_queue_index += 1;
+    }
+}
+
+fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void {
+    if (block_length > Flate.window_length) { // TOOD: max is 2**16
+        return FlateError.InvalidBlockLength;
+    }
+    // Fill up with zeroes to the next byte boundary
+    while (ctx.written_bits % 8 != 0) {
+        try write_bits(ctx, u1, 0, 1);
+    }
+
+    // Write length header
+    const len: u16 = @truncate(ctx.write_queue_raw_index);
+    log.debug(@src(), "Writing LEN: {d}", .{len});
+    try write_bits(ctx, u16, len, 16);
+    try write_bits(ctx, u16, ~len, 16);
+    // Write the uncompressed content from the write_queue
+    for (0..ctx.write_queue_raw_index) |i| {
+        try write_bits(ctx, u8, ctx.write_queue_raw[i], 8);
     }
 }
 
@@ -433,7 +438,7 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
                     offset,
                     sym.length.bit_count
                 );
-                log.debug(@src(), "backref(length-offset): {d}", .{offset});
+                log.trace(@src(), "backref(length-offset): {d}", .{offset});
             }
         },
         .distance => {
@@ -445,7 +450,7 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
                     offset,
                     sym.distance.bit_count
                 );
-                log.debug(@src(), "backref(distance-offset): {d}", .{offset});
+                log.trace(@src(), "backref(distance-offset): {d}", .{offset});
             }
         },
         else => {}
@@ -470,6 +475,7 @@ fn fixed_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
                 const char_9: u9 = 0b1_1001_0000 + @as(u9, sym.char - 144);
                 try write_bits_be(ctx, u9, char_9, 9);
             }
+            util.print_char(log.debug, "Output write literal", sym.char);
         },
         .length => {
             // Translate the length to the corresponding code
@@ -530,12 +536,12 @@ fn write_bits(
     num_bits: u16,
 ) !void {
     try ctx.bit_writer.writeBits(value, num_bits);
-    const offset = @divFloor(ctx.written_bits, 8);
     if (T == u8 and num_bits == 8) {
-        util.print_char("Output write", value);
+        util.print_char(log.debug, "Output write", value);
     }
     else {
-        util.print_bits(T, "Output write", value, num_bits, offset);
+        const offset = @divFloor(ctx.written_bits, 8);
+        util.print_bits(log.trace, T, "Output write", value, num_bits, offset);
     }
     ctx.written_bits += num_bits;
 }
@@ -569,7 +575,7 @@ fn write_bits_be(
 
 fn read_byte(ctx: *CompressContext) !u8 {
     const b = try ctx.reader.readByte();
-    util.print_char("Input read", b);
+    util.print_char(log.trace, "Input read", b);
     ctx.processed_bytes += 1;
 
     // The final crc should be the crc of the entire input file, update

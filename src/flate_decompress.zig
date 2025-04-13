@@ -19,6 +19,7 @@ const DecompressContext = struct {
     crc: *std.hash.Crc32,
     /// The current type of block to decode
     block_type: FlateBlockType,
+    block_cnt: usize,
     writer: std.io.AnyWriter,
     bit_reader: std.io.BitReader(Flate.writer_endian, std.io.AnyReader),
     start_offset: usize,
@@ -44,6 +45,7 @@ pub fn decompress(
         .allocator = allocator,
         .crc = crc,
         .block_type = FlateBlockType.RESERVED,
+        .block_cnt = 0,
         .writer = outstream.writer().any(),
         .bit_reader = std.io.bitReader(Flate.writer_endian, instream.reader().any()),
         .start_offset = instream_offset,
@@ -69,11 +71,11 @@ pub fn decompress(
         const block_type_int: u2 = @truncate(header >> 1);
         ctx.block_type = @enumFromInt(block_type_int);
 
-        log.debug(
-            @src(),
-            "Reading type-{d} block{s}",
-            .{block_type_int, if (done) " (final)" else ""}
-        );
+        log.debug(@src(), "Reading type-{d} block{s} #{d}", .{
+            block_type_int,
+            if (done) " (final)" else "",
+            ctx.block_cnt
+        });
 
         switch (ctx.block_type) {
             FlateBlockType.NO_COMPRESSION => {
@@ -89,6 +91,8 @@ pub fn decompress(
                 return FlateError.UnexpectedBlockType;
             }
         }
+        log.debug(@src(), "Done decompressing block #{d} [{d} bytes]", .{ctx.block_cnt, ctx.written_bytes});
+        ctx.block_cnt += 1;
     }
 
     log.debug(
@@ -136,7 +140,7 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
             };
 
             if (ctx.seven_bit_decode.get(key)) |char| {
-                log.debug(@src(), "Matched 0b{b:0>7}", .{key});
+                log.trace(@src(), "Matched 0b{b:0>7}", .{key});
                 break :blk char;
             }
 
@@ -150,7 +154,7 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
             key |= bit;
 
             if (ctx.eight_bit_decode.get(key)) |char| {
-                log.debug(@src(), "Matched 0b{b:0>8}", .{key});
+                log.trace(@src(), "Matched 0b{b:0>8}", .{key});
                 break :blk char;
             }
 
@@ -164,7 +168,7 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
             key |= bit;
 
             if (ctx.nine_bit_decode.get(key)) |char| {
-                log.debug(@src(), "Matched 0b{b:0>9}", .{key});
+                log.trace(@src(), "Matched 0b{b:0>9}", .{key});
                 break :blk char;
             }
 
@@ -229,7 +233,7 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
                 const c: u8 = try ctx.sliding_window.read_offset_end(distance - 1);
                 // Write each byte to the output stream AND the the sliding window
                 try write_byte(ctx, c);
-                log.debug(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
+                log.trace(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
             }
         }
         else {
@@ -289,7 +293,7 @@ fn read_bits(ctx: *DecompressContext, comptime T: type, num_bits: u16) !T {
         return e;
     };
     const offset = ctx.start_offset + @divFloor(ctx.processed_bits, 8);
-    util.print_bits(T, "Input read", bits, num_bits, offset);
+    util.print_bits(log.trace, T, "Input read", bits, num_bits, offset);
     ctx.processed_bits += num_bits;
     return bits;
 }
@@ -315,7 +319,7 @@ fn read_bits_be(ctx: *DecompressContext, num_bits: u16) !u16 {
 fn write_byte(ctx: *DecompressContext, c: u8) !void {
     ctx.sliding_window.push(c);
     try ctx.writer.writeByte(c);
-    util.print_char("Output write", c);
+    util.print_char(log.debug, "Output write", c);
     ctx.written_bytes += 1;
 
     // The crc in the trailer of the gzip format is performed on the

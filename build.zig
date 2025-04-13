@@ -120,6 +120,8 @@ pub fn build(b: *std.Build) void {
     build_options.addOption([]const u8, "version", version);
     const debug_opt = b.option(bool, "debug", "Always print debug logs") orelse false;
     build_options.addOption(bool, "debug", debug_opt);
+    const trace_opt = b.option(bool, "trace", "Print detailed debug logs") orelse false;
+    build_options.addOption(bool, "trace", trace_opt);
     const quiet_opt = b.option(bool, "quiet", "Quiet test result output") orelse false;
     build_options.addOption(bool, "quiet", quiet_opt);
 

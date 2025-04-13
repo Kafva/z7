@@ -47,6 +47,16 @@ fn log_write(
     nosuspend writer.print(fmt, args) catch return;
 }
 
+pub fn trace(
+    comptime src: std.builtin.SourceLocation,
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (build_options.trace or enable_debug) {
+        log(.debug, src, format, args);
+    }
+}
+
 pub fn debug(
     comptime src: std.builtin.SourceLocation,
     comptime format: []const u8,

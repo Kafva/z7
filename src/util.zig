@@ -19,6 +19,11 @@ pub fn repeat(comptime c: u8, comptime count: u8) ![]const u8 {
 }
 
 pub fn print_bits(
+    comptime log_fn:  fn (
+        comptime src: std.builtin.SourceLocation,
+        comptime format: []const u8,
+        args: anytype,
+    ) void,
     comptime T: type,
     comptime prefix: []const u8,
     bits: T,
@@ -28,55 +33,55 @@ pub fn print_bits(
     const suffix =  " ({d}) [{d} bits] @{d}";
     switch (num_bits) {
         2 =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b:0>2}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
             ),
         3 =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b:0>3}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
             ),
         4 =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b:0>4}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
             ),
         5 =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b:0>5}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
             ),
         6 =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b:0>6}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
             ),
         7 =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b:0>7}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
             ),
         8 =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b:0>8}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
             ),
         16 =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b:0>16}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
             ),
         else =>
-            log.debug(
+            log_fn(
                 @src(),
                 "{s}: 0b{b}" ++ suffix,
                 .{prefix, bits, bits, num_bits, offset}
@@ -85,13 +90,18 @@ pub fn print_bits(
 }
 
 pub fn print_char(
+    comptime log_fn:  fn (
+        comptime src: std.builtin.SourceLocation,
+        comptime format: []const u8,
+        args: anytype,
+    ) void,
     comptime prefix: []const u8,
     byte: u8,
 ) void {
     if (std.ascii.isPrint(byte) and byte != '\n') {
-        log.debug(@src(), "{s}: '{c}'", .{prefix, byte});
+        log_fn(@src(), "{s}: '{c}'", .{prefix, byte});
     } else {
-        log.debug(@src(), "{s}: 0x{x}", .{prefix, byte});
+        log_fn(@src(), "{s}: 0x{x}", .{prefix, byte});
     }
 }
 

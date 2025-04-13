@@ -63,7 +63,7 @@ pub fn compress(
         };
         if (ctx.enc_map[@intCast(c)]) |enc| {
             try write_bits_be(&ctx, enc.bits, enc.bit_shift);
-            util.print_char("Encoded", c);
+            util.print_char(log.debug, "Encoded", c);
         } else {
             log.err(@src(), "Unexpected byte: 0x{x}", .{c});
             return HuffmanError.UnexpectedCharacter;
@@ -401,7 +401,7 @@ fn write_bits_be(ctx: *HuffmanCompressContext, value: u16, num_bits: u16) !void 
 
 fn write_bit(ctx: *HuffmanCompressContext, bit: u1) !void {
     try ctx.bit_writer.?.writeBits(bit, 1);
-    util.print_bits(u16, "Output write", bit, 1, ctx.written_bits);
+    util.print_bits(log.trace, u16, "Output write", bit, 1, ctx.written_bits);
     ctx.written_bits += 1;
 }
 
