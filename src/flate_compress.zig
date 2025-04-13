@@ -235,22 +235,23 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
         .NO_COMPRESSION => FlateBlockType.NO_COMPRESSION,
+        .BEST_SPEED => FlateBlockType.DYNAMIC_HUFFMAN, // TODO: tmp
         else =>
             @enumFromInt(ctx.rng.random().intRangeAtMost(u2, 0, 1)),
             //@enumFromInt(ctx.block_cnt % 2)
     };
+    const btype: u3 = @intFromEnum(ctx.block_type);
 
-    const final_s = if (done) " (final)" else "";
-    log.debug(
-        @src(),
-        "Writing type-{d} block{s} #{}",
-        .{@intFromEnum(ctx.block_type), final_s, ctx.block_cnt}
-    );
+    log.debug(@src(), "Writing type-{d} block{s} #{}", .{
+        @intFromEnum(ctx.block_type),
+        if (done) " (final)" else "",
+        ctx.block_cnt
+    });
 
     // Write block header
     var header: u3 = 0;
-    header |= @intFromEnum(ctx.block_type) << 1; // BTYPE
-    header |= @intFromBool(done);                // BFINAL
+    header |= btype << 1;         // BTYPE
+    header |= @intFromBool(done); // BFINAL
     try write_bits(ctx, u3, header, 3);
 
     // Encode everything from the write queue onto the output stream
@@ -268,7 +269,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
         FlateBlockType.DYNAMIC_HUFFMAN => {
             // Generate `ll_enc_map` and `d_enc_map` based on the current
             // `write_queue` content.
-            try dynamic_huffman_code_gen(ctx);
+            try dynamic_code_huffman_gen(ctx);
             // TODO: write dynamic block header
             // TODO: write encoded ll_enc_map and d_enc_map
 
@@ -354,7 +355,7 @@ fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void 
     }
 }
 
-fn dynamic_huffman_code_gen(ctx: *CompressContext) !void {
+fn dynamic_code_huffman_gen(ctx: *CompressContext) !void {
     var ll_freq = try ctx.allocator.alloc(usize, 286);
     var d_freq = try ctx.allocator.alloc(usize, 31);
     var ll_cnt: usize = 0;
