@@ -235,10 +235,11 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
         .NO_COMPRESSION => FlateBlockType.NO_COMPRESSION,
-        .BEST_SPEED => FlateBlockType.DYNAMIC_HUFFMAN, // TODO: tmp
+        .BEST_SPEED => FlateBlockType.DYNAMIC_HUFFMAN,
         else =>
-            @enumFromInt(ctx.rng.random().intRangeAtMost(u2, 0, 1)),
-            //@enumFromInt(ctx.block_cnt % 2)
+            //@enumFromInt(ctx.rng.random().intRangeAtMost(u2, 0, 3)),
+            //@enumFromInt(ctx.block_cnt % 3)
+            FlateBlockType.FIXED_HUFFMAN
     };
     const btype: u3 = @intFromEnum(ctx.block_type);
 
