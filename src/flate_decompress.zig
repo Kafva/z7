@@ -141,6 +141,8 @@ fn no_compression_decompress_block(ctx: *DecompressContext) !void {
 }
 
 fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
+    // TODO: decode dynamic block header
+
     // Decode the serialised `ll_enc_map` and `d_enc_map` into a `ll_dec_map` and `d_dec_map`
     try dynamic_code_decompress_enc_maps(ctx);
 
@@ -163,42 +165,20 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
         enc.bits = (enc.bits << 1) | bit;
         enc.bit_shift += 1;
 
-        if (match_length) |len| {
+        if (match_length) |length| {
             if (ctx.d_dec_map.get(enc)) |v| {
                 if (v > Flate.d_symbol_max) unreachable;
 
-                const denc = RangeSymbol.from_distance_code(@truncate(v));
-                log.debug(@src(), "backref(distance-code): {d}", .{v});
+                // Decode distance of match
+                const distance = try read_symbol_backref_distance(ctx, v);
 
-                const distance: u16 = blk: {
-                    if (denc.bit_count != 0) {
-                        // Parse extra bits for the offset
-                        const offset = read_bits(ctx, u16, denc.bit_count) catch {
-                            return FlateError.UnexpectedEof;
-                        };
-                        log.debug(@src(), "backref(distance-offset): {d}", .{offset});
-                        break :blk denc.range_start + offset;
-                    } else {
-                        log.debug(@src(), "backref(distance-offset): 0", .{});
-                        break :blk denc.range_start;
-                    }
-                };
-                log.debug(@src(), "backref(distance): {d}", .{distance});
-
-                for (0..len) |i| {
-                    // Since we add one byte every iteration the offset is
-                    // always equal to the distance
-                    const c: u8 = try ctx.sliding_window.read_offset_end(distance - 1);
-                    // Write each byte to the output stream AND the the sliding window
-                    try write_byte(ctx, c);
-                    log.trace(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
-                }
+                // Write match to output stream
+                try write_backref_match(ctx, length, distance);
 
                 enc.bits = 0;
                 enc.bit_shift = 0;
                 match_length = null;
             }
-
             continue;
         }
 
@@ -212,27 +192,8 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
                 break;
             }
             else if (v < Flate.ll_symbol_max) {
-                log.debug(@src(), "backref(length-code): {d}", .{v});
-
-                // Get the corresponding `RangeSymbol` for the 'Code'
-                const rsym = RangeSymbol.from_length_code(v);
-
-                // Determine the length of the match
-                const length: u16 = blk: {
-                    if (rsym.bit_count != 0) {
-                        // Parse extra bits for the offset
-                        const offset = read_bits(ctx, u16, rsym.bit_count) catch {
-                            return FlateError.UnexpectedEof;
-                        };
-                        log.debug(@src(), "backref(length-offset): {d}", .{offset});
-                        break :blk rsym.range_start + offset;
-                    } else {
-                        log.debug(@src(), "backref(length-offset): 0", .{});
-                        break :blk rsym.range_start;
-                    }
-                };
-                log.debug(@src(), "backref(length): {d}", .{length});
-                match_length = length;
+                // Decode length of match
+                match_length = try read_symbol_backref_length(ctx, v);
             }
             else {
                 return FlateError.InvalidLiteralLength;
@@ -271,7 +232,7 @@ fn dynamic_code_decompress_enc_maps(ctx: *DecompressContext) !void {
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
     while (true) {
-        const b = blk: {
+        const v = blk: {
             var key = read_bits_be(ctx, 7) catch {
                 return FlateError.UnexpectedEof;
             };
@@ -312,70 +273,86 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
             return DecompressError.UndecodableBitStream;
         };
 
-        if (b < 256) {
-            const c: u8 = @truncate(b);
+        if (v < 256) {
+            const c: u8 = @truncate(v);
             try write_byte(ctx, c);
         }
-        else if (b == 256) {
+        else if (v == 256) {
             log.debug(@src(), "End-of-block marker found", .{});
             break;
         }
-        else if (b < Flate.ll_symbol_max) {
-            log.debug(@src(), "backref(length-code): {d}", .{b});
+        else if (v < Flate.ll_symbol_max) {
+            // Determine the length of the match
+            const length = try read_symbol_backref_length(ctx, v);
 
-            // Get the corresponding `RangeSymbol` for the 'Code'
-            const enc = RangeSymbol.from_length_code(b);
-
-            // 2. Determine the length of the match
-            const length: u16 = blk: {
-                if (enc.bit_count != 0) {
-                    // Parse extra bits for the offset
-                    const offset = read_bits(ctx, u16, enc.bit_count) catch {
-                        return FlateError.UnexpectedEof;
-                    };
-                    log.debug(@src(), "backref(length-offset): {d}", .{offset});
-                    break :blk enc.range_start + offset;
-                } else {
-                    log.debug(@src(), "backref(length-offset): 0", .{});
-                    break :blk enc.range_start;
-                }
-            };
-            log.debug(@src(), "backref(length): {d}", .{length});
-
-            // 3. Determine the distance for the match
+            // Determine the distance for the match
             const distance_code = read_bits_be(ctx, 5) catch {
                 return FlateError.UnexpectedEof;
             };
-            const denc = RangeSymbol.from_distance_code(@truncate(distance_code));
-            log.debug(@src(), "backref(distance-code): {d}", .{distance_code});
+            const distance = try read_symbol_backref_distance(ctx, distance_code);
 
-            const distance: u16 = blk: {
-                if (denc.bit_count != 0) {
-                    // Parse extra bits for the offset
-                    const offset = read_bits(ctx, u16, denc.bit_count) catch {
-                        return FlateError.UnexpectedEof;
-                    };
-                    log.debug(@src(), "backref(distance-offset): {d}", .{offset});
-                    break :blk denc.range_start + offset;
-                } else {
-                    log.debug(@src(), "backref(distance-offset): 0", .{});
-                    break :blk denc.range_start;
-                }
-            };
-            log.debug(@src(), "backref(distance): {d}", .{distance});
-
-            for (0..length) |i| {
-                // Since we add one byte every iteration the offset is
-                // always equal to the distance
-                const c: u8 = try ctx.sliding_window.read_offset_end(distance - 1);
-                // Write each byte to the output stream AND the the sliding window
-                try write_byte(ctx, c);
-                log.trace(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
-            }
+            // Write the backreferences to the output stream
+            try write_backref_match(ctx, length, distance);
         }
         else {
             return FlateError.InvalidLiteralLength;
         }
+    }
+}
+
+fn read_symbol_backref_length(ctx: *DecompressContext, v: u16) !u16 {
+    log.debug(@src(), "backref(length-code): {d}", .{v});
+
+    // Get the corresponding `RangeSymbol` for the 'Code'
+    const rsym = RangeSymbol.from_length_code(v);
+
+    // Determine the length of the match
+    const length: u16 = blk: {
+        if (rsym.bit_count != 0) {
+            // Parse extra bits for the offset
+            const offset = read_bits(ctx, u16, rsym.bit_count) catch {
+                return FlateError.UnexpectedEof;
+            };
+            log.debug(@src(), "backref(length-offset): {d}", .{offset});
+            break :blk rsym.range_start + offset;
+        } else {
+            log.debug(@src(), "backref(length-offset): 0", .{});
+            break :blk rsym.range_start;
+        }
+    };
+    log.debug(@src(), "backref(length): {d}", .{length});
+    return length;
+}
+
+fn read_symbol_backref_distance(ctx: *DecompressContext, v: u16) !u16 {
+    const denc = RangeSymbol.from_distance_code(@truncate(v));
+    log.debug(@src(), "backref(distance-code): {d}", .{v});
+
+    const distance: u16 = blk: {
+        if (denc.bit_count != 0) {
+            // Parse extra bits for the offset
+            const offset = read_bits(ctx, u16, denc.bit_count) catch {
+                return FlateError.UnexpectedEof;
+            };
+            log.debug(@src(), "backref(distance-offset): {d}", .{offset});
+            break :blk denc.range_start + offset;
+        } else {
+            log.debug(@src(), "backref(distance-offset): 0", .{});
+            break :blk denc.range_start;
+        }
+    };
+    log.debug(@src(), "backref(distance): {d}", .{distance});
+    return distance;
+}
+
+fn write_backref_match(ctx: *DecompressContext, length: u16, distance: u16) !void {
+    for (0..length) |i| {
+        // Since we add one byte every iteration the offset is
+        // always equal to the distance
+        const c: u8 = try ctx.sliding_window.read_offset_end(distance - 1);
+        // Write each byte to the output stream AND the the sliding window
+        try write_byte(ctx, c);
+        log.trace(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
     }
 }
 

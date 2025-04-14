@@ -190,4 +190,3 @@ test "Gzip no compression check rfc1951.txt" {
 test "Gzip no compression on random data" {
     try runall(TestContext.random_label, FlateCompressMode.NO_COMPRESSION);
 }
-
