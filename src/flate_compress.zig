@@ -78,8 +78,8 @@ pub fn compress(
         .write_queue_index = 0,
         .write_queue_raw = try allocator.alloc(u8, Flate.block_length_max),
         .write_queue_raw_index = 0,
-        .ll_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.symbol_max),
-        .d_enc_map = try allocator.alloc(?HuffmanEncoding, 31),
+        .ll_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.ll_symbol_max),
+        .d_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.d_symbol_max),
     };
 
     var done = false;
@@ -280,7 +280,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
                 try dynamic_code_write_symbol(ctx, ctx.write_queue[i]);
             }
             // Write end-of-block marker
-            try write_bits(ctx, u7, @as(u7, 0), 7);
+            try dynamic_code_write_eob(ctx);
         },
         FlateBlockType.RESERVED => {
             return FlateError.UnexpectedBlockType;
@@ -359,8 +359,8 @@ fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void 
 }
 
 fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
-    var ll_freq = try ctx.allocator.alloc(usize, Flate.symbol_max);
-    var d_freq = try ctx.allocator.alloc(usize, 31);
+    var ll_freq = try ctx.allocator.alloc(usize, Flate.ll_symbol_max);
+    var d_freq = try ctx.allocator.alloc(usize, Flate.d_symbol_max);
     var ll_cnt: usize = 0;
     var d_cnt: usize = 0;
     @memset(ll_freq, 0);
@@ -395,6 +395,11 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
         }
     }
 
+    // EOB marker is not part of the write_queue, add a frequency value for it
+    // so that we get an encoding for it.
+    ll_freq[256] = 1;
+    ll_cnt += 1;
+
     try huffman_build_encoding(ctx.allocator, &ctx.ll_enc_map, ll_freq, ll_cnt);
     try huffman_build_encoding(ctx.allocator, &ctx.d_enc_map, d_freq, d_cnt);
 }
@@ -405,26 +410,43 @@ fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
     // the length of each 'Huffman bits' sequence
     //
     // Temp solution, write [ LEN | BITS ] entries
-    for (0..ctx.ll_enc_map) |i| {
+    for (0..ctx.ll_enc_map.len) |i| {
         if (ctx.ll_enc_map[i]) |enc| {
-            try write_bits(ctx, u8, enc.bit_shift, 4); // LEN
+            try write_bits(ctx, u4, enc.bit_shift, 4); // LEN
             try write_bits(ctx, u16, enc.bits, enc.bit_shift); // BITS
         }
         else {
             // Zero length entry
-            try write_bits(ctx, u8, 0, 8);
+            try write_bits(ctx, u4, 0, 4);
         }
     }
 
-    for (0..ctx.d_enc_map) |i| {
+    for (0..ctx.d_enc_map.len) |i| {
         if (ctx.d_enc_map[i]) |enc| {
-            try write_bits(ctx, u8, enc.bit_shift, 4); // LEN
+            try write_bits(ctx, u4, enc.bit_shift, 4); // LEN
             try write_bits(ctx, u16, enc.bits, enc.bit_shift); // BITS
         }
         else {
             // Zero length entry
-            try write_bits(ctx, u8, 0, 8);
+            try write_bits(ctx, u4, 0, 4);
         }
+    }
+
+    log.debug(@src(), "Done writing Huffman encoding for block #{d}", .{ctx.block_cnt});
+}
+
+fn dynamic_code_write_eob(ctx: *CompressContext) !void {
+    const enc: ?HuffmanEncoding = ctx.ll_enc_map[256];
+    if (enc) |v| {
+        if (v.bit_shift == 9) {
+            try write_bits_be(ctx, u9, @truncate(v.bits), v.bit_shift);
+        }
+        else if (v.bit_shift <= 8) {
+            try write_bits_be(ctx, u8, @truncate(v.bits), v.bit_shift);
+        }
+        else unreachable;
+    } else {
+        return FlateError.InvalidSymbol;
     }
 }
 

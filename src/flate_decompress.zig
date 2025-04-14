@@ -144,29 +144,65 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
     // Decode the serialised `ll_enc_map` and `d_enc_map` into a `ll_dec_map` and `d_dec_map`
     try dynamic_code_decompress_enc_maps(ctx);
 
-    // Decode the stream using the `ll_dec_map` and `d_dec_map`
+    var match_length: ?u16 = null;
     var enc = HuffmanEncoding {
         .bits = 0,
         .bit_shift = 0,
     };
 
+    // Decode the stream using the `ll_dec_map` and `d_dec_map`
     while (true) {
         const bit = read_bits(ctx, u1, 1) catch {
             break;
         };
         if (enc.bit_shift == 15) {
-            return HuffmanError.BadEncoding;
+            return FlateError.InvalidSymbol;
         }
 
         // The most-significant bit is read first
         enc.bits = (enc.bits << 1) | bit;
         enc.bit_shift += 1;
 
-        if (ctx.ll_dec_map.get(enc)) |v| {
-            if (v >= Flate.symbol_max) {
-                return HuffmanError.BadEncoding;
+        if (match_length) |len| {
+            if (ctx.d_dec_map.get(enc)) |v| {
+                if (v > Flate.d_symbol_max) unreachable;
+
+                const denc = RangeSymbol.from_distance_code(@truncate(v));
+                log.debug(@src(), "backref(distance-code): {d}", .{v});
+
+                const distance: u16 = blk: {
+                    if (denc.bit_count != 0) {
+                        // Parse extra bits for the offset
+                        const offset = read_bits(ctx, u16, denc.bit_count) catch {
+                            return FlateError.UnexpectedEof;
+                        };
+                        log.debug(@src(), "backref(distance-offset): {d}", .{offset});
+                        break :blk denc.range_start + offset;
+                    } else {
+                        log.debug(@src(), "backref(distance-offset): 0", .{});
+                        break :blk denc.range_start;
+                    }
+                };
+                log.debug(@src(), "backref(distance): {d}", .{distance});
+
+                for (0..len) |i| {
+                    // Since we add one byte every iteration the offset is
+                    // always equal to the distance
+                    const c: u8 = try ctx.sliding_window.read_offset_end(distance - 1);
+                    // Write each byte to the output stream AND the the sliding window
+                    try write_byte(ctx, c);
+                    log.trace(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
+                }
+
+                enc.bits = 0;
+                enc.bit_shift = 0;
+                match_length = null;
             }
 
+            continue;
+        }
+
+        if (ctx.ll_dec_map.get(enc)) |v| {
             if (v < 256) {
                 const c: u8 = @truncate(v);
                 try write_byte(ctx, c);
@@ -175,32 +211,62 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
                 log.debug(@src(), "End-of-block marker found", .{});
                 break;
             }
+            else if (v < Flate.ll_symbol_max) {
+                log.debug(@src(), "backref(length-code): {d}", .{v});
+
+                // Get the corresponding `RangeSymbol` for the 'Code'
+                const rsym = RangeSymbol.from_length_code(v);
+
+                // Determine the length of the match
+                const length: u16 = blk: {
+                    if (rsym.bit_count != 0) {
+                        // Parse extra bits for the offset
+                        const offset = read_bits(ctx, u16, rsym.bit_count) catch {
+                            return FlateError.UnexpectedEof;
+                        };
+                        log.debug(@src(), "backref(length-offset): {d}", .{offset});
+                        break :blk rsym.range_start + offset;
+                    } else {
+                        log.debug(@src(), "backref(length-offset): 0", .{});
+                        break :blk rsym.range_start;
+                    }
+                };
+                log.debug(@src(), "backref(length): {d}", .{length});
+                match_length = length;
+            }
+            else {
+                return FlateError.InvalidLiteralLength;
+            }
+
             enc.bits = 0;
             enc.bit_shift = 0;
-        }
-        else if (ctx.d_dec_map.get(enc)) |v| {
         }
     }
 }
 
 fn dynamic_code_decompress_enc_maps(ctx: *DecompressContext) !void {
-    for (0..Flate.symbol_max) |c| {
-         const len = try read_bits(ctx, u8, 8);
-         if (len > 16) unreachable;
-         const bits = try read_bits(ctx, u16, len);
+    for (0..Flate.ll_symbol_max) |c| {
+        const len = try read_bits(ctx, u4, 4);
+        if (len == 0) {
+            continue;
+        }
+        const bits = try read_bits(ctx, u16, len);
 
-         const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
-         ctx.ll_dec_map.putNoClobber(enc, c);
+        const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
+        try ctx.ll_dec_map.putNoClobber(enc, @truncate(c));
+    }
+    for (0..Flate.d_symbol_max) |c| {
+        const len = try read_bits(ctx, u4, 4);
+        if (len == 0) {
+            continue;
+        }
+        const bits = try read_bits(ctx, u16, len);
+
+        const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
+        try ctx.d_dec_map.putNoClobber(enc, @truncate(c));
     }
 
-    for (0..31) |c| {
-         const len = try read_bits(ctx, u8, 8);
-         if (len > 16) unreachable;
-         const bits = try read_bits(ctx, u16, len);
-
-         const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
-         ctx.d_dec_map.putNoClobber(enc, c);
-    }
+    log.debug(@src(), "Done reading Huffman encoding for block #{d}", .{ctx.block_cnt});
 }
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
@@ -254,7 +320,7 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
             log.debug(@src(), "End-of-block marker found", .{});
             break;
         }
-        else if (b < 285) {
+        else if (b < Flate.ll_symbol_max) {
             log.debug(@src(), "backref(length-code): {d}", .{b});
 
             // Get the corresponding `RangeSymbol` for the 'Code'

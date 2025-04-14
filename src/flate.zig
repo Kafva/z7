@@ -278,7 +278,8 @@ pub const Flate = struct {
     pub const window_length: usize = std.math.pow(usize, 2, 15);
     /// Maximum block size for type-0 blocks
     pub const block_length_max: usize = std.math.pow(usize, 2, 16);
-    /// Maximum value for deflate symbols
-    pub const symbol_max: usize = 286;
-
+    /// Maximum value for deflate literal/length symbols (non-inclusive)
+    pub const ll_symbol_max: usize = 286;
+    /// Maximum value for deflate distance symbols (non-inclusive)
+    pub const d_symbol_max: usize = 31;
 };
