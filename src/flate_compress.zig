@@ -371,20 +371,16 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
         const sym = ctx.write_queue[i];
         switch (sym) {
             .length => {
-                if (sym.length.value) |v| {
-                    if (ll_freq[v] == 0) {
-                        ll_cnt += 1;
-                    }
-                    ll_freq[v] += 1;
+                if (ll_freq[sym.length.code] == 0) {
+                    ll_cnt += 1;
                 }
+                ll_freq[sym.length.code] += 1;
             },
             .distance => {
-                if (sym.distance.value) |v| {
-                    if (d_freq[v] == 0) {
-                        d_cnt += 1;
-                    }
-                    d_freq[v] += 1;
+                if (d_freq[sym.distance.code] == 0) {
+                    d_cnt += 1;
                 }
+                d_freq[sym.distance.code] += 1;
             },
             .char => {
                 if (ll_freq[sym.char] == 0) {
@@ -454,10 +450,10 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
     const enc: ?HuffmanEncoding = blk: {
         switch (sym) {
             .length => {
-                break :blk ctx.ll_enc_map[sym.length.value.?];
+                break :blk ctx.ll_enc_map[sym.length.code];
             },
             .distance => {
-                break :blk ctx.d_enc_map[sym.distance.value.?];
+                break :blk ctx.d_enc_map[sym.distance.code];
             },
             .char => {
                 break :blk ctx.ll_enc_map[@intCast(sym.char)];
