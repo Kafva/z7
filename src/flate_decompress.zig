@@ -203,6 +203,10 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
             enc.bit_shift = 0;
         }
     }
+
+    // Clear mappings for next iteration
+    ctx.ll_dec_map.clearRetainingCapacity();
+    ctx.d_dec_map.clearRetainingCapacity();
 }
 
 fn dynamic_code_decompress_enc_maps(ctx: *DecompressContext) !void {
