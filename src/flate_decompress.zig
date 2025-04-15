@@ -210,28 +210,31 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
 }
 
 fn dynamic_code_decompress_enc_maps(ctx: *DecompressContext) !void {
-    for (0..Flate.ll_symbol_max) |c| {
-        const len = try read_bits(ctx, u4, 4);
-        if (len == 0) {
-            continue;
-        }
-        const bits = try read_bits(ctx, u16, len);
+    _ = ctx;
+    return FlateError.NotImplemented;
 
-        const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
-        try ctx.ll_dec_map.putNoClobber(enc, @truncate(c));
-    }
-    for (0..Flate.d_symbol_max) |c| {
-        const len = try read_bits(ctx, u4, 4);
-        if (len == 0) {
-            continue;
-        }
-        const bits = try read_bits(ctx, u16, len);
+    // for (0..Flate.ll_symbol_max) |c| {
+    //     const len = try read_bits(ctx, u4, 4);
+    //     if (len == 0) {
+    //         continue;
+    //     }
+    //     const bits = try read_bits(ctx, u16, len);
 
-        const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
-        try ctx.d_dec_map.putNoClobber(enc, @truncate(c));
-    }
+    //     const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
+    //     try ctx.ll_dec_map.putNoClobber(enc, @truncate(c));
+    // }
+    // for (0..Flate.d_symbol_max) |c| {
+    //     const len = try read_bits(ctx, u4, 4);
+    //     if (len == 0) {
+    //         continue;
+    //     }
+    //     const bits = try read_bits(ctx, u16, len);
 
-    log.debug(@src(), "Done reading Huffman encoding for block #{d}", .{ctx.block_cnt});
+    //     const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
+    //     try ctx.d_dec_map.putNoClobber(enc, @truncate(c));
+    // }
+
+    // log.debug(@src(), "Done reading Huffman encoding for block #{d}", .{ctx.block_cnt});
 }
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {

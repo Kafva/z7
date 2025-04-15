@@ -282,4 +282,8 @@ pub const Flate = struct {
     pub const ll_symbol_max: usize = 286;
     /// Maximum value for deflate distance symbols (non-inclusive)
     pub const d_symbol_max: usize = 31;
+    /// Maximum value for deflate "code length" symbols (inclusive)
+    pub const cl_symbol_max: usize = 18;
+    /// The order to write and read the code length symbol lengths
+    pub const cl_code_order = []u8{16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 };
