@@ -273,10 +273,11 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
         },
         FlateBlockType.DYNAMIC_HUFFMAN => {
             // Generate `ll_enc_map` and `d_enc_map` based on the current
-            // `write_queue` content.
+            // `write_queue` content and `cl_enc_map` based on the lengths of the 
+            // huffman codes that were generated for `ll_enc_map` and `d_enc_map`.
             try dynamic_code_gen_enc_maps(ctx);
 
-            // Write metadata for the decompressor to reconstruct the Huffman code.
+            // Write metadata for the decompressor to reconstruct the Huffman codes.
             try dynamic_code_write_enc_maps(ctx);
 
             // Write encoded data
@@ -364,16 +365,15 @@ fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void 
 }
 
 fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
-    // Frequency of each literal/length symbol for the current block
     var ll_freq = try ctx.allocator.alloc(usize, Flate.ll_symbol_max);
-    // Frequency of each distance symbol for the current block
     var d_freq = try ctx.allocator.alloc(usize, Flate.d_symbol_max);
-    // Number of literal/length symbols with a non-zero frequency
+    var cl_freq = try ctx.allocator.alloc(usize, Flate.cl_symbol_max);
     var ll_cnt: usize = 0;
-    // Number of distance symbols with a non-zero frequency
     var d_cnt: usize = 0;
+    var cl_cnt: usize = 0;
     @memset(ll_freq, 0);
     @memset(d_freq, 0);
+    @memset(cl_freq, 0);
 
     // Calculate the frequency of each `FlateSymbol`
     for (0..ctx.write_queue_index) |i| {
@@ -407,9 +407,7 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
 
     try huffman_build_encoding(ctx.allocator, &ctx.ll_enc_map, ll_freq, ll_cnt);
     try huffman_build_encoding(ctx.allocator, &ctx.d_enc_map, d_freq, d_cnt);
-}
 
-fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
     // Each enc_map is simply a 'Symbol -> Huffman bits' mapping
     // The decompresser knows the order of the symbols, it does not know
     // the length of each 'Huffman bits' sequence
@@ -419,17 +417,6 @@ fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
     // canonical the decompressor can reconstruct the Huffman code by just
     // knowing which symbols have which lengths, the length values are
     // limited to be 0-15 (the possible range of 'Huffman bits').
-    var enc_cnt: usize = 0;
-
-    log.debug(@src(), "Writing block type-2 header", .{});
-    // HLIT: Total number of ll symbols (-257)
-    try write_bits(ctx, u5, Flate.ll_symbol_max - 257, 5);
-    // HDIST: Total number of d symbols (-1)
-    try write_bits(ctx, u5, Flate.d_symbol_max, 5);
-    // HCLEN: Total number of cl symbols (-4)
-    // E.g. if we have a Huffman tree with maxdepth 5 we can skip transmitting the
-    // code for lengths 6 onward.
-    try write_bits(ctx, u4, Flate.cl_symbol_max - 4 , 4);
 
     // Instead of transmitting the length for each symbol encoding ("code
     // length") in order as is, We use an encoding for these, this is the "cl code"
@@ -444,11 +431,6 @@ fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
     // NOW, we don't just write the CL symbols as is to the output stream, no, we check the
     // frequency for each CL symbol (i.e. 0-18) and construct a new Huffman code for these,
     // THIS is what we write to the output stream.
-
-    var cl_freq = try ctx.allocator.alloc(usize, Flate.cl_symbol_max);
-    var cl_cnt: usize = 0;
-    @memset(cl_freq, 0);
-
     for (ctx.ll_enc_map) |enc| {
         if (enc) |e| {
             if (cl_freq[e.bit_shift] == 0) {
@@ -459,12 +441,20 @@ fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
     }
 
     try huffman_build_encoding(ctx.allocator, &ctx.cl_enc_map, cl_freq, cl_cnt);
+}
 
-    // Finally, we need a way for the decompressor to know what Huffman code we use for the CL
-    // symbols, this is fairly easy, we can just write CL symbol lengths in order (recall that since
-    // we use a canonical Huffman code the length of each symbol is enough for the decompressor)
-    // HOWEVER, we write the lengths in a special order to get a higher chance of being able to
-    // truncate the table and set a smaller HCLEN.
+fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
+    var enc_cnt: usize = 0;
+
+    log.debug(@src(), "Writing block type-2 header", .{});
+    // HLIT: Total number of ll symbols (-257)
+    try write_bits(ctx, u5, Flate.ll_symbol_max - 257, 5);
+    // HDIST: Total number of d symbols (-1)
+    try write_bits(ctx, u5, Flate.d_symbol_max, 5);
+    // HCLEN: Total number of cl symbols (-4)
+    // E.g. if we have a Huffman tree with maxdepth 5 we can skip transmitting the
+    // code for lengths 6 onward.
+    try write_bits(ctx, u4, Flate.cl_symbol_max - 4 , 4);
 
     enc_cnt = try dynamic_code_write_enc_map_bits(ctx, &ctx.cl_enc_map, true);
     log.debug(@src(), "Wrote {d} non-zero code length encodings", .{enc_cnt});
@@ -474,7 +464,6 @@ fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
 
     enc_cnt = try dynamic_code_write_enc_map_bits(ctx, &ctx.d_enc_map, false);
     log.debug(@src(), "Wrote {d} non-zero distance encodings", .{enc_cnt});
-
 
     log.debug(@src(), "Done writing Huffman encoding for block #{d}", .{ctx.block_cnt});
 }
@@ -488,11 +477,18 @@ fn dynamic_code_write_enc_map_bits(
     if (cl_order) {
         for (Flate.cl_code_order) |i| {
             if (enc_map.*[i]) |v| {
-                try write_bits_be(ctx, u4, @truncate(v.bits), v.bit_shift);
+                // XXX: We write the 3 bit *LENGTH* of the Huffman code for the
+                // cl symbols. Since the Huffman code can be deterministically
+                // derived from the lengths this is enough to reconstruct the
+                // cl code, the decompressor will use this decoding map in the
+                // next step to decode the ll and distance codes (lengths 0-15,
+                // a Huffman code for the ll or d table can be at most 15 bits)
+                // which are what we actually encode with the 0-19 alphabet.
+                try write_bits_be(ctx, u3, v.bit_shift, 3);
                 enc_cnt += 1;
             }
             else {
-                try write_bits_be(ctx, u4, 0, 4); // Length zero encoding
+                try write_bits_be(ctx, u3, 0, 3); // Length zero encoding
             }
         }
     }
@@ -509,7 +505,6 @@ fn dynamic_code_write_enc_map_bits(
     }
     return enc_cnt;
 }
-
 
 fn dynamic_code_write_eob(ctx: *CompressContext) !void {
     const enc: ?HuffmanEncoding = ctx.ll_enc_map[256];

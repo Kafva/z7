@@ -37,6 +37,8 @@ const DecompressContext = struct {
     ll_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
     /// Distance Huffman decoding mappings for block type-2
     d_dec_map: std.AutoHashMap(HuffmanEncoding, u16)
+    /// Code length Huffman decoding mappings for block type-2
+    cl_dec_map: std.AutoHashMap(HuffmanEncoding, u16)
 };
 
 pub fn decompress(
@@ -210,31 +212,32 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
 }
 
 fn dynamic_code_decompress_enc_maps(ctx: *DecompressContext) !void {
-    _ = ctx;
-    return FlateError.NotImplemented;
+    log.debug(@src(), "Reading block type-2 header", .{});
 
-    // for (0..Flate.ll_symbol_max) |c| {
-    //     const len = try read_bits(ctx, u4, 4);
-    //     if (len == 0) {
-    //         continue;
-    //     }
-    //     const bits = try read_bits(ctx, u16, len);
+    const hlit = try read_bits(ctx, u5, 5);
+    const hdist = try read_bits(ctx, u5, 5);
+    const hclen = try read_bits(ctx, u4, 4);
+    log.debug(@src(), "HLIT={d}, HDIST={d}, HCLEN={d}", .{hlit, hdist, hclen});
 
-    //     const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
-    //     try ctx.ll_dec_map.putNoClobber(enc, @truncate(c));
-    // }
-    // for (0..Flate.d_symbol_max) |c| {
-    //     const len = try read_bits(ctx, u4, 4);
-    //     if (len == 0) {
-    //         continue;
-    //     }
-    //     const bits = try read_bits(ctx, u16, len);
 
-    //     const enc = HuffmanEncoding { .bits = bits, .bit_shift = len };
-    //     try ctx.d_dec_map.putNoClobber(enc, @truncate(c));
-    // }
+    log.debug(@src(), "Done reading Huffman encoding for block #{d}", .{ctx.block_cnt});
+}
 
-    // log.debug(@src(), "Done reading Huffman encoding for block #{d}", .{ctx.block_cnt});
+fn dynamic_code_read_enc_map_bits(
+    ctx: *CompressContext,
+    enc_map: *const []?HuffmanEncoding,
+    cl_order: bool,
+) !usize {
+    var dec_cnt: usize = 0;
+    if (cl_order) {
+        while (true) {
+            const bits = try read_bits_be(&ctx, u3, 3);
+        }
+    }
+    else {
+    }
+    return dec_cnt;
+
 }
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
