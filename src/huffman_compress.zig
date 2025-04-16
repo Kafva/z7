@@ -98,6 +98,7 @@ pub fn build_encoding(
         .array = try std.ArrayList(HuffmanTreeNode).initCapacity(allocator, 2*symbol_max),
     };
 
+    log.debug(@src(), "Building encoding for {{0..{d}}}", .{symbol_max});
     _ = try build_huffman_tree(&ctx, frequencies_cnt);
 
     // Save the encoding

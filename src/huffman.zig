@@ -41,6 +41,7 @@ pub const HuffmanEncoding = struct {
 
     pub fn dump_mapping(self: *const @This(), value: u16) void {
         const istty = std.io.getStdErr().isTty();
+        const prefix = "(0x{x:0>3}) ";
         const color: u8 = color_base + @as(u8, self.bit_shift);
         if (value < 256) {
             const char: u8 = @truncate(value);
@@ -48,22 +49,22 @@ pub const HuffmanEncoding = struct {
                 if (istty) {
                     log.debug(
                         @src(),
-                        "(0x{x:0>2}) '{c}' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                        prefix ++ "'{c}' -> \x1b[38;5;{d}m{any}\x1b[0m",
                         .{char, char, color, self}
                     );
                 }
                 else {
-                    log.debug(@src(), "(0x{x:0>2}) '{c}' -> {any}", .{char, char, self});
+                    log.debug(@src(), prefix ++ "'{c}' -> {any}", .{char, char, self});
                 }
             } else {
                 if (istty) {
                     log.debug(
                         @src(),
-                        "(0x{x:0>2}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                        prefix ++ "' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
                         .{char, color, self}
                     );
                 } else {
-                    log.debug(@src(), "(0x{x:0>2}) ' ' -> {any}", .{char, self});
+                    log.debug(@src(), prefix ++ "' ' -> {any}", .{char, self});
                 }
             }
         }
@@ -71,11 +72,11 @@ pub const HuffmanEncoding = struct {
             if (istty) {
                 log.debug(
                     @src(),
-                    "(0x{x:0>2}) ' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                    prefix ++ "' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
                     .{value, color, self}
                 );
             } else {
-                log.debug(@src(), "(0x{x:0>2}) ' ' -> {any}", .{value, self});
+                log.debug(@src(), prefix ++ "' ' -> {any}", .{value, self});
             }
         }
     }
