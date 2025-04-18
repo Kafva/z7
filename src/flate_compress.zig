@@ -8,6 +8,7 @@ const FlateError = @import("flate.zig").FlateError;
 const FlateSymbol = @import("flate.zig").FlateSymbol;
 const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
+const ClSymbol = @import("flate.zig").ClSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
@@ -27,6 +28,7 @@ const CompressContext = struct {
     block_start: usize,
     /// Left over input byte to use from previous block
     next_byte: ?u8,
+    /// Sliding window for backreferences in LZSS
     sliding_window: RingBuffer(u8),
     lookahead: []u8,
     /// Queue of symbols to write to the output stream, we need to keep this
@@ -37,6 +39,10 @@ const CompressContext = struct {
     /// Queue of raw bytes for type-0 blocks.
     write_queue_raw: []u8,
     write_queue_raw_index: usize,
+    /// Queue of CL symbols, we need a write queue for these symbols so that
+    /// we can perform frequency analysis and decide upon a Huffman encoding
+    write_queue_cl: []ClSymbol,
+    write_queue_cl_index: usize,
     /// Literal/Length Huffman encoding mappings for block type-2
     ll_enc_map: []?HuffmanEncoding,
     /// Distance Huffman encoding mappings for block type-2
@@ -60,6 +66,7 @@ pub fn compress(
     mode: FlateCompressMode,
     crc: *std.hash.Crc32,
 ) !void {
+    const cl_queue_max = Flate.ll_symbol_max + Flate.d_symbol_max;
     var ctx = CompressContext {
         .allocator = allocator,
         .rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp())),
@@ -73,13 +80,14 @@ pub fn compress(
         .processed_bytes = 0,
         .block_start = 0,
         .next_byte = null,
-        // Initialize sliding window for backreferences
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length_max),
         .write_queue_index = 0,
         .write_queue_raw = try allocator.alloc(u8, Flate.block_length_max),
         .write_queue_raw_index = 0,
+        .write_queue_cl = try allocator.alloc(ClSymbol, cl_queue_max),
+        .write_queue_cl_index = 0,
         .ll_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.ll_symbol_max),
         .d_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.d_symbol_max),
         .cl_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.cl_symbol_max),
@@ -272,13 +280,8 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
             try write_bits(ctx, u7, @as(u7, 0), 7);
         },
         FlateBlockType.DYNAMIC_HUFFMAN => {
-            // Generate `ll_enc_map` and `d_enc_map` based on the current
-            // `write_queue` content and `cl_enc_map` based on the lengths of the 
-            // huffman codes that were generated for `ll_enc_map` and `d_enc_map`.
-            try dynamic_code_gen_enc_maps(ctx);
-
             // Write metadata for the decompressor to reconstruct the Huffman codes.
-            try dynamic_code_write_enc_maps(ctx);
+            try dynamic_code_write_metadata(ctx);
 
             // Write encoded data
             for (0..ctx.write_queue_index) |i| {
@@ -367,13 +370,10 @@ fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void 
 fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
     var ll_freq = try ctx.allocator.alloc(usize, Flate.ll_symbol_max);
     var d_freq = try ctx.allocator.alloc(usize, Flate.d_symbol_max);
-    var cl_freq = try ctx.allocator.alloc(usize, Flate.cl_symbol_max);
     var ll_cnt: usize = 0;
     var d_cnt: usize = 0;
-    var cl_cnt: usize = 0;
     @memset(ll_freq, 0);
     @memset(d_freq, 0);
-    @memset(cl_freq, 0);
 
     // Calculate the frequency of each `FlateSymbol`
     for (0..ctx.write_queue_index) |i| {
@@ -407,7 +407,9 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
 
     try huffman_build_encoding(ctx.allocator, &ctx.ll_enc_map, ll_freq, ll_cnt);
     try huffman_build_encoding(ctx.allocator, &ctx.d_enc_map, d_freq, d_cnt);
+}
 
+fn dynamic_code_gen_cl_enc_map(ctx: *CompressContext) !void {
     // Each enc_map is simply a 'Symbol -> Huffman bits' mapping
     // The decompresser knows the order of the symbols, it does not know
     // the length of each 'Huffman bits' sequence
@@ -431,20 +433,63 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
     // NOW, we don't just write the CL symbols as is to the output stream, no, we check the
     // frequency for each CL symbol (i.e. 0-18) and construct a new Huffman code for these,
     // THIS is what we write to the output stream.
+    var cl_freq = try ctx.allocator.alloc(usize, Flate.cl_symbol_max);
+    var cl_cnt: usize = 0;
+    @memset(cl_freq, 0);
+
+    // The frequency to analyze for the cl_enc_map is the stream of (0-18) characters
     for (ctx.ll_enc_map) |enc| {
-        if (enc) |e| {
-            if (cl_freq[e.bit_shift] == 0) {
-                cl_cnt += 1;
-            }
-            cl_freq[e.bit_shift] += 1;
+        if (enc) |v| {
+            // FOR NOW, just use 0-15 for simplicity.
+            ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
+                .value = v.bit_shift,
+                .extra_bits = 0,
+            };
         }
+        else {
+            ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
+                .value = 0,
+                .extra_bits = 0,
+            };
+        }
+        ctx.write_queue_cl_index += 1;
+    }
+    for (ctx.d_enc_map) |enc| {
+        if (enc) |v| {
+            ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
+                .value = v.bit_shift,
+                .extra_bits = 0,
+            };
+        }
+        else {
+            ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
+                .value = 0,
+                .extra_bits = 0,
+            };
+        }
+        ctx.write_queue_cl_index += 1;
+    }
+
+    // Calculate the frequency of each `ClSymbol`
+    for (0..ctx.write_queue_cl_index) |i| {
+        const v = ctx.write_queue_cl[i].value;
+        if (cl_freq[v] == 0) {
+            cl_cnt += 1;
+        }
+        cl_freq[v] += 1;
     }
 
     try huffman_build_encoding(ctx.allocator, &ctx.cl_enc_map, cl_freq, cl_cnt);
 }
 
-fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
-    var enc_cnt: usize = 0;
+fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
+    // Generate `ll_enc_map` and `d_enc_map` based on the current
+    // `write_queue` content.
+    try dynamic_code_gen_enc_maps(ctx);
+
+    // Generate `cl_enc_map` based on the "cl code" encoding of the
+    // Huffman codes that were generated for `ll_enc_map` and `d_enc_map`.
+    try dynamic_code_gen_cl_enc_map(ctx);
 
     log.debug(@src(), "Writing block type-2 header", .{});
     // HLIT: Total number of ll symbols (-257)
@@ -456,54 +501,38 @@ fn dynamic_code_write_enc_maps(ctx: *CompressContext) !void {
     // code for lengths 6 onward.
     try write_bits(ctx, u4, Flate.cl_symbol_max - 4 , 4);
 
-    enc_cnt = try dynamic_code_write_enc_map_bits(ctx, &ctx.cl_enc_map, true);
-    log.debug(@src(), "Wrote {d} non-zero code length encodings", .{enc_cnt});
-
-    enc_cnt = try dynamic_code_write_enc_map_bits(ctx, &ctx.ll_enc_map, false);
-    log.debug(@src(), "Wrote {d} non-zero literal/length encodings", .{enc_cnt});
-
-    enc_cnt = try dynamic_code_write_enc_map_bits(ctx, &ctx.d_enc_map, false);
-    log.debug(@src(), "Wrote {d} non-zero distance encodings", .{enc_cnt});
-
-    log.debug(@src(), "Done writing Huffman encoding for block #{d}", .{ctx.block_cnt});
-}
-
-fn dynamic_code_write_enc_map_bits(
-    ctx: *CompressContext,
-    enc_map: *const []?HuffmanEncoding,
-    cl_order: bool,
-) !usize {
+    // Write the code lengths in the special cl_code order, this provides the
+    // decompressor with the information needed to decompress the cl_symbols that
+    // hold the ll_enc_map and d_enc_map.
     var enc_cnt: usize = 0;
-    if (cl_order) {
-        for (Flate.cl_code_order) |i| {
-            if (enc_map.*[i]) |v| {
-                // XXX: We write the 3 bit *LENGTH* of the Huffman code for the
-                // cl symbols. Since the Huffman code can be deterministically
-                // derived from the lengths this is enough to reconstruct the
-                // cl code, the decompressor will use this decoding map in the
-                // next step to decode the ll and distance codes (lengths 0-15,
-                // a Huffman code for the ll or d table can be at most 15 bits)
-                // which are what we actually encode with the 0-19 alphabet.
-                try write_bits_be(ctx, u3, v.bit_shift, 3);
-                enc_cnt += 1;
-            }
-            else {
-                try write_bits_be(ctx, u3, 0, 3); // Length zero encoding
-            }
+    for (Flate.cl_code_order) |i| {
+        if (ctx.cl_enc_map[i]) |v| {
+            // XXX: We write the length of each encoding, not the actual encoding!
+            if (v.bit_shift > 7) unreachable;
+            try write_bits(ctx, u3, @truncate(v.bit_shift), 3);
+            enc_cnt += 1;
+        }
+        else {
+            try write_bits(ctx, u3, 0, 3);
         }
     }
-    else {
-        for (enc_map.*) |enc| {
-            if (enc) |v| {
-                try write_bits_be(ctx, u4, @truncate(v.bits), v.bit_shift);
-                enc_cnt += 1;
-            }
-            else {
-                try write_bits_be(ctx, u4, 0, 4); // Length zero encoding
-            }
+    log.debug(@src(), "Wrote CL code lengths [{} non-zero]", .{enc_cnt});
+
+    // Dequeue everything from the cl queue
+    for (0..ctx.write_queue_cl_index) |i| {
+        const cl = ctx.write_queue_cl[i];
+        if (cl.value <= 15) {
+            try write_bits_be(ctx, u4, cl.value, 4);
+        }
+        else {
+            return FlateError.NotImplemented;
         }
     }
-    return enc_cnt;
+
+    log.debug(@src(), "Wrote code lengths [{} dequeued]", .{ctx.write_queue_cl_index});
+    ctx.write_queue_cl_index = 0;
+
+    log.debug(@src(), "Done writing Huffman metadata for block #{d}", .{ctx.block_cnt});
 }
 
 fn dynamic_code_write_eob(ctx: *CompressContext) !void {
@@ -531,6 +560,7 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
                 break :blk ctx.d_enc_map[sym.distance.code];
             },
             .char => {
+                util.print_char(log.trace, "literal", @intCast(sym.char));
                 break :blk ctx.ll_enc_map[@intCast(sym.char)];
             },
         }

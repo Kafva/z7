@@ -20,6 +20,7 @@ pub const GzipFlag = enum(u8) {
 const GzipContext = struct {
     writer: std.io.AnyWriter,
     crch: std.hash.Crc32,
+    written_bytes: usize
 };
 
 /// +---+---+---+---+---+---+---+---+---+---+
@@ -36,6 +37,7 @@ pub fn compress(
     var ctx = GzipContext {
         .writer = outstream.writer().any(),
         .crch = std.hash.Crc32.init(),
+        .written_bytes = 0,
     };
     var crc = std.hash.Crc32.init();
     var size: u32 = 0;
@@ -85,6 +87,7 @@ pub fn compress(
     }
 
     // Compressed data block
+    log.debug(@src(), "Building deflate stream at @{d}", .{ctx.written_bytes});
     try deflate(allocator, instream, outstream, mode, &crc);
 
     // Trailer
@@ -120,6 +123,7 @@ fn write_string(ctx: *GzipContext, str: []const u8) !void {
 
 fn write_hdr_byte(ctx: *GzipContext, b: u8) !void {
     try ctx.writer.writeByte(b);
+    ctx.written_bytes += 1;
     const bytearr = [1]u8{b};
     ctx.crch.update(&bytearr);
 }
@@ -127,6 +131,7 @@ fn write_hdr_byte(ctx: *GzipContext, b: u8) !void {
 
 fn write_hdr_int(ctx: *GzipContext, comptime T: type, value: T) !void {
     try ctx.writer.writeInt(T, value, .little);
+    ctx.written_bytes += 2;
 
     const low = [_]u8{
         @truncate(value & 0x0000_00ff),
@@ -135,6 +140,7 @@ fn write_hdr_int(ctx: *GzipContext, comptime T: type, value: T) !void {
     ctx.crch.update(&low);
 
     if (T == u32) {
+        ctx.written_bytes += 2;
         const high = [_]u8{
             @truncate((value & 0x00ff_0000) >> 16),
             @truncate((value & 0xff00_0000) >> 24),

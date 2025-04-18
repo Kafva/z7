@@ -38,7 +38,8 @@ fn check_z7_ok(ctx: *TestContext) !void {
         &ctx.in,
         &ctx.compressed,
         ctx.mode.?,
-        @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
+        0, // XXX: gzstat.py does not handle gzip flags
+        // @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
     );
 
     try ctx.log_result(try ctx.compressed.getPos());
@@ -114,13 +115,13 @@ fn runall(inputfile: []const u8, mode: FlateCompressMode) !void {
     //try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go, mode);
 }
 
-test "Gzip check simple text" {
-    try runall("tests/testdata/helloworld.txt", FlateCompressMode.BEST_SPEED);
-}
-
-// test "Gzip check short simple text" {
-//     try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SPEED);
+// test "Gzip check simple text" {
+//     try runall("tests/testdata/helloworld.txt", FlateCompressMode.BEST_SPEED);
 // }
+
+test "Gzip check short simple text" {
+    try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SPEED);
+}
 
 // test "Gzip check longer simple text" {
 //     try runall("tests/testdata/flate_test.txt", FlateCompressMode.BEST_SPEED);

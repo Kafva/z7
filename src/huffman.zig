@@ -111,8 +111,8 @@ pub const HuffmanTreeNode = struct {
     /// We exhaust the nodes with lowest remaining weight with the lowest frequency first.
     /// Returns true if `lhs` should be placed before `rhs`.
     pub fn greater_than(_: void, lhs: @This(), rhs: @This()) bool {
-        // If a the lhs node has the same values as the rhs, move it up as more recent,
-        // this is needed for the fixed huffman construction to be correct.
+        // If the lhs node has the same values as the rhs, move it up as more recent,
+        // this is needed for the fixed Huffman construction to be correct.
         if (lhs.weight == rhs.weight) {
             // Greater frequency further in the front
             return lhs.freq >= rhs.freq;

@@ -112,7 +112,7 @@ fn build_huffman_tree(
     ctx: *HuffmanCompressContext,
     symbol_count: usize,
 ) !std.AutoHashMap(HuffmanEncoding, u16) {
-    // 1. Create a queue of nodes to place into the tree
+    // Create a queue of nodes to place into the tree
     var queue = try ctx.allocator.alloc(HuffmanTreeNode, symbol_count);
     var index: usize = 0;
     for (0..ctx.frequencies.len) |i| {
@@ -133,7 +133,7 @@ fn build_huffman_tree(
     }
     log.debug(@src(), "Initial node count: {}", .{symbol_count});
 
-    // 3. Create the tree, we need to make sure that we do not grow
+    // Create the tree, we need to make sure that we do not grow
     // the tree deeper than 15 levels so that every leaf can be encoded
     // with a u16.
     //
@@ -165,10 +165,10 @@ fn build_huffman_tree(
     }
     log.debug(@src(), "Complete tree node count: {}", .{ctx.array.items.len});
 
-    // 4. Build the canonical version of the encoding
+    // Build the canonical version of the encoding
     try build_canonical_encoding(ctx);
 
-    // 5. Return the decoding map
+    // Return the decoding map
     var dec_map = std.AutoHashMap(HuffmanEncoding, u16).init(ctx.allocator);
     // enc_map: Symbol       -> Huffman bits
     // dec_map: Huffman bits -> Symbol
@@ -295,7 +295,7 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
         return;
     }
 
-    // Create the initial translation map from 1 byte characters onto encoded
+    // Create the initial translation map from stream symbols onto encoded
     // Huffman symbols.
     try walk_generate_translation(ctx, ctx.array.items.len - 1, 0, 0);
 
@@ -329,7 +329,8 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
     }
 
     // 3. Assign numerical values to all codes, using consecutive values for
-    // all codes of the same length with the base values determined at step
+    // all codes of the same length with the base values determined at the
+    // previous step
     for (0..ctx.enc_map.len) |i| {
         if (ctx.enc_map[i]) |enc| {
             const new_enc = HuffmanEncoding {

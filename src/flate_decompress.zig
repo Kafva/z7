@@ -9,6 +9,7 @@ const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
+const HuffmanDecoding = @import("huffman_decompress.zig").HuffmanDecoding;
 const HuffmanError = @import("huffman.zig").HuffmanError;
 
 const DecompressError = error {
@@ -36,9 +37,9 @@ const DecompressContext = struct {
     /// Literal/Length Huffman decoding mappings for block type-2
     ll_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
     /// Distance Huffman decoding mappings for block type-2
-    d_dec_map: std.AutoHashMap(HuffmanEncoding, u16)
+    d_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
     /// Code length Huffman decoding mappings for block type-2
-    cl_dec_map: std.AutoHashMap(HuffmanEncoding, u16)
+    cl_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
 };
 
 pub fn decompress(
@@ -65,6 +66,7 @@ pub fn decompress(
         .nine_bit_decode = try fixed_code_decoding_map(9),
         .ll_dec_map = std.AutoHashMap(HuffmanEncoding, u16).init(allocator),
         .d_dec_map = std.AutoHashMap(HuffmanEncoding, u16).init(allocator),
+        .cl_dec_map = std.AutoHashMap(HuffmanEncoding, u16).init(allocator),
     };
 
     // We may want to start from an offset in the input stream
@@ -146,7 +148,7 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
     // TODO: decode dynamic block header
 
     // Decode the serialised `ll_enc_map` and `d_enc_map` into a `ll_dec_map` and `d_dec_map`
-    try dynamic_code_decompress_enc_maps(ctx);
+    try dynamic_code_decompress_metadata(ctx);
 
     var match_length: ?u16 = null;
     var enc = HuffmanEncoding {
@@ -211,7 +213,7 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
     ctx.d_dec_map.clearRetainingCapacity();
 }
 
-fn dynamic_code_decompress_enc_maps(ctx: *DecompressContext) !void {
+fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
     log.debug(@src(), "Reading block type-2 header", .{});
 
     const hlit = try read_bits(ctx, u5, 5);
@@ -219,25 +221,7 @@ fn dynamic_code_decompress_enc_maps(ctx: *DecompressContext) !void {
     const hclen = try read_bits(ctx, u4, 4);
     log.debug(@src(), "HLIT={d}, HDIST={d}, HCLEN={d}", .{hlit, hdist, hclen});
 
-
     log.debug(@src(), "Done reading Huffman encoding for block #{d}", .{ctx.block_cnt});
-}
-
-fn dynamic_code_read_enc_map_bits(
-    ctx: *CompressContext,
-    enc_map: *const []?HuffmanEncoding,
-    cl_order: bool,
-) !usize {
-    var dec_cnt: usize = 0;
-    if (cl_order) {
-        while (true) {
-            const bits = try read_bits_be(&ctx, u3, 3);
-        }
-    }
-    else {
-    }
-    return dec_cnt;
-
 }
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
