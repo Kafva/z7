@@ -118,7 +118,7 @@ pub fn build(b: *std.Build) void {
     // Configure build options
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", version);
-    const debug_opt = b.option(bool, "debug", "Always print debug logs") orelse false;
+    const debug_opt = b.option(bool, "debug", "Print debug logs") orelse false;
     build_options.addOption(bool, "debug", debug_opt);
     const trace_opt = b.option(bool, "trace", "Print detailed debug logs") orelse false;
     build_options.addOption(bool, "trace", trace_opt);

@@ -41,7 +41,7 @@ pub const HuffmanEncoding = struct {
 
     pub fn dump_mapping(self: *const @This(), value: u16) void {
         const istty = std.io.getStdErr().isTty();
-        const prefix = "(0x{x:0>3}) ";
+        const prefix = "({d: >3}) ";
         const color: u8 = color_base + @as(u8, self.bit_shift);
         if (value < 256) {
             const char: u8 = @truncate(value);
@@ -60,11 +60,11 @@ pub const HuffmanEncoding = struct {
                 if (istty) {
                     log.debug(
                         @src(),
-                        prefix ++ "' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                        prefix ++ "    -> \x1b[38;5;{d}m{any}\x1b[0m",
                         .{char, color, self}
                     );
                 } else {
-                    log.debug(@src(), prefix ++ "' ' -> {any}", .{char, self});
+                    log.debug(@src(), prefix ++ "    -> {any}", .{char, self});
                 }
             }
         }
@@ -72,11 +72,11 @@ pub const HuffmanEncoding = struct {
             if (istty) {
                 log.debug(
                     @src(),
-                    prefix ++ "' ' -> \x1b[38;5;{d}m{any}\x1b[0m",
+                    prefix ++ "    -> \x1b[38;5;{d}m{any}\x1b[0m",
                     .{value, color, self}
                 );
             } else {
-                log.debug(@src(), prefix ++ "' ' -> {any}", .{value, self});
+                log.debug(@src(), prefix ++ "    -> {any}", .{value, self});
             }
         }
     }

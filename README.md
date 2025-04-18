@@ -10,6 +10,7 @@ zig build run -- --help
 ```bash
 # Flags:
 #   -Ddebug=true      Print debug logs
+#   -Dtrace=true      Print detailed debug logs
 #   -Dquiet=true      Quiet test result output
 zig build test --summary all && ./zig-out/bin/z7-test
 
@@ -19,3 +20,7 @@ zig build test --summary all -- tests/flags_test.zig && ./zig-out/bin/z7-test
 # Unit tests can be easily ran in a debugger
 lldb ./zig-out/bin/z7-test
 ```
+
+
+## Acknowledgments
+* [Good guide](https://www.youtube.com/watch?v=SJPvNi4HrWQ) 😊

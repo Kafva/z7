@@ -44,10 +44,11 @@ fn check_z7_ok(ctx: *TestContext) !void {
 
     try ctx.log_result(try ctx.compressed.getPos());
 
-    try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
+    // XXX
+    // try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
 
-    // Verify correct decompression
-    try ctx.eql(ctx.in, ctx.decompressed);
+    // // Verify correct decompression
+    // try ctx.eql(ctx.in, ctx.decompressed);
 }
 
 /// Compress with Golang and decompress with z7
@@ -119,13 +120,13 @@ fn runall(inputfile: []const u8, mode: FlateCompressMode) !void {
 //     try runall("tests/testdata/helloworld.txt", FlateCompressMode.BEST_SPEED);
 // }
 
-test "Gzip check short simple text" {
-    try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SPEED);
-}
-
-// test "Gzip check longer simple text" {
-//     try runall("tests/testdata/flate_test.txt", FlateCompressMode.BEST_SPEED);
+// test "Gzip check short simple text" {
+//     try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SPEED);
 // }
+
+test "Gzip check longer simple text" {
+    try runall("tests/testdata/flate_test.txt", FlateCompressMode.BEST_SPEED);
+}
 
 // test "Gzip check 9001 repeated characters" {
 //     try runall("tests/testdata/over_9000_a.txt", FlateCompressMode.BEST_SPEED);

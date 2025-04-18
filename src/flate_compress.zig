@@ -492,44 +492,65 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
     try dynamic_code_gen_cl_enc_map(ctx);
 
     log.debug(@src(), "Writing block type-2 header", .{});
+    const ll_symbols_total = Flate.ll_symbol_max;
+    const d_symbols_total = Flate.d_symbol_max;
+    const cl_symbols_total = Flate.cl_symbol_max;
+
     // HLIT: Total number of ll symbols (-257)
-    try write_bits(ctx, u5, Flate.ll_symbol_max - 257, 5);
+    try write_bits(ctx, u5, ll_symbols_total - 257, 5);
     // HDIST: Total number of d symbols (-1)
-    try write_bits(ctx, u5, Flate.d_symbol_max, 5);
+    try write_bits(ctx, u5, d_symbols_total, 5);
     // HCLEN: Total number of cl symbols (-4)
     // E.g. if we have a Huffman tree with maxdepth 5 we can skip transmitting the
     // code for lengths 6 onward.
-    try write_bits(ctx, u4, Flate.cl_symbol_max - 4 , 4);
+    try write_bits(ctx, u4, cl_symbols_total - 4 , 4);
 
     // Write the code lengths in the special cl_code order, this provides the
     // decompressor with the information needed to decompress the cl_symbols that
     // hold the ll_enc_map and d_enc_map.
-    var enc_cnt: usize = 0;
     for (Flate.cl_code_order) |i| {
         if (ctx.cl_enc_map[i]) |v| {
             // XXX: We write the length of each encoding, not the actual encoding!
             if (v.bit_shift > 7) unreachable;
             try write_bits(ctx, u3, @truncate(v.bit_shift), 3);
-            enc_cnt += 1;
+            log.debug(@src(), "Wrote CL code: {d} => 0b{b} ({d})", .{
+                i, v.bits, v.bit_shift
+            });
         }
         else {
             try write_bits(ctx, u3, 0, 3);
         }
+
+        if (i == cl_symbols_total) {
+            log.debug(@src(), "Wrote CL code lengths ({})", .{i});
+            break;
+        }
     }
-    log.debug(@src(), "Wrote CL code lengths [{} non-zero]", .{enc_cnt});
 
     // Dequeue everything from the cl queue
     for (0..ctx.write_queue_cl_index) |i| {
         const cl = ctx.write_queue_cl[i];
         if (cl.value <= 15) {
-            try write_bits_be(ctx, u4, cl.value, 4);
+            if (ctx.cl_enc_map[cl.value]) |cl_enc| {
+                if (cl_enc.bits > 15 or cl_enc.bit_shift > 3) unreachable;
+
+                try write_bits_be(ctx, u4, @truncate(cl_enc.bits), cl_enc.bit_shift);
+                log.debug(@src(), "Wrote CL symbol: {d} => {any}", .{
+                    cl.value,
+                    cl_enc
+                });
+            }
+            else {
+                log.err(@src(), "Missing encoding for CL symbol {d}", .{cl.value});
+                return FlateError.InternalError;
+            }
         }
         else {
             return FlateError.NotImplemented;
         }
     }
 
-    log.debug(@src(), "Wrote code lengths [{} dequeued]", .{ctx.write_queue_cl_index});
+    log.debug(@src(), "Wrote LL and distance code lengths ({})", .{ctx.write_queue_cl_index});
     ctx.write_queue_cl_index = 0;
 
     log.debug(@src(), "Done writing Huffman metadata for block #{d}", .{ctx.block_cnt});
