@@ -88,7 +88,7 @@ pub fn compress(
 
     // Compressed data block
     log.debug(@src(), "Building deflate stream at @{d}", .{ctx.written_bytes});
-    try deflate(allocator, instream, outstream, mode, &crc);
+    try deflate(allocator, instream, outstream, ctx.written_bytes, mode, &crc);
 
     // Trailer
     const crc_value = crc.final();

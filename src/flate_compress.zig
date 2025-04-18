@@ -26,13 +26,15 @@ const CompressContext = struct {
     written_bits: usize,
     processed_bytes: usize,
     block_start: usize,
+    /// Initial offset into the input stream
+    instream_offset: usize,
     /// Left over input byte to use from previous block
     next_byte: ?u8,
-    /// Sliding window for backreferences in LZSS
+    /// Sliding window for back-references in LZSS
     sliding_window: RingBuffer(u8),
     lookahead: []u8,
     /// Queue of symbols to write to the output stream, we need to keep this
-    /// in memory so that we can create huffman trees for these symbols in
+    /// in memory so that we can create Huffman trees for these symbols in
     /// block type-2.
     write_queue: []FlateSymbol,
     write_queue_index: usize,
@@ -63,6 +65,7 @@ pub fn compress(
     allocator: std.mem.Allocator,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
+    instream_offset: usize,
     mode: FlateCompressMode,
     crc: *std.hash.Crc32,
 ) !void {
@@ -79,6 +82,7 @@ pub fn compress(
         .written_bits = 0,
         .processed_bytes = 0,
         .block_start = 0,
+        .instream_offset = instream_offset,
         .next_byte = null,
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
@@ -499,7 +503,7 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
     // HLIT: Total number of ll symbols (-257)
     try write_bits(ctx, u5, ll_symbols_total - 257, 5);
     // HDIST: Total number of d symbols (-1)
-    try write_bits(ctx, u5, d_symbols_total, 5);
+    try write_bits(ctx, u5, d_symbols_total - 1, 5);
     // HCLEN: Total number of cl symbols (-4)
     // E.g. if we have a Huffman tree with maxdepth 5 we can skip transmitting the
     // code for lengths 6 onward.
@@ -553,7 +557,10 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
     log.debug(@src(), "Wrote LL and distance code lengths ({})", .{ctx.write_queue_cl_index});
     ctx.write_queue_cl_index = 0;
 
-    log.debug(@src(), "Done writing Huffman metadata for block #{d}", .{ctx.block_cnt});
+    log.debug(@src(), "Done writing Huffman metadata for block #{d} @{d}", .{
+        ctx.block_cnt,
+        ctx.instream_offset + @divFloor(ctx.written_bits, 8)
+    });
 }
 
 fn dynamic_code_write_eob(ctx: *CompressContext) !void {
@@ -581,7 +588,7 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
                 break :blk ctx.d_enc_map[sym.distance.code];
             },
             .char => {
-                util.print_char(log.trace, "literal", @intCast(sym.char));
+                util.print_char(log.debug, "literal", @intCast(sym.char));
                 break :blk ctx.ll_enc_map[@intCast(sym.char)];
             },
         }
@@ -713,7 +720,7 @@ fn write_bits(
         util.print_char(log.debug, "Output write", value);
     }
     else {
-        const offset = @divFloor(ctx.written_bits, 8);
+        const offset = ctx.instream_offset + @divFloor(ctx.written_bits, 8);
         util.print_bits(log.trace, T, "Output write", value, num_bits, offset);
     }
     ctx.written_bits += num_bits;
