@@ -11,8 +11,10 @@ const log = @import("log.zig");
 pub const ClSymbol = struct {
     /// CL symbol value, [0-18]
     value: u8,
-    /// Length to use for repeat bits
-    repeat_length: u7
+    /// Length to use for repeat bits, e.g. this will be set to 3 if we want a
+    /// repeat of three, in the output stream for '16' this will be written as
+    /// '00' (not '11').
+    repeat_length: u8
 };
 
 /// Contains either a literal, a length encoding or a distance encoding.
