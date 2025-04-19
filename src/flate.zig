@@ -4,18 +4,15 @@ const log = @import("log.zig");
 /// 0 - 15: Represent code lengths of 0 - 15
 ///     16: Copy the previous code length 3 - 6 times.
 ///         The next 2 bits indicate repeat length
-///               (0 = 3, ... , 3 = 6)
-///            Example:  Codes 8, 16 (+2 bits 11),
-///                      16 (+2 bits 10) will expand to
-///                      12 code lengths of 8 (1 + 6 + 5)
 ///     17: Repeat a code length of 0 for 3 - 10 times.
 ///         (3 bits of length)
 ///     18: Repeat a code length of 0 for 11 - 138 times
 ///         (7 bits of length)
 pub const ClSymbol = struct {
     /// CL symbol value, [0-18]
-    value: u4,
-    extra_bits: u8,
+    value: u8,
+    /// Length to use for repeat bits
+    repeat_length: u7
 };
 
 /// Contains either a literal, a length encoding or a distance encoding.
@@ -25,6 +22,7 @@ pub const FlateSymbol = union(enum) {
     distance: RangeSymbol,
 };
 
+/// Container for length / distance encodings
 pub const RangeSymbol = struct {
     /// The exact length or distance that this symbol represents
     value: ?u16,

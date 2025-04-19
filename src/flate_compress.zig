@@ -413,7 +413,7 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
     try huffman_build_encoding(ctx.allocator, &ctx.d_enc_map, d_freq, d_cnt);
 }
 
-fn dynamic_code_gen_cl_enc_map(ctx: *CompressContext) !void {
+fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) !void {
     // Each enc_map is simply a 'Symbol -> Huffman bits' mapping
     // The decompresser knows the order of the symbols, it does not know
     // the length of each 'Huffman bits' sequence
@@ -448,13 +448,13 @@ fn dynamic_code_gen_cl_enc_map(ctx: *CompressContext) !void {
             // FOR NOW, just use 0-15 for simplicity.
             ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
                 .value = v.bit_shift,
-                .extra_bits = 0,
+                .repeat_length = 0,
             };
         }
         else {
             ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
                 .value = 0,
-                .extra_bits = 0,
+                .repeat_length = 0,
             };
         }
         ctx.write_queue_cl_index += 1;
@@ -463,13 +463,13 @@ fn dynamic_code_gen_cl_enc_map(ctx: *CompressContext) !void {
         if (enc) |v| {
             ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
                 .value = v.bit_shift,
-                .extra_bits = 0,
+                .repeat_length = 0,
             };
         }
         else {
             ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
                 .value = 0,
-                .extra_bits = 0,
+                .repeat_length = 0,
             };
         }
         ctx.write_queue_cl_index += 1;
@@ -492,9 +492,8 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
     // `write_queue` content.
     try dynamic_code_gen_enc_maps(ctx);
 
-    // Generate `cl_enc_map` based on the "cl code" encoding of the
-    // Huffman codes that were generated for `ll_enc_map` and `d_enc_map`.
-    try dynamic_code_gen_cl_enc_map(ctx);
+    // Enqueue the CL symbols used to encode the `ll_enc_map` and `d_enc_map`
+    try dynamic_code_enqueue_cl_symbols(ctx);
 
     log.debug(@src(), "Writing block type-2 header", .{});
     const ll_symbols_total = Flate.ll_symbol_max;
@@ -511,14 +510,17 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
     try write_bits(ctx, u4, cl_symbols_total - 4 , 4);
 
     // Write the code lengths in the special cl_code order, this provides the
-    // decompressor with the information needed to decompress the cl_symbols that
-    // hold the ll_enc_map and d_enc_map.
+    // decompressor with the information needed to decompress the queued
+    // `ClSymbol` objects that hold the `ll_enc_map` and `d_enc_map`.
     for (Flate.cl_code_order) |i| {
         if (ctx.cl_enc_map[i]) |v| {
             // XXX: We write the length of each encoding, not the actual encoding!
-            if (v.bit_shift > 7) unreachable;
+            if (v.bit_shift > 7) {
+                log.err(@src(), "Invalid bit length for CL symbol: {d}", .{v.bit_shift});
+                return FlateError.InternalError;
+            }
             try write_bits(ctx, u3, @truncate(v.bit_shift), 3);
-            log.debug(@src(), "Wrote CL code: {d} => 0b{b} ({d})", .{
+            log.trace(@src(), "Wrote CL code: {d} => 0b{b} ({d})", .{
                 i, v.bits, v.bit_shift
             });
         }
@@ -532,30 +534,11 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
         }
     }
 
-    // Dequeue everything from the cl queue
+    // Dequeue everything from the CL queue
     for (0..ctx.write_queue_cl_index) |i| {
-        const cl = ctx.write_queue_cl[i];
-        if (cl.value <= 15) {
-            if (ctx.cl_enc_map[cl.value]) |cl_enc| {
-                if (cl_enc.bits > 15 or cl_enc.bit_shift > 3) unreachable;
-
-                try write_bits_be(ctx, u4, @truncate(cl_enc.bits), cl_enc.bit_shift);
-                log.debug(@src(), "Wrote CL symbol: {d} => {any}", .{
-                    cl.value,
-                    cl_enc
-                });
-            }
-            else {
-                log.err(@src(), "Missing encoding for CL symbol {d}", .{cl.value});
-                return FlateError.InternalError;
-            }
-        }
-        else {
-            return FlateError.NotImplemented;
-        }
+        try dynamic_code_write_cl_symbol(ctx, ctx.write_queue_cl[i]);
     }
-
-    log.debug(@src(), "Wrote LL and distance code lengths ({})", .{ctx.write_queue_cl_index});
+    log.debug(@src(), "Wrote CL symbols ({})", .{ctx.write_queue_cl_index});
     ctx.write_queue_cl_index = 0;
 
     log.debug(@src(), "Done writing Huffman metadata for block #{d} @{d}", .{
@@ -635,6 +618,54 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
             }
         },
         else => {}
+    }
+}
+
+fn dynamic_code_write_cl_symbol(ctx: *CompressContext, sym: ClSymbol) !void {
+    if (ctx.cl_enc_map[sym.value]) |enc| {
+        if (enc.bit_shift > 3) {
+            log.err(@src(), "Invalid CL symbol: {any}", .{enc});
+            return FlateError.InternalError;
+        }
+
+        try write_bits_be(ctx, u4, @truncate(enc.bits), enc.bit_shift);
+        log.debug(@src(), "Wrote CL symbol: {d} => {any}", .{
+            sym.value,
+            enc
+        });
+    }
+    else {
+        log.err(@src(), "Missing encoding for CL symbol {d}", .{sym.value});
+        return FlateError.InternalError;
+    }
+
+    // Write extra bits for repeat symbol logic
+    switch (sym.value) {
+        16 => {
+            if (sym.repeat_length > 6) {
+                log.err(@src(), "Bad repeat length for CL symbol {d}", .{sym.value});
+                return FlateError.InternalError;
+            }
+            const repeat_length: u2 = @truncate(sym.repeat_length - 3);
+            try write_bits_be(ctx, u2, repeat_length, 2);
+        },
+        17 => {
+            if (sym.repeat_length > 10) {
+                log.err(@src(), "Bad repeat length for CL symbol {d}", .{sym.value});
+                return FlateError.InternalError;
+            }
+            const repeat_length: u3 = @truncate(sym.repeat_length - 3);
+            try write_bits_be(ctx, u3, repeat_length, 3);
+        },
+        18 => {
+            if (sym.repeat_length < 11 or sym.repeat_length > 138) {
+                log.err(@src(), "Bad repeat length for CL symbol {d}", .{sym.value});
+                return FlateError.InternalError;
+            }
+            const repeat_length: u7 = @truncate(sym.repeat_length - 11);
+            try write_bits_be(ctx, u7, repeat_length, 7);
+        },
+        else => {},
     }
 }
 
@@ -740,7 +771,8 @@ fn write_bits_be(
     const V = switch (T) {
         u9 => u4,
         u8, u7 => u3,
-        else => u2
+        u6, u5, u4, u3 => u2,
+        else => u1
     };
     for (1..num_bits) |i_usize| {
         const i: V = @intCast(i_usize);

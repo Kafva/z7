@@ -246,7 +246,7 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
         &ctx.allocator,
         &ctx.cl_dec_map,
         &cl_code_lengths,
-        Flate.cl_symbol_max
+        cl_symbols_total
     );
 
     var ll_code_lengths = [_]u4{0}**Flate.ll_symbol_max;
@@ -301,7 +301,7 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
         &ctx.allocator,
         &ctx.ll_dec_map,
         &ll_code_lengths,
-        Flate.ll_symbol_max
+        ll_symbols_total,
     );
 
     // Reconstruct the decoding map for the distance symbols
@@ -309,7 +309,7 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
         &ctx.allocator,
         &ctx.d_dec_map,
         &d_code_lengths,
-        Flate.d_symbol_max
+        d_symbols_total
     );
 
     log.debug(@src(), "Done reading Huffman metadata for block #{d}", .{ctx.block_cnt});
