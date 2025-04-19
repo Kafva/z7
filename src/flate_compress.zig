@@ -427,11 +427,12 @@ fn dynamic_code_gen_cl_enc_map(ctx: *CompressContext) !void {
     // Instead of transmitting the length for each symbol encoding ("code
     // length") in order as is, We use an encoding for these, this is the "cl code"
     //
-    // [4 bits]     0-15: Encodes the length 0 - 15 raw
-    // [4 + 2 bits] 16: Repeat the previous (0-15) length x + 3 times (x being the two extra bits)
-    // [4 + 3 bits] 17: Repeat the '0 length' x + 3 times (x being the three extra bits)
-    // [4 + 7 bits] 18: Repeat the '0 length' x + 11 times (x being the seven extra bits)
+    // [k bits]     0-15: Encodes the length 0 - 15 raw
+    // [k + 2 bits] 16: Repeat the previous (0-15) length x + 3 times (x being the two extra bits)
+    // [k + 3 bits] 17: Repeat the '0 length' x + 3 times (x being the three extra bits)
+    // [k + 7 bits] 18: Repeat the '0 length' x + 11 times (x being the seven extra bits)
     //
+    // 'k' is dependant on the Huffman code that is generated.
     // +3 etc. makes sense since we would never want to encode less than 3 repetitions of something.
     //
     // NOW, we don't just write the CL symbols as is to the output stream, no, we check the
@@ -588,7 +589,7 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
                 break :blk ctx.d_enc_map[sym.distance.code];
             },
             .char => {
-                util.print_char(log.debug, "literal", @intCast(sym.char));
+                util.print_char(log.trace, "literal", @intCast(sym.char));
                 break :blk ctx.ll_enc_map[@intCast(sym.char)];
             },
         }

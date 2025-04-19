@@ -18,7 +18,7 @@ const HuffmanCompressContext = struct {
     /// The frequency of each byte value to rely on when constructing the
     /// Huffman code
     frequencies: []usize,
-    /// Mappings from symbols onto huffman encodings
+    /// Mappings from symbols onto Huffman encodings
     enc_map: []?HuffmanEncoding,
     /// Backing array for Huffman tree nodes
     array: std.ArrayList(HuffmanTreeNode),
@@ -300,7 +300,6 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
     try walk_generate_translation(ctx, ctx.array.items.len - 1, 0, 0);
 
     // 1. Count how many entries there are for each code length (bit length)
-    // We only allow code lengths that fit into a u16
     var bit_length_counts = try ctx.allocator.alloc(u16, ctx.symbol_max);
     @memset(bit_length_counts, 0);
 
@@ -333,6 +332,7 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
     // previous step
     for (0..ctx.enc_map.len) |i| {
         if (ctx.enc_map[i]) |enc| {
+            log.debug(@src(), "aaa {d}: {any}", .{i, enc});
             const new_enc = HuffmanEncoding {
                 .bit_shift = enc.bit_shift,
                 .bits = next_code[enc.bit_shift]

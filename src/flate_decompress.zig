@@ -9,8 +9,9 @@ const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
-const HuffmanDecoding = @import("huffman_decompress.zig").HuffmanDecoding;
 const HuffmanError = @import("huffman.zig").HuffmanError;
+const HuffmanCodeLengthToken = @import("huffman_decompress.zig").HuffmanCLToken;
+const reconstruct_canonical_code = @import("huffman_decompress.zig").reconstruct_canonical_code;
 
 const DecompressError = error {
     UndecodableBitStream,
@@ -38,7 +39,8 @@ const DecompressContext = struct {
     ll_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
     /// Distance Huffman decoding mappings for block type-2
     d_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
-    /// Code length Huffman decoding mappings for block type-2
+    /// Code length Huffman decoding mappings for block type-2, maps from
+    /// a huffman encoding onto a [0,18] value.
     cl_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
 };
 
@@ -145,7 +147,7 @@ fn no_compression_decompress_block(ctx: *DecompressContext) !void {
 }
 
 fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
-    // TODO: decode dynamic block header
+
 
     // Decode the serialised `ll_enc_map` and `d_enc_map` into a `ll_dec_map` and `d_dec_map`
     try dynamic_code_decompress_metadata(ctx);
@@ -214,14 +216,40 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
 }
 
 fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
+
     log.debug(@src(), "Reading block type-2 header", .{});
 
-    const hlit = try read_bits(ctx, u5, 5);
-    const hdist = try read_bits(ctx, u5, 5);
-    const hclen = try read_bits(ctx, u4, 4);
-    log.debug(@src(), "HLIT={d}, HDIST={d}, HCLEN={d}", .{hlit, hdist, hclen});
+    const hlit = try read_bits(ctx, u16, 5);
+    const hdist = try read_bits(ctx, u8, 5);
+    const hclen = try read_bits(ctx, u8, 4);
 
-    log.debug(@src(), "Done reading Huffman encoding for block #{d}", .{ctx.block_cnt});
+    const ll_symbols_total: u16 = hlit + 257;
+    const d_symbols_total: u8 = hdist + 1;
+    const cl_symbols_total: u8 = hclen + 4;
+
+    log.debug(@src(), "HLIT: {d} -> {d}, HDIST: {d} -> {d}, HCLEN: {d} -> {d}", .{
+        hlit,
+        ll_symbols_total,
+        hdist,
+        d_symbols_total,
+        hclen,
+        cl_symbols_total
+    });
+
+    var cl_code_lengths = [_]u4{0}**Flate.cl_symbol_max;
+    for (0..cl_symbols_total) |i| {
+        const idx = Flate.cl_code_order[i];
+        cl_code_lengths[idx] = try read_bits(ctx, u3, 3);
+    }
+
+    try reconstruct_canonical_code(
+        &ctx.allocator,
+        &ctx.cl_dec_map,
+        &cl_code_lengths,
+        Flate.cl_symbol_max
+    );
+
+    log.debug(@src(), "Done reading Huffman metadata for block #{d}", .{ctx.block_cnt});
 }
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
@@ -436,4 +464,3 @@ fn write_byte(ctx: *DecompressContext, c: u8) !void {
     const bytearr = [1]u8 { c };
     ctx.crc.update(&bytearr);
 }
-

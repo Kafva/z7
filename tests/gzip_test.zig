@@ -44,11 +44,10 @@ fn check_z7_ok(ctx: *TestContext) !void {
 
     try ctx.log_result(try ctx.compressed.getPos());
 
-    // XXX
-    // try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
+    try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
 
-    // // Verify correct decompression
-    // try ctx.eql(ctx.in, ctx.decompressed);
+    // Verify correct decompression
+    try ctx.eql(ctx.in, ctx.decompressed);
 }
 
 /// Compress with Golang and decompress with z7

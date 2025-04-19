@@ -23,4 +23,4 @@ lldb ./zig-out/bin/z7-test
 
 
 ## Acknowledgments
-* [Good guide](https://www.youtube.com/watch?v=SJPvNi4HrWQ) 😊
+* [Good guide on deflate](https://www.youtube.com/watch?v=SJPvNi4HrWQ)

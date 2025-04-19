@@ -10,6 +10,7 @@ pub const HuffmanError = error {
     BadEncoding,
     BadTreeStructure,
     MaxDepthInsufficent,
+    InternalError
 };
 
 /// Represents a path in a Huffman tree as a u16 integer.
