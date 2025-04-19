@@ -9,7 +9,7 @@ const HuffmanContext = @import("huffman.zig").HuffmanContext;
 /// The metadata provided to re-create the Huffman encoding used during
 /// block type-2 compression is essentially an array of these items, i.e.
 /// a symbol and a description of how long its Huffman code should be.
-pub const HuffmanCLToken = struct {
+const HuffmanCodeLengthToken = struct {
     symbol_value: u16,
     bit_shift: u4,
 
@@ -35,7 +35,6 @@ pub const HuffmanCLToken = struct {
         // Ignore bit_shift if symbol_value differs
         return lhs.symbol_value < rhs.symbol_value;
     }
-
 };
 
 const HuffmanDecompressContext = struct {
@@ -116,16 +115,21 @@ pub fn reconstruct_canonical_code(
         return HuffmanError.InternalError;
     }
 
-    var sorted_code_lengths = try allocator.alloc(HuffmanCLToken, symbol_max);
+    var sorted_code_lengths = try allocator.alloc(HuffmanCodeLengthToken, symbol_max);
 
     // Create a sorted version of the code_length array
     for (0..symbol_max) |i| {
-        sorted_code_lengths[i] = HuffmanCLToken {
+        sorted_code_lengths[i] = HuffmanCodeLengthToken {
             .symbol_value = @truncate(i),
             .bit_shift = code_lengths[i]
         };
     }
-    std.sort.insertion(HuffmanCLToken, sorted_code_lengths, {}, HuffmanCLToken.less_than);
+    std.sort.insertion(
+        HuffmanCodeLengthToken,
+        sorted_code_lengths,
+        {},
+        HuffmanCodeLengthToken.less_than
+    );
 
     // 1. Count how many entries there are for each code length (bit length)
     var max_seen_bits: u4 = 0;

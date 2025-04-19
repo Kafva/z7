@@ -3,6 +3,7 @@ const log = @import("log.zig");
 const util = @import("util.zig");
 
 const Flate = @import("flate.zig").Flate;
+const ClSymbol = @import("flate.zig").ClSymbol;
 const FlateBlockType = @import("flate.zig").FlateBlockType;
 const FlateError = @import("flate.zig").FlateError;
 const Token = @import("flate.zig").Token;
@@ -147,8 +148,6 @@ fn no_compression_decompress_block(ctx: *DecompressContext) !void {
 }
 
 fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
-
-
     // Decode the serialised `ll_enc_map` and `d_enc_map` into a `ll_dec_map` and `d_dec_map`
     try dynamic_code_decompress_metadata(ctx);
 
@@ -211,12 +210,12 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
     }
 
     // Clear mappings for next iteration
+    ctx.cl_dec_map.clearRetainingCapacity();
     ctx.ll_dec_map.clearRetainingCapacity();
     ctx.d_dec_map.clearRetainingCapacity();
 }
 
 fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
-
     log.debug(@src(), "Reading block type-2 header", .{});
 
     const hlit = try read_bits(ctx, u16, 5);
@@ -236,17 +235,81 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
         cl_symbols_total
     });
 
+    log.debug(@src(), "Reading block type-2 metadata", .{});
+
+    // Reconstruct the decoding map for the CL symbols
     var cl_code_lengths = [_]u4{0}**Flate.cl_symbol_max;
     for (0..cl_symbols_total) |i| {
-        const idx = Flate.cl_code_order[i];
-        cl_code_lengths[idx] = try read_bits(ctx, u3, 3);
+        cl_code_lengths[Flate.cl_code_order[i]] = try read_bits(ctx, u3, 3);
     }
-
     try reconstruct_canonical_code(
         &ctx.allocator,
         &ctx.cl_dec_map,
         &cl_code_lengths,
         Flate.cl_symbol_max
+    );
+
+    var ll_code_lengths = [_]u4{0}**Flate.ll_symbol_max;
+    var d_code_lengths = [_]u4{0}**Flate.d_symbol_max;
+    var enc = HuffmanEncoding {
+        .bits = 0,
+        .bit_shift = 0,
+    };
+
+    // Using the `cl_dec_map`, decode the Huffman encoding of the ll and distance
+    // code lengths into `ll_code_lengths` and `d_code_lengths`.
+    const end = ll_symbols_total + d_symbols_total;
+    var idx: usize = 0;
+
+    while (idx < end) {
+        const bit = read_bits(ctx, u1, 1) catch {
+            break;
+        };
+        if (enc.bit_shift == 15) {
+            return HuffmanError.BadEncoding;
+        }
+
+        // The most-significant bit is read first
+        enc.bits = (enc.bits << 1) | bit;
+        enc.bit_shift += 1;
+
+        if (ctx.cl_dec_map.get(enc)) |v| {
+            if (v >= Flate.cl_symbol_max) {
+                return HuffmanError.BadEncoding;
+            }
+
+            if (v <= 15) {
+                if (idx < ll_symbols_total) {
+                    ll_code_lengths[idx] = @truncate(v);
+                }
+                else {
+                    d_code_lengths[idx - ll_symbols_total] = @truncate(v);
+                }
+            }
+            else {
+                return FlateError.NotImplemented;
+            }
+
+            enc.bits = 0;
+            enc.bit_shift = 0;
+            idx += 1;
+        }
+    }
+
+    // Reconstruct the decoding map for the LL symbols
+    try reconstruct_canonical_code(
+        &ctx.allocator,
+        &ctx.ll_dec_map,
+        &ll_code_lengths,
+        Flate.ll_symbol_max
+    );
+
+    // Reconstruct the decoding map for the distance symbols
+    try reconstruct_canonical_code(
+        &ctx.allocator,
+        &ctx.d_dec_map,
+        &d_code_lengths,
+        Flate.d_symbol_max
     );
 
     log.debug(@src(), "Done reading Huffman metadata for block #{d}", .{ctx.block_cnt});

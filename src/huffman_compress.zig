@@ -2,9 +2,97 @@ const std = @import("std");
 const util = @import("util.zig");
 const log = @import("log.zig");
 
-const HuffmanTreeNode = @import("huffman.zig").HuffmanTreeNode;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const HuffmanError = @import("huffman.zig").HuffmanError;
+const color_base = @import("huffman.zig").color_base;
+
+const HuffmanTreeNode = struct {
+    /// Only leaf nodes contain a character
+    value: ?u16,
+    freq: usize,
+    /// A lower weight has lower priority (minimum weight is 0).
+    /// The maximum weight represents the maximum depth of the tree,
+    /// a higher weight should be placed higher up in the tree.
+    weight: u4,
+    left_child_index: ?usize,
+    right_child_index: ?usize,
+
+    /// Priority sort comparison method (descending):
+    ///
+    /// First: Sort based on weight (descending, greater first)
+    /// Second: Sort based on frequency (descending, greater first)
+    /// Example:
+    /// [
+    ///     { .weight = 1, .freq = 3 },
+    ///     { .weight = 1, .freq = 2 },
+    ///     { .weight = 1, .freq = 1 },
+    ///     { .weight = 0, .freq = 3 },
+    ///     { .weight = 0, .freq = 2 },
+    ///     { .weight = 0, .freq = 1 },
+    /// ]
+    ///
+    /// When constructing the tree we want to pop items from the *tail* of the queue.
+    /// We exhaust the nodes with lowest remaining weight with the lowest frequency first.
+    /// Returns true if `lhs` should be placed before `rhs`.
+    pub fn greater_than(_: void, lhs: @This(), rhs: @This()) bool {
+        // If the lhs node has the same values as the rhs, move it up as more recent,
+        // this is needed for the fixed Huffman construction to be correct.
+        if (lhs.weight == rhs.weight) {
+            // Greater frequency further in the front
+            return lhs.freq >= rhs.freq;
+        }
+        // Ignore frequency if the weights differ
+        return lhs.weight >= rhs.weight;
+    }
+
+    pub fn format(
+        self: *const @This(),
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype
+    ) !void {
+        if (fmt.len != 0) {
+            return std.fmt.invalidFmtError(fmt, self);
+        }
+
+        if (self.value) |value| {
+            if (value < 256) {
+                const char: u8 = @truncate(value);
+                if (std.ascii.isPrint(char) and char != '\n') {
+                    return writer.print("{{ .weight = {d}, .freq = {d}, .value = '{c}' }}",
+                                      .{self.weight, self.freq, char});
+                } else {
+                    return writer.print("{{ .weight = {d}, .freq = {d}, .value = 0x{x} }}",
+                                      .{self.weight, self.freq, char});
+                }
+            }
+            else {
+                return writer.print("{{ .weight = {d}, .freq = {d}, .value = 0x{x} }}",
+                                  .{self.weight, self.freq, value});
+            }
+        } else {
+            return writer.print("{{ .weight = {d}, .freq = {d} }}", .{self.weight, self.freq});
+        }
+    }
+
+    pub fn dump(self: @This(), comptime weight: u4, pos: []const u8) void {
+        const istty = std.io.getStdErr().isTty();
+        const prefix = util.repeat('-', weight) catch unreachable;
+        if (istty) {
+            const side_color: u8 = if (std.mem.eql(u8, "1", pos)) 37 else 97;
+            const color: u8 = color_base + @as(u8, weight);
+            log.debug(
+                @src(),
+                "\x1b[{d}m`{s}{s}\x1b[0m: \x1b[38;5;{d}m{any}\x1b[0m",
+                .{side_color, prefix, pos, color, self}
+            );
+        }
+        else {
+            log.debug(@src(), "`{s}{s}: {any}", .{prefix, pos, self});
+        }
+        std.heap.page_allocator.free(prefix);
+    }
+};
 
 const HuffmanCompressContext = struct {
     allocator: std.mem.Allocator,
@@ -332,7 +420,6 @@ fn build_canonical_encoding(ctx: *HuffmanCompressContext) !void {
     // previous step
     for (0..ctx.enc_map.len) |i| {
         if (ctx.enc_map[i]) |enc| {
-            log.debug(@src(), "aaa {d}: {any}", .{i, enc});
             const new_enc = HuffmanEncoding {
                 .bit_shift = enc.bit_shift,
                 .bits = next_code[enc.bit_shift]
