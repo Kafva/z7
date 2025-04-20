@@ -448,23 +448,25 @@ def decode_dynamic(stream,output_buffer):
                 ll_code_lengths[codes_read] = symbol
             codes_read += 1
             last_symbol = symbol
+            decode_print("[%d] Symbol %d"%(codes_read, symbol))
+
         elif symbol == 16:
             # Repeat the previous symbol between 3 and 6 times based on a two bit value
             repeat_count = 3 + stream.read_bits(2)
             if last_symbol == -1:
                 raise DecodingException("Repeat code (16) used for first CL code value")
-            decode_print("Symbol 16 (repeat count %d, repeating %d)"%(repeat_count, last_symbol))
             for i in range(repeat_count):
                 if codes_read >= num_ll_codes:
                     dist_code_lengths[codes_read-num_ll_codes] = last_symbol
                 else:
                     ll_code_lengths[codes_read] = last_symbol
                 codes_read += 1
+            decode_print("[%d] Symbol 16 (repeat count %d, repeating %d)"%(codes_read, repeat_count, last_symbol))
             #Leave last_symbol unchanged
+
         elif symbol == 17:
             # Repeat a zero length between 3 and 10 times based on a three bit value
             repeat_count = 3 + stream.read_bits(3)
-            decode_print("Symbol 17 (repeat count %d)"%(repeat_count))
             for i in range(repeat_count):
                 if codes_read >= num_ll_codes:
                     dist_code_lengths[codes_read-num_ll_codes] = 0
@@ -472,10 +474,11 @@ def decode_dynamic(stream,output_buffer):
                     ll_code_lengths[codes_read] = 0
                 codes_read += 1
             last_symbol = 0
+            decode_print("[%d] Symbol 17 (repeat count %d)"%(codes_read, repeat_count))
+
         else: # symbol == 18
             # Repeat a zero length between 11 and 138 times based on a seven bit value
             repeat_count = 11 + stream.read_bits(7)
-            decode_print("Symbol 18 (repeat count %d)"%(repeat_count))
             for i in range(repeat_count):
                 if codes_read >= num_ll_codes:
                     dist_code_lengths[codes_read-num_ll_codes] = 0
@@ -483,6 +486,7 @@ def decode_dynamic(stream,output_buffer):
                     ll_code_lengths[codes_read] = 0
                 codes_read += 1
             last_symbol = 0
+            decode_print("[%d] Symbol 18 (repeat count %d)"%(codes_read, repeat_count))
 
     ll_codes = code_lengths_to_code_table(ll_code_lengths)
     decode_print("LL codes:")
