@@ -28,7 +28,6 @@ pub const ClSymbol = struct {
             return FlateError.InternalError;
         }
         else if (match_cnt >= 3 and bit_length != 0) {
-            // TODO pass correct bit_length???
             cl_value = 16;
             cl_repeat_length = @truncate(match_cnt);
         }
@@ -335,6 +334,7 @@ pub const FlateError = error {
     InvalidSymbol,
     InvalidDistance,
     InvalidLength,
+    InvalidCLSymbol,
     InvalidBlockLength,
     MissingTokenLiteral,
     OutOfQueueSpace,

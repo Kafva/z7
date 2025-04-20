@@ -170,7 +170,7 @@ pub fn reconstruct_canonical_code(
         next_code[cl.bit_shift] += 1;
     }
 
-    log.debug(@src(), "Canonical decoding [0..{d}]:", .{symbol_max});
+    log.debug(@src(), "{{0..{d}}}: Canonical decoding", .{symbol_max});
     dump_decodings(dec_map, symbol_max);
 }
 

@@ -567,6 +567,10 @@ fn dynamic_code_gen_enc_map_cl(ctx: *CompressContext) !void {
     try huffman_build_encoding(ctx.allocator, &ctx.cl_enc_map, cl_freq, cl_cnt);
 }
 
+/// Layout of metadata:
+/// +-------------------------------------------------+     +-----------------+ 
+/// | HLIT | HDIST | HCLEN | "CL header" | CL symbols | ... | Compressed data |
+/// +-------------------------------------------------+     +-----------------+
 fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
     // Generate `ll_enc_map` and `d_enc_map` based on the current
     // `write_queue` content.
@@ -618,7 +622,10 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
         try dynamic_code_write_cl_symbol(ctx, ctx.write_queue_cl[i]);
         cl_cnt += 1 + ctx.write_queue_cl[i].repeat_length;
     }
-    log.debug(@src(), "Wrote {d} CL symbols ({} total)", .{ctx.write_queue_cl_index, cl_cnt});
+    log.debug(@src(), "Wrote {d} CL symbols ({} total)", .{
+        ctx.write_queue_cl_index,
+        cl_cnt
+    });
     ctx.write_queue_cl_index = 0;
 
     log.debug(@src(), "Done writing Huffman metadata for block #{d} @{d}", .{

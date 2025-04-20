@@ -147,8 +147,124 @@ fn no_compression_decompress_block(ctx: *DecompressContext) !void {
     }
 }
 
+fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
+    while (true) {
+        const v = blk: {
+            var key = read_bits_be(ctx, 7) catch {
+                return FlateError.UnexpectedEof;
+            };
+
+            if (ctx.seven_bit_decode.get(key)) |char| {
+                log.trace(@src(), "Matched 0b{b:0>7}", .{key});
+                break :blk char;
+            }
+
+            // Read one more bit and try the 8-bit value
+            //   0111100    [7 bits]
+            //   0111100(x) [8 bits]
+            var bit = read_bits(ctx, u1, 1) catch {
+                return FlateError.UnexpectedEof;
+            };
+            key <<= 1;
+            key |= bit;
+
+            if (ctx.eight_bit_decode.get(key)) |char| {
+                log.trace(@src(), "Matched 0b{b:0>8}", .{key});
+                break :blk char;
+            }
+
+            // Read one more bit and try the 9-bit value
+            //  01111001    [8 bits]
+            //  01111001(x) [9 bits]
+            bit = read_bits(ctx, u1, 1) catch {
+                return FlateError.UnexpectedEof;
+            };
+            key <<= 1;
+            key |= bit;
+
+            if (ctx.nine_bit_decode.get(key)) |char| {
+                log.trace(@src(), "Matched 0b{b:0>9}", .{key});
+                break :blk char;
+            }
+
+            return DecompressError.UndecodableBitStream;
+        };
+
+        if (v < 256) {
+            const c: u8 = @truncate(v);
+            try write_byte(ctx, c);
+        }
+        else if (v == 256) {
+            log.debug(@src(), "End-of-block marker found", .{});
+            break;
+        }
+        else if (v < Flate.ll_symbol_max) {
+            // Determine the length of the match
+            const length = try read_symbol_backref_length(ctx, v);
+
+            // Determine the distance for the match
+            const distance_code = read_bits_be(ctx, 5) catch {
+                return FlateError.UnexpectedEof;
+            };
+            const distance = try read_symbol_backref_distance(ctx, distance_code);
+
+            // Write the backreferences to the output stream
+            try write_backref_match(ctx, length, distance);
+        }
+        else {
+            return FlateError.InvalidLiteralLength;
+        }
+    }
+}
+
+/// Create a hashmap from each Huffman code onto a literal.
+/// We need a separate map for each bit-length,
+///  0b0111100 [7] ~= 0b00111100 [8]
+/// Same numerical value, but not the same bit-stream.
+///
+/// Lit Value    Bits        Codes
+/// ---------    ----        -----
+///   0 - 143     8          00110000 through
+///                          10111111
+/// 144 - 255     9          110010000 through
+///                          111111111
+/// 256 - 279     7          0000000 through
+///                          0010111
+/// 280 - 287     8          11000000 through
+///                          11000111
+fn fixed_code_decoding_map(comptime num_bits: u8) !std.AutoHashMap(u16, u16) {
+    var huffman_map = std.AutoHashMap(u16, u16).init(std.heap.page_allocator);
+    switch (num_bits) {
+        7 => {
+            for (0..(280-256)) |c| {
+                const i: u16 = @intCast(c);
+                try huffman_map.putNoClobber(0b000_0000 + i, 256 + i);
+            }
+        },
+        8 => {
+            for (0..(144-0)) |c| {
+                const i: u16 = @intCast(c);
+                try huffman_map.putNoClobber(0b0011_0000 + i, 0 + i);
+            }
+            for (0..(288-280)) |c| {
+                const i: u16 = @intCast(c);
+                try huffman_map.putNoClobber(0b1100_0000 + i, 280 + i);
+            }
+        },
+        9 => {
+            for (0..(256-144)) |c| {
+                const i: u16 = @intCast(c);
+                try huffman_map.putNoClobber(0b1_1001_0000 + i, 144 + i);
+            }
+        },
+        else => unreachable,
+    }
+    return huffman_map;
+}
+
 fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
-    // Decode the serialised `ll_enc_map` and `d_enc_map` into a `ll_dec_map` and `d_dec_map`
+    // Extract the Huffman trees, i.e. `ll_dec_map` and `d_dec_map` from
+    // the initial metadata.
     try dynamic_code_decompress_metadata(ctx);
 
     var match_length: ?u16 = null;
@@ -249,52 +365,17 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
         cl_symbols_total
     );
 
+    // Decode the stream of CL symbols into actual code lengths
+    // that we can use to reconstruct the LL and DIST Huffman codes.
     var ll_code_lengths = [_]u4{0}**Flate.ll_symbol_max;
     var d_code_lengths = [_]u4{0}**Flate.d_symbol_max;
-    var enc = HuffmanEncoding {
-        .bits = 0,
-        .bit_shift = 0,
-    };
-
-    // Using the `cl_dec_map`, decode the Huffman encoding of the ll and distance
-    // code lengths into `ll_code_lengths` and `d_code_lengths`.
-    const end = ll_symbols_total + d_symbols_total;
-    var idx: usize = 0;
-
-    while (idx < end) {
-        const bit = read_bits(ctx, u1, 1) catch {
-            break;
-        };
-        if (enc.bit_shift == 15) {
-            return HuffmanError.BadEncoding;
-        }
-
-        // The most-significant bit is read first
-        enc.bits = (enc.bits << 1) | bit;
-        enc.bit_shift += 1;
-
-        if (ctx.cl_dec_map.get(enc)) |v| {
-            if (v >= Flate.cl_symbol_max) {
-                return HuffmanError.BadEncoding;
-            }
-
-            if (v <= 15) {
-                if (idx < ll_symbols_total) {
-                    ll_code_lengths[idx] = @truncate(v);
-                }
-                else {
-                    d_code_lengths[idx - ll_symbols_total] = @truncate(v);
-                }
-            }
-            else {
-                return FlateError.NotImplemented;
-            }
-
-            enc.bits = 0;
-            enc.bit_shift = 0;
-            idx += 1;
-        }
-    }
+    try dynamic_code_decode_cl_symbols(
+        ctx,
+        &ll_code_lengths,
+        &d_code_lengths,
+        ll_symbols_total,
+        d_symbols_total
+    );
 
     // Reconstruct the decoding map for the LL symbols
     try reconstruct_canonical_code(
@@ -315,72 +396,93 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
     log.debug(@src(), "Done reading Huffman metadata for block #{d}", .{ctx.block_cnt});
 }
 
-fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
-    while (true) {
-        const v = blk: {
-            var key = read_bits_be(ctx, 7) catch {
-                return FlateError.UnexpectedEof;
-            };
+fn dynamic_code_decode_cl_symbols(
+    ctx: *DecompressContext,
+    ll_code_lengths: *[Flate.ll_symbol_max]u4,
+    d_code_lengths: *[Flate.d_symbol_max]u4,
+    ll_symbols_total: usize,
+    d_symbols_total: usize,
+) !void {
+    var prev_bit_length: ?u4 = null;
+    var codes_done: usize = 0;
+    var enc = HuffmanEncoding {
+        .bits = 0,
+        .bit_shift = 0,
+    };
 
-            if (ctx.seven_bit_decode.get(key)) |char| {
-                log.trace(@src(), "Matched 0b{b:0>7}", .{key});
-                break :blk char;
-            }
-
-            // Read one more bit and try the 8-bit value
-            //   0111100    [7 bits]
-            //   0111100(x) [8 bits]
-            var bit = read_bits(ctx, u1, 1) catch {
-                return FlateError.UnexpectedEof;
-            };
-            key <<= 1;
-            key |= bit;
-
-            if (ctx.eight_bit_decode.get(key)) |char| {
-                log.trace(@src(), "Matched 0b{b:0>8}", .{key});
-                break :blk char;
-            }
-
-            // Read one more bit and try the 9-bit value
-            //  01111001    [8 bits]
-            //  01111001(x) [9 bits]
-            bit = read_bits(ctx, u1, 1) catch {
-                return FlateError.UnexpectedEof;
-            };
-            key <<= 1;
-            key |= bit;
-
-            if (ctx.nine_bit_decode.get(key)) |char| {
-                log.trace(@src(), "Matched 0b{b:0>9}", .{key});
-                break :blk char;
-            }
-
-            return DecompressError.UndecodableBitStream;
-        };
-
-        if (v < 256) {
-            const c: u8 = @truncate(v);
-            try write_byte(ctx, c);
-        }
-        else if (v == 256) {
-            log.debug(@src(), "End-of-block marker found", .{});
+    while (codes_done < ll_symbols_total + d_symbols_total) {
+        const bit = read_bits(ctx, u1, 1) catch {
             break;
+        };
+        if (enc.bit_shift == 15) {
+            return HuffmanError.BadEncoding;
         }
-        else if (v < Flate.ll_symbol_max) {
-            // Determine the length of the match
-            const length = try read_symbol_backref_length(ctx, v);
 
-            // Determine the distance for the match
-            const distance_code = read_bits_be(ctx, 5) catch {
-                return FlateError.UnexpectedEof;
-            };
-            const distance = try read_symbol_backref_distance(ctx, distance_code);
+        // The most-significant bit is read first
+        enc.bits = (enc.bits << 1) | bit;
+        enc.bit_shift += 1;
 
-            // Write the backreferences to the output stream
-            try write_backref_match(ctx, length, distance);
-        }
-        else {
-            return FlateError.InvalidLiteralLength;
+        if (ctx.cl_dec_map.get(enc)) |v| {
+            var repeat_length: ?u8 = null;
+            var repeat_value: u4 = 0; 
+
+            switch (v) {
+                0...15 => {
+                    const bit_len: u4 = @truncate(v);
+                    if (codes_done < ll_symbols_total) {
+                        ll_code_lengths.*[codes_done] = bit_len;
+                    }
+                    else {
+                        d_code_lengths.*[codes_done - ll_symbols_total] = bit_len;
+                    }
+                    prev_bit_length = bit_len;
+                    codes_done += 1;
+                },
+                16 => {
+                    const bits = read_bits(ctx, u8, 2) catch {
+                        break;
+                    };
+                    repeat_length = 3 + bits;
+
+                    if (prev_bit_length) |bl| {
+                        repeat_value = bl;
+                    }
+                    else {
+                        log.err(@src(), "Unexpected CL symbol 16", .{});
+                        return FlateError.InvalidCLSymbol;
+                    }
+                },
+                17 => {
+                    const bits = read_bits(ctx, u8, 3) catch {
+                        break;
+                    };
+                    repeat_length = 3 + bits;
+                },
+                18 => {
+                    const bits = read_bits(ctx, u8, 7) catch {
+                        break;
+                    };
+                    repeat_length = 11 + bits;
+                },
+                else => return FlateError.InvalidCLSymbol,
+            }
+
+            if (repeat_length) |repeat| {
+                if (codes_done < ll_symbols_total) {
+                    for (0..repeat) |_| {
+                        ll_code_lengths.*[codes_done] = repeat_value;
+                    }
+                }
+                else {
+                    for (0..repeat) |_| {
+                        d_code_lengths.*[codes_done - ll_symbols_total] = repeat_value;
+                    }
+                }
+                codes_done += repeat;
+            }
+
+            enc.bits = 0;
+            enc.bit_shift = 0;
         }
     }
 }
@@ -441,50 +543,6 @@ fn write_backref_match(ctx: *DecompressContext, length: u16, distance: u16) !voi
     }
 }
 
-/// Create a hashmap from each Huffman code onto a literal.
-/// We need a separate map for each bit-length,
-///  0b0111100 [7] ~= 0b00111100 [8]
-/// Same numerical value, but not the same bit-stream.
-///
-/// Lit Value    Bits        Codes
-/// ---------    ----        -----
-///   0 - 143     8          00110000 through
-///                          10111111
-/// 144 - 255     9          110010000 through
-///                          111111111
-/// 256 - 279     7          0000000 through
-///                          0010111
-/// 280 - 287     8          11000000 through
-///                          11000111
-fn fixed_code_decoding_map(comptime num_bits: u8) !std.AutoHashMap(u16, u16) {
-    var huffman_map = std.AutoHashMap(u16, u16).init(std.heap.page_allocator);
-    switch (num_bits) {
-        7 => {
-            for (0..(280-256)) |c| {
-                const i: u16 = @intCast(c);
-                try huffman_map.putNoClobber(0b000_0000 + i, 256 + i);
-            }
-        },
-        8 => {
-            for (0..(144-0)) |c| {
-                const i: u16 = @intCast(c);
-                try huffman_map.putNoClobber(0b0011_0000 + i, 0 + i);
-            }
-            for (0..(288-280)) |c| {
-                const i: u16 = @intCast(c);
-                try huffman_map.putNoClobber(0b1100_0000 + i, 280 + i);
-            }
-        },
-        9 => {
-            for (0..(256-144)) |c| {
-                const i: u16 = @intCast(c);
-                try huffman_map.putNoClobber(0b1_1001_0000 + i, 144 + i);
-            }
-        },
-        else => unreachable,
-    }
-    return huffman_map;
-}
 
 /// Read bits with the configured bit-ordering from the input stream
 fn read_bits(ctx: *DecompressContext, comptime T: type, num_bits: u16) !T {
