@@ -14,7 +14,74 @@ pub const ClSymbol = struct {
     /// Length to use for repeat bits, e.g. this will be set to 3 if we want a
     /// repeat of three, in the output stream for '16' this will be written as
     /// '00' (not '11').
-    repeat_length: u8
+    repeat_length: u8,
+
+    pub const repeat_non_zero_max: usize = 6;
+    pub const repeat_zero_max: usize = 138;
+
+    pub fn init(bit_length: u8, repeat_length: usize) !ClSymbol {
+        var cl_value: u8 = undefined;
+        var cl_repeat_length: u8 = @truncate(repeat_length);
+
+        if (repeat_length > ClSymbol.repeat_zero_max) {
+            log.err(@src(), "Invalid CL repeat length: {d}", .{repeat_length});
+            return FlateError.InternalError;
+        }
+        else if (repeat_length >= 3 and bit_length != 0) {
+            cl_value = 16;
+        }
+        else if (repeat_length >= 3 and repeat_length < 11 and bit_length == 0) {
+            cl_value = 17;
+        }
+        else if (repeat_length >= 11 and bit_length == 0) {
+            cl_value = 18;
+        }
+        else {
+            cl_value = bit_length;
+            cl_repeat_length = 0;
+        }
+
+        return ClSymbol {
+            .value = cl_value,
+            .repeat_length = cl_repeat_length,
+        };
+    }
+
+    /// Return the output stream representation of the `repeat_length` and the
+    /// number of bits the representation occupies
+    pub fn repeat_bits(self: @This()) ![2]u8 {
+        return blk: {
+            switch (self.value) {
+                16 => {
+                    if (self.repeat_length < 3 or self.repeat_length > ClSymbol.repeat_non_zero_max) {
+                        log.err(@src(), "Bad repeat length for CL symbol: {any}", .{self});
+                        return FlateError.InternalError;
+                    }
+                    const r: u8 = self.repeat_length - 3;
+                    break :blk [_]u8{ r, 2 };
+                },
+                17 => {
+                    if (self.repeat_length < 3 or self.repeat_length > 10) {
+                        log.err(@src(), "Bad repeat length for CL symbol: {any}", .{self});
+                        return FlateError.InternalError;
+                    }
+                    const r: u8 = self.repeat_length - 3;
+                    break :blk [_]u8{ r, 3 };
+                },
+                18 => {
+                    if (self.repeat_length < 11 or self.repeat_length > ClSymbol.repeat_zero_max) {
+                        log.err(@src(), "Bad repeat length for CL symbol: {any}", .{self});
+                        return FlateError.InternalError;
+                    }
+                    const r: u8 = self.repeat_length - 11;
+                    break :blk [_]u8{ r, 7 };
+                },
+                else => {
+                    break :blk [_]u8{ 0, 0 };
+                },
+            }
+        };
+    }
 };
 
 /// Contains either a literal, a length encoding or a distance encoding.

@@ -371,6 +371,77 @@ fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void 
     }
 }
 
+/// Write the bits for the provided match length and distance to the output
+/// stream.
+fn fixed_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
+    switch (sym) {
+        .char => {
+            // Lit Value    Bits        Codes
+            // ---------    ----        -----
+            //   0 - 143     8          00110000 through
+            //                          10111111
+            // 144 - 255     9          110010000 through
+            //                          111111111
+            if (sym.char < 144) {
+                try write_bits_be(ctx, u8, 0b0011_0000 + sym.char, 8);
+            }
+            else {
+                const char_9: u9 = 0b1_1001_0000 + @as(u9, sym.char - 144);
+                try write_bits_be(ctx, u9, char_9, 9);
+            }
+            util.print_char(log.debug, "Output write literal", sym.char);
+        },
+        .length => {
+            // Translate the length to the corresponding code
+            //
+            // 256 - 279     7          000_0000 through
+            //                          001_0111
+            // 280 - 287     8          1100_0000 through
+            //                          1100_0111
+            if (sym.length.code < 280) {
+                // Write the Huffman encoding of 'Code'
+                const hcode: u7 = @truncate(sym.length.code - 256);
+                try write_bits_be(ctx, u7, 0b000_0000 + hcode, 7);
+            }
+            else {
+                const hcode: u8 = @truncate(sym.length.code - 280);
+                try write_bits_be(ctx, u8, 0b1100_0000 + hcode, 8);
+            }
+            log.debug(@src(), "backref(length): {any}", .{sym.length});
+
+            // Write the 'Extra Bits', i.e. the offset that indicate
+            // the exact offset to use in the range.
+            if (sym.length.code != 0) {
+                const offset = sym.length.value.? - sym.length.range_start;
+                try write_bits(
+                    ctx,
+                    u16,
+                    offset,
+                    sym.length.bit_count
+                );
+                log.debug(@src(), "backref(length-offset): {d}", .{offset});
+            }
+        },
+        .distance => {
+            const denc_code: u5 = @truncate(sym.distance.code);
+            try write_bits_be(ctx, u5, denc_code, 5);
+            log.debug(@src(), "backref(distance): {any}", .{sym.distance});
+
+            // Write the offset bits for the distance
+            if (sym.distance.bit_count != 0) {
+                const offset = sym.distance.value.? - sym.distance.range_start;
+                try write_bits(
+                    ctx,
+                    u16,
+                    offset,
+                    sym.distance.bit_count
+                );
+                log.debug(@src(), "backref(distance-offset): {d}", .{offset});
+            }
+        },
+    }
+}
+
 fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
     var ll_freq = try ctx.allocator.alloc(usize, Flate.ll_symbol_max);
     var d_freq = try ctx.allocator.alloc(usize, Flate.d_symbol_max);
@@ -438,17 +509,13 @@ fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
     // NOW, we don't just write the CL symbols as is to the output stream, no, we check the
     // frequency for each CL symbol (i.e. 0-18) and construct a new Huffman code for these,
     // THIS is what we write to the output stream.
-    var cl_freq = try ctx.allocator.alloc(usize, Flate.cl_symbol_max);
-    var cl_cnt: usize = 0;
     var ll_cuts: usize = 0;
     var d_cuts: usize = 0;
-    @memset(cl_freq, 0);
 
     // Populate the `write_queue_cl` with CL symbols based on the *LENGTH* of the
     // encodings in the ll and distance maps.
     var idx: usize = 0;
     var repeat_length: usize = 0;
-    var cl_value: u8 = 0;
     var bit_length: u4 = 0;
 
     while (idx < Flate.ll_symbol_max + Flate.d_symbol_max) {
@@ -486,33 +553,17 @@ fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
         repeat_length = dynamic_code_lookahead_eql(ctx, idx, bit_length);
         idx += repeat_length;
 
-        if (repeat_length >= 138) {
-            log.err(@src(), "Invalid CL repeat length: {d}", .{repeat_length});
-            return FlateError.InternalError;
-        }
-        else if (repeat_length >= 3 and bit_length != 0) {
-            cl_value = 16;
-        }
-        else if (repeat_length >= 3 and repeat_length <= 10 and bit_length == 0) {
-            cl_value = 17;
-        }
-        else if (repeat_length > 10 and bit_length == 0) {
-            cl_value = 18;
-        }
-        else {
-            cl_value = bit_length;
-            repeat_length = 0;
-        }
-
-        ctx.write_queue_cl[ctx.write_queue_cl_index] = ClSymbol {
-            .value = cl_value,
-            .repeat_length = @truncate(repeat_length),
-        };
-        log.debug(@src(), "Enqueued: {any}", .{ctx.write_queue_cl[ctx.write_queue_cl_index]});
+        const cl_sym = try ClSymbol.init(bit_length, repeat_length);
+        ctx.write_queue_cl[ctx.write_queue_cl_index] = cl_sym;
         ctx.write_queue_cl_index += 1;
+
+        log.debug(@src(), "Enqueued: @{d} {any}", .{start_idx, cl_sym});
     }
 
     // Calculate the frequency of each `ClSymbol`
+    var cl_freq = try ctx.allocator.alloc(usize, Flate.cl_symbol_max);
+    var cl_cnt: usize = 0;
+    @memset(cl_freq, 0);
     for (0..ctx.write_queue_cl_index) |i| {
         const v = ctx.write_queue_cl[i].value;
         if (cl_freq[v] == 0) {
@@ -533,9 +584,8 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
 
     // Enqueue the CL symbols used to encode the `ll_enc_map` and `d_enc_map`
     const cuts = try dynamic_code_enqueue_cl_symbols(ctx);
-
-    // Write the code *lengths* of the CL symbols
-    const cl_cut = try dynamic_code_write_cl_header(ctx);
+    // Determine how many zeros to cut of from the end of the CL header
+    const cl_cut = try dynamic_code_get_cl_header_cut(ctx);
 
     log.debug(@src(), "Writing block type-2 header", .{});
 
@@ -564,12 +614,20 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
     try write_bits(ctx, u5, hdist, 5);
     try write_bits(ctx, u4, hclen, 4);
 
+    // Write the code *lengths* of the CL symbols
+    try dynamic_code_write_cl_header(ctx, cl_symbols_total);
 
-    // Dequeue everything from the CL queue
+    // Dequeue everything from the CL queue, i.e. write the encoded CL symbols
+    // for `ll_enc_map` and `d_enc_map` to the output stream.
+    var cl_cnt: usize = 0;
     for (0..ctx.write_queue_cl_index) |i| {
         try dynamic_code_write_cl_symbol(ctx, ctx.write_queue_cl[i]);
+        cl_cnt += 1 + ctx.write_queue_cl[i].repeat_length;
     }
-    log.debug(@src(), "Wrote CL symbols ({})", .{ctx.write_queue_cl_index});
+    log.debug(@src(), "Wrote {d} CL symbols (representing total of {} symbols)", .{
+        ctx.write_queue_cl_index,
+        cl_cnt,
+    });
     ctx.write_queue_cl_index = 0;
 
     log.debug(@src(), "Done writing Huffman metadata for block #{d} @{d}", .{
@@ -687,15 +745,15 @@ fn dynamic_code_cut_zeroes_cl_header(ctx: *CompressContext, start_idx: usize) ?u
     return null;
 }
 
-/// Return the number of symbols starting at `idx` that match the provided `value`.
-/// We look in the `ll_enc_map` followed by `d_enc_map` for matches, matches are allowed
-/// to overlap between the maps!
-fn dynamic_code_lookahead_eql(ctx: *CompressContext, idx: usize, value: u4) usize {
+/// Return the number of symbols starting at `start_idx` that match the
+/// provided `value`. We look in the `ll_enc_map` followed by `d_enc_map` for
+/// matches, matches are allowed to overlap between the maps!
+fn dynamic_code_lookahead_eql(ctx: *CompressContext, start_idx: usize, value: u4) usize {
     var match_cnt: usize = 0;
-    const match_cnt_max: usize = if (value == 0) 138 else 6;
+    const match_cnt_max: usize = if (value == 0) ClSymbol.repeat_zero_max else 6;
 
-    while (idx + match_cnt < Flate.ll_symbol_max + Flate.d_symbol_max) {
-        const i = idx + match_cnt;
+    while (start_idx + match_cnt < Flate.ll_symbol_max + Flate.d_symbol_max) {
+        const i = start_idx + match_cnt;
         const v: u4 = blk: {
             if (i < Flate.ll_symbol_max) {
                 if (ctx.ll_enc_map[i]) |enc| {
@@ -719,149 +777,68 @@ fn dynamic_code_lookahead_eql(ctx: *CompressContext, idx: usize, value: u4) usiz
     return match_cnt;
 }
 
-/// Write the code *lengths* of the CL symbols the special cl_code order, this
-/// provides the decompressor with the information needed to decompress the
-/// queued `ClSymbol` objects that hold the `ll_enc_map` and `d_enc_map`.
-fn dynamic_code_write_cl_header(ctx: *CompressContext) !usize {
+fn dynamic_code_get_cl_header_cut(ctx: *CompressContext) !usize {
     for (Flate.cl_code_order) |i| {
-        if (ctx.cl_enc_map[i]) |v| {
-            // XXX: Write the length of the encoding
-            try write_bits(ctx, u3, @truncate(v.bit_shift), 3);
-            log.trace(@src(), "Wrote CL header code: {d} => 0b{b} ({d})", .{
-                i, v.bits, v.bit_shift
-            });
-        }
-        else {
+        if (ctx.cl_enc_map[i] == null) {
             if (dynamic_code_cut_zeroes_cl_header(ctx, i)) |cut_len| {
                 return cut_len;
             }
-            try write_bits(ctx, u3, 0, 3);
         }
     }
-
     return 0;
 }
 
+/// Write the code *lengths* of the CL symbols the special cl_code order, this
+/// provides the decompressor with the information needed to decompress the
+/// queued `ClSymbol` objects that hold the `ll_enc_map` and `d_enc_map`.
+fn dynamic_code_write_cl_header(ctx: *CompressContext, cl_symbols_total: usize) !void {
+    for (0..cl_symbols_total) |i| {
+        const cl_idx = Flate.cl_code_order[i];
+        if (ctx.cl_enc_map[cl_idx]) |v| {
+            // XXX: Write the length of the encoding
+            try write_bits(ctx, u3, @truncate(v.bit_shift), 3);
+            log.debug(@src(), "Wrote CL header code: {d} => 0b{b} ({d})", .{
+                cl_idx, v.bits, v.bit_shift
+            });
+        }
+        else {
+            try write_bits(ctx, u3, 0, 3);
+        }
+    }
+}
+
 fn dynamic_code_write_cl_symbol(ctx: *CompressContext, sym: ClSymbol) !void {
-    // Write symbol
+    // Write the Huffman encoding of the `ClSymbol`
     if (ctx.cl_enc_map[sym.value]) |enc| {
         if (enc.bit_shift > 4) {
             log.err(@src(), "Invalid symbol: {d} => {any}", .{sym.value, enc});
             return FlateError.InternalError;
         }
-
         try write_bits_be(ctx, u4, @truncate(enc.bits), enc.bit_shift);
-        log.debug(@src(), "Wrote symbol: {d} => {any}", .{
-            sym.value,
-            enc
-        });
+
+        if (sym.value <= 15) {
+            log.debug(@src(), "Wrote CL symbol: {d} => {any}", .{
+                sym.value,
+                enc
+            });
+        }
+        else {
+            log.debug(@src(), "Wrote CL symbol: {d} => {any} [repeat: {d}]", .{
+                sym.value,
+                enc,
+                sym.repeat_length
+            });
+        }
     }
     else {
         log.err(@src(), "Missing encoding for CL symbol {d}", .{sym.value});
         return FlateError.InternalError;
     }
 
-    // Write extra bits
-    switch (sym.value) {
-        16 => {
-            if (sym.repeat_length < 3 or sym.repeat_length > 6) {
-                log.err(@src(), "Bad repeat length for CL symbol: {any}", .{sym});
-                return FlateError.InternalError;
-            }
-            const r: u8 = sym.repeat_length - 3;
-            const repeat_length: u2 = @truncate(r);
-            try write_bits(ctx, u2, repeat_length, 2);
-        },
-        17 => {
-            if (sym.repeat_length < 3 or sym.repeat_length > 10) {
-                log.err(@src(), "Bad repeat length for CL symbol: {any}", .{sym});
-                return FlateError.InternalError;
-            }
-            const r: u8 = sym.repeat_length - 3;
-            const repeat_length: u3 = @truncate(r);
-            try write_bits(ctx, u3, repeat_length, 3);
-        },
-        18 => {
-            if (sym.repeat_length < 11 or sym.repeat_length > 138) {
-                log.err(@src(), "Bad repeat length for CL symbol: {any}", .{sym});
-                return FlateError.InternalError;
-            }
-            const r: u8 = sym.repeat_length - 10;
-            const repeat_length: u7 = @truncate(r);
-            try write_bits(ctx, u7, repeat_length, 7);
-        },
-        else => {},
-    }
-}
-
-/// Write the bits for the provided match length and distance to the output
-/// stream.
-fn fixed_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
-    switch (sym) {
-        .char => {
-            // Lit Value    Bits        Codes
-            // ---------    ----        -----
-            //   0 - 143     8          00110000 through
-            //                          10111111
-            // 144 - 255     9          110010000 through
-            //                          111111111
-            if (sym.char < 144) {
-                try write_bits_be(ctx, u8, 0b0011_0000 + sym.char, 8);
-            }
-            else {
-                const char_9: u9 = 0b1_1001_0000 + @as(u9, sym.char - 144);
-                try write_bits_be(ctx, u9, char_9, 9);
-            }
-            util.print_char(log.debug, "Output write literal", sym.char);
-        },
-        .length => {
-            // Translate the length to the corresponding code
-            //
-            // 256 - 279     7          000_0000 through
-            //                          001_0111
-            // 280 - 287     8          1100_0000 through
-            //                          1100_0111
-            if (sym.length.code < 280) {
-                // Write the Huffman encoding of 'Code'
-                const hcode: u7 = @truncate(sym.length.code - 256);
-                try write_bits_be(ctx, u7, 0b000_0000 + hcode, 7);
-            }
-            else {
-                const hcode: u8 = @truncate(sym.length.code - 280);
-                try write_bits_be(ctx, u8, 0b1100_0000 + hcode, 8);
-            }
-            log.debug(@src(), "backref(length): {any}", .{sym.length});
-
-            // Write the 'Extra Bits', i.e. the offset that indicate
-            // the exact offset to use in the range.
-            if (sym.length.code != 0) {
-                const offset = sym.length.value.? - sym.length.range_start;
-                try write_bits(
-                    ctx,
-                    u16,
-                    offset,
-                    sym.length.bit_count
-                );
-                log.debug(@src(), "backref(length-offset): {d}", .{offset});
-            }
-        },
-        .distance => {
-            const denc_code: u5 = @truncate(sym.distance.code);
-            try write_bits_be(ctx, u5, denc_code, 5);
-            log.debug(@src(), "backref(distance): {any}", .{sym.distance});
-
-            // Write the offset bits for the distance
-            if (sym.distance.bit_count != 0) {
-                const offset = sym.distance.value.? - sym.distance.range_start;
-                try write_bits(
-                    ctx,
-                    u16,
-                    offset,
-                    sym.distance.bit_count
-                );
-                log.debug(@src(), "backref(distance-offset): {d}", .{offset});
-            }
-        },
+    // Write extra bits for [16..18]
+    const r = try sym.repeat_bits();
+    if (r[1] != 0) {
+        try write_bits(ctx, u8, r[0], r[1]);
     }
 }
 
