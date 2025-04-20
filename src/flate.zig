@@ -19,26 +19,29 @@ pub const ClSymbol = struct {
     pub const repeat_non_zero_max: usize = 6;
     pub const repeat_zero_max: usize = 138;
 
-    pub fn init(bit_length: u8, repeat_length: usize) !ClSymbol {
+    pub fn init(bit_length: u8, match_cnt: usize) !ClSymbol {
         var cl_value: u8 = undefined;
-        var cl_repeat_length: u8 = @truncate(repeat_length);
+        var cl_repeat_length: u8 = 0;
 
-        if (repeat_length > ClSymbol.repeat_zero_max) {
-            log.err(@src(), "Invalid CL repeat length: {d}", .{repeat_length});
+        if (match_cnt > ClSymbol.repeat_zero_max) {
+            log.err(@src(), "Invalid CL repeat length: {d}", .{match_cnt});
             return FlateError.InternalError;
         }
-        else if (repeat_length >= 3 and bit_length != 0) {
+        else if (match_cnt >= 3 and bit_length != 0) {
+            // TODO pass correct bit_length???
             cl_value = 16;
+            cl_repeat_length = @truncate(match_cnt);
         }
-        else if (repeat_length >= 3 and repeat_length < 11 and bit_length == 0) {
+        else if (match_cnt >= 3 and match_cnt < 11 and bit_length == 0) {
             cl_value = 17;
+            cl_repeat_length = @truncate(match_cnt);
         }
-        else if (repeat_length >= 11 and bit_length == 0) {
+        else if (match_cnt >= 11 and bit_length == 0) {
             cl_value = 18;
+            cl_repeat_length = @truncate(match_cnt);
         }
         else {
             cl_value = bit_length;
-            cl_repeat_length = 0;
         }
 
         return ClSymbol {
@@ -365,7 +368,7 @@ pub const Flate = struct {
     /// Maximum value for deflate literal/length symbols (non-inclusive)
     pub const ll_symbol_max: usize = 286;
     /// Maximum value for deflate distance symbols (non-inclusive)
-    pub const d_symbol_max: usize = 31;
+    pub const d_symbol_max: usize = 32;
     /// Maximum value for deflate "code length" symbols (non-inclusive)
     pub const cl_symbol_max: usize = 19;
     /// The order to write and read the code length symbol lengths

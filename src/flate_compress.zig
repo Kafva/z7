@@ -512,52 +512,52 @@ fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
     var ll_cuts: usize = 0;
     var d_cuts: usize = 0;
 
-    // Populate the `write_queue_cl` with CL symbols based on the *LENGTH* of the
-    // encodings in the ll and distance maps.
-    var idx: usize = 0;
-    var repeat_length: usize = 0;
+    var codes_done: usize = 0;
     var bit_length: u4 = 0;
 
-    while (idx < Flate.ll_symbol_max + Flate.d_symbol_max) {
-        if (idx < Flate.ll_symbol_max) {
-            bit_length = if (ctx.ll_enc_map[idx]) |enc| enc.bit_shift else 0;
-        }
-        else {
-            bit_length = if (ctx.d_enc_map[idx - Flate.ll_symbol_max]) |enc| enc.bit_shift else 0;
-        }
-        // Match from one position after the current index
-        idx += 1;
+    while (codes_done < Flate.ll_symbol_max + Flate.d_symbol_max) {
+        bit_length = blk: {
+            const enc = if (codes_done < Flate.ll_symbol_max)
+                            ctx.ll_enc_map[codes_done]
+                        else
+                            ctx.d_enc_map[codes_done - Flate.ll_symbol_max];
+            break :blk if (enc) |v| v.bit_shift else 0;
+        };
 
-        // Cut of the LEN or DIST symbols early if we find a run of zeroes
-        // up until the end of `ll_enc_map` or `d_enc_map`
-        const map = if (idx < Flate.ll_symbol_max) ctx.ll_enc_map else ctx.d_enc_map;
-        const end = if (idx < Flate.ll_symbol_max) Flate.ll_symbol_max else Flate.d_symbol_max;
-        const start_idx = if (idx < Flate.ll_symbol_max) idx else idx - Flate.ll_symbol_max;
-
+        // Cut off early if we find a run of zeroes up until the end of `ll_enc_map` or `d_enc_map`
         if (bit_length == 0) {
-            if (dynamic_code_cut_zeroes(map, start_idx, end)) |cut_len| {
-                idx += cut_len;
+            if (dynamic_code_cut_zeroes(ctx, codes_done)) |cut_len| {
                 // Save the cut length for the header
-                if (idx <= Flate.ll_symbol_max) {
-                    log.debug(@src(), "Cutting {d} trailing zeros from LL code lengths", .{cut_len});
+                if (codes_done < Flate.ll_symbol_max) {
                     ll_cuts = cut_len;
                 }
                 else {
-                    log.debug(@src(), "Cutting {d} trailing zeros from distance code lengths", .{cut_len});
                     d_cuts = cut_len;
                 }
+                codes_done += cut_len;
+
+                log.debug(@src(), "[{d: >3}/{d: >3}] Cut {d} trailing zeros for {s}", .{
+                    codes_done,
+                    Flate.ll_symbol_max + Flate.d_symbol_max,
+                    cut_len,
+                    if (codes_done <= Flate.ll_symbol_max) "LL" else "DIST",
+                });
                 continue;
             }
         }
 
-        repeat_length = dynamic_code_lookahead_eql(ctx, idx, bit_length);
-        idx += repeat_length;
-
-        const cl_sym = try ClSymbol.init(bit_length, repeat_length);
+        const match_cnt = dynamic_code_lookahead_eql(ctx, codes_done, bit_length);
+        const cl_sym = try ClSymbol.init(bit_length, match_cnt);
         ctx.write_queue_cl[ctx.write_queue_cl_index] = cl_sym;
         ctx.write_queue_cl_index += 1;
 
-        log.debug(@src(), "Enqueued: @{d} {any}", .{start_idx, cl_sym});
+        codes_done += if (cl_sym.repeat_length == 0) 1 else cl_sym.repeat_length;
+
+        log.debug(@src(), "[{d: >3}/{d: >3}] Enqueued: {any}", .{
+            codes_done,
+            Flate.ll_symbol_max + Flate.d_symbol_max,
+            cl_sym,
+        });
     }
 
     // Calculate the frequency of each `ClSymbol`
@@ -624,10 +624,7 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
         try dynamic_code_write_cl_symbol(ctx, ctx.write_queue_cl[i]);
         cl_cnt += 1 + ctx.write_queue_cl[i].repeat_length;
     }
-    log.debug(@src(), "Wrote {d} CL symbols (representing total of {} symbols)", .{
-        ctx.write_queue_cl_index,
-        cl_cnt,
-    });
+    log.debug(@src(), "Wrote {d} CL symbols ({} total)", .{ctx.write_queue_cl_index, cl_cnt});
     ctx.write_queue_cl_index = 0;
 
     log.debug(@src(), "Done writing Huffman metadata for block #{d} @{d}", .{
@@ -710,11 +707,21 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
     }
 }
 
-fn dynamic_code_cut_zeroes(arr: []?HuffmanEncoding, start_idx: usize, end: usize) ?usize {
-    var match_cnt: usize = 0;
+fn dynamic_code_cut_zeroes(ctx: *CompressContext, codes_done: usize) ?usize {
+    const map = if (codes_done < Flate.ll_symbol_max) ctx.ll_enc_map
+                else ctx.d_enc_map;
+
+    const end = if (codes_done < Flate.ll_symbol_max) Flate.ll_symbol_max
+                else Flate.d_symbol_max;
+
+    // Look for RLE matches from the current index
+    const start_idx = if (codes_done < Flate.ll_symbol_max) codes_done
+                      else codes_done - Flate.ll_symbol_max;
+
+    var match_cnt: usize = 1;
     while (start_idx + match_cnt < end) {
-        if (arr[start_idx + match_cnt]) |_| { // Not zero
-            break;
+        if (map[start_idx + match_cnt]) |_| { // Not zero
+            return null;
         }
         else {
             match_cnt += 1;
@@ -765,7 +772,6 @@ fn dynamic_code_lookahead_eql(ctx: *CompressContext, start_idx: usize, value: u4
                     break :blk enc.bit_shift;
                 }
             }
-
             break :blk 0;
         };
 
@@ -774,6 +780,7 @@ fn dynamic_code_lookahead_eql(ctx: *CompressContext, start_idx: usize, value: u4
 
         if (match_cnt == match_cnt_max) break;
     }
+
     return match_cnt;
 }
 
