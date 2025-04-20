@@ -480,6 +480,13 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
     ll_freq[256] = 1;
     ll_cnt += 1;
 
+    // If there are no back-references, add one occurrence of distance 0 so
+    // that we are able to construct a minimal table.
+    if (d_cnt == 0) {
+        d_freq[0] = 1;
+        d_cnt += 1;
+    }
+
     try huffman_build_encoding(ctx.allocator, &ctx.ll_enc_map, ll_freq, ll_cnt);
     try huffman_build_encoding(ctx.allocator, &ctx.d_enc_map, d_freq, d_cnt);
 }

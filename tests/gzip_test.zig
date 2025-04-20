@@ -38,8 +38,8 @@ fn check_z7_ok(ctx: *TestContext) !void {
         &ctx.in,
         &ctx.compressed,
         ctx.mode.?,
-        0, // XXX: gzstat.py does not handle gzip flags
-        // @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
+        // XXX: gzstat.py does not handle gzip flags
+        @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
     );
 
     try ctx.log_result(try ctx.compressed.getPos());
@@ -114,29 +114,29 @@ fn runall(inputfile: []const u8, mode: FlateCompressMode) !void {
     try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go, mode);
 }
 
-// test "Gzip check simple text" {
-//     try runall("tests/testdata/helloworld.txt", FlateCompressMode.BEST_SPEED);
-// }
+test "Gzip check simple text" {
+    try runall("tests/testdata/helloworld.txt", FlateCompressMode.BEST_SPEED);
+}
 
-// test "Gzip check short simple text" {
-//     try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SPEED);
-// }
+test "Gzip check short simple text" {
+    try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SPEED);
+}
 
 test "Gzip check longer simple text" {
     try runall("tests/testdata/flate_test.txt", FlateCompressMode.BEST_SPEED);
 }
 
-// test "Gzip check 9001 repeated characters" {
-//     try runall("tests/testdata/over_9000_a.txt", FlateCompressMode.BEST_SPEED);
-// }
+test "Gzip check 9001 repeated characters" {
+    try runall("tests/testdata/over_9000_a.txt", FlateCompressMode.BEST_SPEED);
+}
 
-// test "Gzip check rfc1951.txt" {
-//     try runall("tests/testdata/rfc1951.txt", FlateCompressMode.BEST_SPEED);
-// }
+test "Gzip check rfc1951.txt" {
+    try runall("tests/testdata/rfc1951.txt", FlateCompressMode.BEST_SPEED);
+}
 
-// test "Gzip on random data" {
-//     try runall(TestContext.random_label, FlateCompressMode.BEST_SPEED);
-// }
+test "Gzip on random data" {
+    try runall(TestContext.random_label, FlateCompressMode.BEST_SPEED);
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
