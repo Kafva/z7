@@ -24,8 +24,8 @@ pub const TestContext = struct {
     label: []const u8,
     mode: ?FlateCompressMode,
 
-    /// Maximum input/output file size to handle (0.5 MB)
-    const max_size = 512*1024;
+    /// Maximum input/output file size to handle (7 MB)
+    const max_size = 7*1024*1024;
     pub const random_label = "RANDOM";
 
     pub fn init(

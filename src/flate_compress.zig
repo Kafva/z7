@@ -56,9 +56,12 @@ const CompressContext = struct {
 /// Integer representation needs to match enums in Golang for unit tests!
 ///   src/compress/flate/deflate.go
 pub const FlateCompressMode = enum(u8) {
-    NO_COMPRESSION = 0,
-    BEST_SPEED = 1,
-    BEST_SIZE = 9,
+    /// Only block type-0
+    NO_COMPRESSION = 0,   
+    /// Prefer block type-1
+    BEST_SPEED = 1,    
+    /// Prefer block type-2
+    BEST_SIZE = 9,        
 };
 
 pub fn compress(
@@ -172,6 +175,14 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
             longest_match_length = match_length;
             longest_match_distance = (window_length - (ring_offset-1)) + match_length;
 
+            if (ctx.processed_bytes == end) {
+                // Reached end of block, write queue will not fit more content
+                log.debug(@src(), "Write queue filled [{d}/{d}]", .{
+                    ctx.processed_bytes - ctx.block_start,
+                    block_length,
+                });
+                break;
+            }
             if (longest_match_length == window_length) {
                 // Matched entire lookahead
                 break;
@@ -250,11 +261,11 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
         .NO_COMPRESSION => FlateBlockType.NO_COMPRESSION,
-        .BEST_SPEED => FlateBlockType.DYNAMIC_HUFFMAN,
+        .BEST_SPEED => FlateBlockType.FIXED_HUFFMAN,
         else =>
             //@enumFromInt(ctx.rng.random().intRangeAtMost(u2, 0, 3)),
-            @enumFromInt(ctx.block_cnt % 2)
-            //FlateBlockType.FIXED_HUFFMAN
+            //@enumFromInt(ctx.block_cnt % 2),
+            FlateBlockType.DYNAMIC_HUFFMAN,
     };
     const btype: u3 = @intFromEnum(ctx.block_type);
 
@@ -314,6 +325,10 @@ fn queue_symbol(
     longest_match_length: u16,
     longest_match_distance: u16,
 ) !void {
+    if (ctx.write_queue_raw_index + lookahead_end > Flate.block_length_max) {
+        return FlateError.OutOfQueueSpace;
+    }
+
     // Save everything for the raw write queue
     for (0..lookahead_end) |i| {
         ctx.write_queue_raw[ctx.write_queue_raw_index] = ctx.lookahead[i];
@@ -547,7 +562,7 @@ fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
         codes_done += if (cl_sym.repeat_length == 0) 1 else cl_sym.repeat_length;
         prev_bit_length = bit_length;
 
-        log.debug(@src(), "[{d: >3}/{d: >3}] Enqueued: {any}", .{
+        log.trace(@src(), "[{d: >3}/{d: >3}] Enqueued: {any}", .{
             codes_done,
             Flate.ll_symbol_max + Flate.d_symbol_max,
             cl_sym,
@@ -816,7 +831,7 @@ fn dynamic_code_write_cl_header(ctx: *CompressContext, cl_symbols_total: usize) 
         if (ctx.cl_enc_map[cl_idx]) |v| {
             // XXX: Write the length of the encoding
             try write_bits(ctx, u3, @truncate(v.bit_shift), 3);
-            log.debug(@src(), "Wrote CL header code: {d} => 0b{b} ({d})", .{
+            log.trace(@src(), "Wrote CL header code: {d} => 0b{b} ({d})", .{
                 cl_idx, v.bits, v.bit_shift
             });
         }
@@ -836,13 +851,13 @@ fn dynamic_code_write_cl_symbol(ctx: *CompressContext, sym: ClSymbol) !void {
         try write_bits_be(ctx, u4, @truncate(enc.bits), enc.bit_shift);
 
         if (sym.value <= 15) {
-            log.debug(@src(), "Wrote CL symbol: {d} => {any}", .{
+            log.trace(@src(), "Wrote CL symbol: {d} => {any}", .{
                 sym.value,
                 enc
             });
         }
         else {
-            log.debug(@src(), "Wrote CL symbol: {d} => {any} [repeat: {d}]", .{
+            log.trace(@src(), "Wrote CL symbol: {d} => {any} [repeat: {d}]", .{
                 sym.value,
                 enc,
                 sym.repeat_length
@@ -891,8 +906,8 @@ fn write_bits_be(
 ) !void {
     const V = switch (T) {
         u9 => u4,
-        u8, u7 => u3,
-        u6, u5, u4, u3 => u2,
+        u8, u7, u6, u5 => u3,
+        u4, u3 => u2,
         else => u1
     };
     for (1..num_bits) |i_usize| {

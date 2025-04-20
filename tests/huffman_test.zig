@@ -3,7 +3,7 @@ const z7 = @import("z7");
 
 const TestContext = @import("context_test.zig").TestContext;
 
-const HuffmanTreeNode = z7.huffman.HuffmanTreeNode;
+const HuffmanTreeNode = z7.huffman_compress.HuffmanTreeNode;
 const compress = z7.huffman_compress.compress;
 const decompress = z7.huffman_decompress.decompress;
 

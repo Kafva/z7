@@ -6,7 +6,7 @@ const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const HuffmanError = @import("huffman.zig").HuffmanError;
 const color_base = @import("huffman.zig").color_base;
 
-const HuffmanTreeNode = struct {
+pub const HuffmanTreeNode = struct {
     /// Only leaf nodes contain a character
     value: ?u16,
     freq: usize,
