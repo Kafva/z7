@@ -356,20 +356,21 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
     // Reconstruct the decoding map for the CL symbols
     var cl_code_lengths = [_]u4{0}**Flate.cl_symbol_max;
     for (0..cl_symbols_total) |i| {
-        cl_code_lengths[Flate.cl_code_order[i]] = try read_bits(ctx, u3, 3);
+        const bit_len = try read_bits(ctx, u3, 3);
+        cl_code_lengths[Flate.cl_code_order[i]] = bit_len;
     }
     try reconstruct_canonical_code(
         &ctx.allocator,
         &ctx.cl_dec_map,
         &cl_code_lengths,
-        cl_symbols_total
+        Flate.cl_symbol_max
     );
 
     // Decode the stream of CL symbols into actual code lengths
     // that we can use to reconstruct the LL and DIST Huffman codes.
     var ll_code_lengths = [_]u4{0}**Flate.ll_symbol_max;
     var d_code_lengths = [_]u4{0}**Flate.d_symbol_max;
-    try dynamic_code_decode_cl_symbols(
+    try dynamic_code_decompress_cl_symbols(
         ctx,
         &ll_code_lengths,
         &d_code_lengths,
@@ -382,7 +383,7 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
         &ctx.allocator,
         &ctx.ll_dec_map,
         &ll_code_lengths,
-        ll_symbols_total,
+        Flate.ll_symbol_max,
     );
 
     // Reconstruct the decoding map for the distance symbols
@@ -390,13 +391,13 @@ fn dynamic_code_decompress_metadata(ctx: *DecompressContext) !void {
         &ctx.allocator,
         &ctx.d_dec_map,
         &d_code_lengths,
-        d_symbols_total
+        Flate.d_symbol_max,
     );
 
     log.debug(@src(), "Done reading Huffman metadata for block #{d}", .{ctx.block_cnt});
 }
 
-fn dynamic_code_decode_cl_symbols(
+fn dynamic_code_decompress_cl_symbols(
     ctx: *DecompressContext,
     ll_code_lengths: *[Flate.ll_symbol_max]u4,
     d_code_lengths: *[Flate.d_symbol_max]u4,
@@ -414,6 +415,7 @@ fn dynamic_code_decode_cl_symbols(
         const bit = read_bits(ctx, u1, 1) catch {
             break;
         };
+
         if (enc.bit_shift == 15) {
             return HuffmanError.BadEncoding;
         }
@@ -436,7 +438,6 @@ fn dynamic_code_decode_cl_symbols(
                         d_code_lengths.*[codes_done - ll_symbols_total] = bit_len;
                     }
                     prev_bit_length = bit_len;
-                    codes_done += 1;
                 },
                 16 => {
                     const bits = read_bits(ctx, u8, 2) catch {
@@ -468,17 +469,24 @@ fn dynamic_code_decode_cl_symbols(
             }
 
             if (repeat_length) |repeat| {
+                log.debug(@src(), "[{d}] Symbol {d} [repeat {d}]", .{codes_done, v, repeat});
                 if (codes_done < ll_symbols_total) {
                     for (0..repeat) |_| {
                         ll_code_lengths.*[codes_done] = repeat_value;
+                        codes_done += 1;
                     }
                 }
                 else {
                     for (0..repeat) |_| {
                         d_code_lengths.*[codes_done - ll_symbols_total] = repeat_value;
+                        codes_done += 1;
                     }
                 }
-                codes_done += repeat;
+
+            }
+            else {
+                log.debug(@src(), "[{d}] Symbol {d}", .{codes_done, v});
+                codes_done += 1;
             }
 
             enc.bits = 0;

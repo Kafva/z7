@@ -326,7 +326,6 @@ pub const RangeSymbol = struct {
 };
 
 pub const FlateError = error {
-    NotImplemented,
     UnexpectedBlockType,
     UnexpectedEof,
     InvalidLiteralLength,
