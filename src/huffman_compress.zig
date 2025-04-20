@@ -219,7 +219,7 @@ fn build_huffman_tree(
         index += 1;
         std.sort.insertion(HuffmanTreeNode, queue[0..index], {}, HuffmanTreeNode.greater_than);
     }
-    log.debug(@src(), "Initial node count: {}", .{symbol_count});
+    log.debug(@src(), "{{0..{d}}}: Initial node count: {}", .{ctx.symbol_max, symbol_count});
 
     // Create the tree, we need to make sure that we do not grow
     // the tree deeper than 15 levels so that every leaf can be encoded
@@ -251,7 +251,7 @@ fn build_huffman_tree(
         log.debug(@src(), "Successfully constructed Huffman tree (maxdepth {})", .{i});
         break;
     }
-    log.debug(@src(), "Complete tree node count: {}", .{ctx.array.items.len});
+    log.debug(@src(), "{{0..{d}}}: Complete tree node count: {}", .{ctx.symbol_max, ctx.array.items.len});
 
     // Build the canonical version of the encoding
     try build_canonical_encoding(ctx);
@@ -268,10 +268,10 @@ fn build_huffman_tree(
     }
 
     if (ctx.array.items.len > 0) {
-        log.debug(@src(), "Non-canonical tree:", .{});
+        log.debug(@src(), "{{0..{d}}}: Non-canonical tree:", .{ctx.symbol_max});
         dump_tree(ctx, 0, ctx.array.items.len - 1);
 
-        log.debug(@src(), "Canonical encodings:", .{});
+        log.debug(@src(), "{{0..{d}}}: Canonical encodings:", .{ctx.symbol_max});
         dump_encodings(ctx.enc_map);
     }
 

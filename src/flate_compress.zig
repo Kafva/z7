@@ -484,36 +484,20 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
     try huffman_build_encoding(ctx.allocator, &ctx.d_enc_map, d_freq, d_cnt);
 }
 
+/// `ll_enc_map` is an array of {0..286} items that map to 'Huffman bits'
+/// `d_enc_map` is an array of {0..32} items that map to 'Huffman bits'
+/// In this function we encode the *LENGTH* of the 'Huffman bits' for each
+/// of these 286 + 32 entries.
+/// The decompressor can recreate the canoncial encoding from these lengths.
+/// The *LENGTH* can be {0..15}, we use `ClSymbol` objects instead of encoding
+/// the lengths unmodified.
 fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
-    // Each enc_map is simply a 'Symbol -> Huffman bits' mapping
-    // The decompresser knows the order of the symbols, it does not know
-    // the length of each 'Huffman bits' sequence
-    //
-    // We do not transmit the actual Huffman bits, we transfer the *LENGTH* for
-    // the 'Huffman bits' of each symbol. Recall that since the Huffman code is
-    // canonical the decompressor can reconstruct the Huffman code by just
-    // knowing which symbols have which lengths, the length values are
-    // limited to be 0-15 (the possible range of 'Huffman bits').
-
-    // Instead of transmitting the length for each symbol encoding ("code
-    // length") in order as is, We use an encoding for these, this is the "cl code"
-    //
-    // [k bits]     0-15: Encodes the length 0 - 15 raw
-    // [k + 2 bits] 16: Repeat the previous (0-15) length x + 3 times (x being the two extra bits)
-    // [k + 3 bits] 17: Repeat the '0 length' x + 3 times (x being the three extra bits)
-    // [k + 7 bits] 18: Repeat the '0 length' x + 11 times (x being the seven extra bits)
-    //
-    // 'k' is dependant on the Huffman code that is generated.
-    // +3 etc. makes sense since we would never want to encode less than 3 repetitions of something.
-    //
-    // NOW, we don't just write the CL symbols as is to the output stream, no, we check the
-    // frequency for each CL symbol (i.e. 0-18) and construct a new Huffman code for these,
-    // THIS is what we write to the output stream.
     var ll_cuts: usize = 0;
     var d_cuts: usize = 0;
-
     var codes_done: usize = 0;
     var bit_length: u4 = 0;
+    var match_cnt: usize = 0;
+    var prev_bit_length: ?u4 = null;
 
     while (codes_done < Flate.ll_symbol_max + Flate.d_symbol_max) {
         bit_length = blk: {
@@ -546,12 +530,15 @@ fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
             }
         }
 
-        const match_cnt = dynamic_code_lookahead_eql(ctx, codes_done, bit_length);
+        if (prev_bit_length) |b| {
+            match_cnt = dynamic_code_lookahead_eql(ctx, codes_done, b);
+        }
         const cl_sym = try ClSymbol.init(bit_length, match_cnt);
         ctx.write_queue_cl[ctx.write_queue_cl_index] = cl_sym;
         ctx.write_queue_cl_index += 1;
 
         codes_done += if (cl_sym.repeat_length == 0) 1 else cl_sym.repeat_length;
+        prev_bit_length = bit_length;
 
         log.debug(@src(), "[{d: >3}/{d: >3}] Enqueued: {any}", .{
             codes_done,
@@ -560,7 +547,12 @@ fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
         });
     }
 
-    // Calculate the frequency of each `ClSymbol`
+    return [_]usize{ ll_cuts, d_cuts };
+}
+
+/// Calculate the frequency of each `ClSymbol` from the queue and build
+/// a Huffman encoding into `cl_enc_map`.
+fn dynamic_code_gen_enc_map_cl(ctx: *CompressContext) !void {
     var cl_freq = try ctx.allocator.alloc(usize, Flate.cl_symbol_max);
     var cl_cnt: usize = 0;
     @memset(cl_freq, 0);
@@ -573,8 +565,6 @@ fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
     }
 
     try huffman_build_encoding(ctx.allocator, &ctx.cl_enc_map, cl_freq, cl_cnt);
-
-    return [_]usize{ ll_cuts, d_cuts };
 }
 
 fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
@@ -584,6 +574,10 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
 
     // Enqueue the CL symbols used to encode the `ll_enc_map` and `d_enc_map`
     const cuts = try dynamic_code_enqueue_cl_symbols(ctx);
+
+    // Generate `cl_enc_map` based on the current `write_queue_cl` content.
+    try dynamic_code_gen_enc_map_cl(ctx);
+
     // Determine how many zeros to cut of from the end of the CL header
     const cl_cut = try dynamic_code_get_cl_header_cut(ctx);
 
@@ -753,15 +747,19 @@ fn dynamic_code_cut_zeroes_cl_header(ctx: *CompressContext, start_idx: usize) ?u
 }
 
 /// Return the number of symbols starting at `start_idx` that match the
-/// provided `value`. We look in the `ll_enc_map` followed by `d_enc_map` for
+/// provided `to_match`. We look in the `ll_enc_map` followed by `d_enc_map` for
 /// matches, matches are allowed to overlap between the maps!
-fn dynamic_code_lookahead_eql(ctx: *CompressContext, start_idx: usize, value: u4) usize {
+fn dynamic_code_lookahead_eql(
+    ctx: *CompressContext,
+    start_idx: usize,
+    to_match: u4,
+) usize {
     var match_cnt: usize = 0;
-    const match_cnt_max: usize = if (value == 0) ClSymbol.repeat_zero_max else 6;
+    const match_cnt_max: usize = if (to_match == 0) ClSymbol.repeat_zero_max else 6;
 
     while (start_idx + match_cnt < Flate.ll_symbol_max + Flate.d_symbol_max) {
         const i = start_idx + match_cnt;
-        const v: u4 = blk: {
+        const value: u4 = blk: {
             if (i < Flate.ll_symbol_max) {
                 if (ctx.ll_enc_map[i]) |enc| {
                     break :blk enc.bit_shift;
@@ -775,7 +773,7 @@ fn dynamic_code_lookahead_eql(ctx: *CompressContext, start_idx: usize, value: u4
             break :blk 0;
         };
 
-        if (v == value) match_cnt += 1
+        if (value == to_match) match_cnt += 1
         else break;
 
         if (match_cnt == match_cnt_max) break;
