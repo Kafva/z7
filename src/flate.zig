@@ -356,7 +356,7 @@ pub const Flate = struct {
     ///
     pub const writer_endian = std.builtin.Endian.little;
     /// The minimum length of a match required to use a back reference
-    pub const min_length_match: usize = 3;
+    pub const min_length_match: usize = 4;
     /// Valid matches are between (3..258) characters long, i.e. we actually
     /// only need a u8 to represent this.
     pub const lookahead_length: usize = 258;

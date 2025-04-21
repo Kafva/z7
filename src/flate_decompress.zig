@@ -544,10 +544,10 @@ fn write_backref_match(ctx: *DecompressContext, length: u16, distance: u16) !voi
     for (0..length) |i| {
         // Since we add one byte every iteration the offset is
         // always equal to the distance
-        const c: u8 = try ctx.sliding_window.read_offset_end(distance - 1);
+        const bs: [1]u8 = try ctx.sliding_window.read_offset_end(distance - 1, 1);
         // Write each byte to the output stream AND the the sliding window
-        try write_byte(ctx, c);
-        log.trace(@src(), "backref[{} - {}]: '{c}'", .{distance, i, c});
+        try write_byte(ctx, bs[0]);
+        log.trace(@src(), "backref[{} - {}]: '{c}'", .{distance, i, bs[0]});
     }
 }
 
@@ -582,7 +582,7 @@ fn read_bits_be(ctx: *DecompressContext, num_bits: u16) !u16 {
 }
 
 fn write_byte(ctx: *DecompressContext, c: u8) !void {
-    ctx.sliding_window.push(c);
+    _ = ctx.sliding_window.push(c);
     try ctx.writer.writeByte(c);
     util.print_char(log.debug, "Output write", c);
     ctx.written_bytes += 1;

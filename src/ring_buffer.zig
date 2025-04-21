@@ -23,7 +23,7 @@ pub fn RingBuffer(comptime T: type) type {
             };
         }
 
-        pub fn len(self: *@This()) usize {
+        pub fn len(self: @This()) usize {
             if (self.end_index) |end_index| {
                 const data_len_i: i32 = @intCast(self.data.len);
                 const start_index_i: i32 = @intCast(self.start_index);
@@ -39,10 +39,10 @@ pub fn RingBuffer(comptime T: type) type {
 
         /// Offset 0 will return the latest item at `end_index`
         /// Offset 1 will return the item one index before `end_index`
-        /// etc.
-        pub fn read_offset_end(self: *@This(), backward_offset: i32) !T {
+        /// With `cnt=2`, Offset 1 would return [end_index - 1..end_index] inclusive.
+        pub fn read_offset_end(self: *@This(), backward_offset: i32, comptime cnt: usize) ![cnt]T {
             if (self.end_index) |end_index| {
-                const length = self.len();
+                const length = @constCast(self).len();
                 const data_len_i: i32 = @intCast(self.data.len);
                 const end_index_i: i32 = @intCast(end_index);
 
@@ -51,9 +51,14 @@ pub fn RingBuffer(comptime T: type) type {
                 }
 
                 const offset_start_index_i: i32 = end_index_i - backward_offset;
-                const ring_index: usize = @intCast(@mod(offset_start_index_i, data_len_i));
 
-                return self.data[ring_index];
+                var r = [_]T{0}**cnt;
+                for (0..cnt) |i| {
+                    const i_i: i32 = @intCast(i);
+                    const ri: usize = @intCast(@mod(offset_start_index_i + i_i, data_len_i));
+                    r[i] = self.data[ri];
+                }
+                return r;
             }
             else {
                 return RingBufferError.EmptyRead;
@@ -85,16 +90,18 @@ pub fn RingBuffer(comptime T: type) type {
 
         /// Push a new item onto the end of the ring buffer, if the buffer is full,
         /// overwrite the oldest item.
-        pub fn push(self: *@This(), item: T) void {
+        pub fn push(self: *@This(), item: T) ?T {
             if (self.end_index) |end_index| {
                 self.end_index = (end_index + 1) % self.data.len;
 
+                const old = self.data[self.end_index.?];
                 self.data[self.end_index.?] = item;
 
                 // We overwrote the oldest value, move the start_index forward.
                 if (self.end_index.? == self.start_index) {
                     self.start_index += 1;
                     self.start_index %= self.data.len;
+                    return old;
                 }
             }
             else {
@@ -102,6 +109,8 @@ pub fn RingBuffer(comptime T: type) type {
                 self.end_index = 0;
                 self.data[self.end_index.?] = item;
             }
+
+            return null;
         }
     };
 }
