@@ -398,7 +398,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
                               else longest_match_length;
         // Update the sliding window with the characters from the lookahead
         for (0..lookahead_end) |i| {
-            ctx.sliding_window.push(ctx.lookahead[i]);
+            _ = ctx.sliding_window.push(ctx.lookahead[i]);
         }
 
         // Save the symbols for the characters in the lookahead
@@ -451,7 +451,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // Populate the write_queue
     // We will always have a saved `next_byte` after this call except for
     // when we reach eof in the input stream.
-    const done = try lz(ctx, block_length);
+    const done = try lzss(ctx, block_length);
 
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
