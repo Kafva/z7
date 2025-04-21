@@ -195,19 +195,21 @@ fn lz(ctx: *CompressContext, block_length: usize) !bool {
     };
     var done = false;
 
-    while (!done and ctx.processed_bytes < lzctx.end) {
-        // Read new byte
+    // Read initial 4 bytes to fill up `bytes`
+    for (0..4) |_| {
         const b = read_byte(ctx) catch {
             done = true;
             break;
         };
+        _ = lzctx.bytes.push(b);
+        try queue_symbol3(ctx, b);
+    }
 
-        if (lzctx.bytes.len() < Flate.min_length_match) {
-            // Go on until we have enough for a u32
-            _ = lzctx.bytes.push(b);
-            try queue_symbol3(ctx, b);
-            continue;
-        }
+    while (!done and ctx.processed_bytes < lzctx.end) {
+        const b = read_byte(ctx) catch {
+            done = true;
+            break;
+        };
         const key = try lz_push(ctx, &lzctx, b);
 
         if (lzctx.lookup_table.get(key)) |item| {
@@ -252,7 +254,6 @@ fn lz(ctx: *CompressContext, block_length: usize) !bool {
             try queue_symbol3(ctx, b);
         }
     }
-
 
     return done;
 }
