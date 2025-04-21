@@ -108,7 +108,7 @@ fn check_ref_ok(ctx: *TestContext) !void {
 ////////////////////////////////////////////////////////////////////////////////
 
 // test "Gzip check longer simple text" {
-//     try run(inputfile, "gzip-z7-only", check_z7_ok, mode);
+//     try run("tests/testdata/flate_test.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
 // }
 
 ////////////////////////////////////////////////////////////////////////////////

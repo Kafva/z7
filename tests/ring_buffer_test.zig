@@ -13,6 +13,7 @@ test "Ring buffer push" {
     for (0..12) |i| {
         _ = rbuf.push(@truncate(i));
     }
+    try std.testing.expectEqual(10, rbuf.count());
 
     const expected = [_]u8{10,11,2, 3,4,5, 6,7,8, 9};
     // end_index: ~~~~~~~~~~~~^
@@ -32,12 +33,13 @@ test "Ring buffer read" {
     for (0..12) |i| {
         _ = rbuf.push(@truncate(i));
     }
+    try std.testing.expectEqual(10, rbuf.count());
 
     try std.testing.expectEqual(.{11}, try rbuf.read_offset_end(0,1));
     try std.testing.expectEqual(.{10}, try rbuf.read_offset_end(1,1));
-    try std.testing.expectEqual(.{9}, try rbuf.read_offset_end(2,1));
+    try std.testing.expectEqual(.{9,10}, try rbuf.read_offset_end(2,2));
     try std.testing.expectEqual(.{8}, try rbuf.read_offset_end(3,1));
-    try std.testing.expectEqual(.{7}, try rbuf.read_offset_end(4,1));
+    try std.testing.expectEqual(.{7,8,9}, try rbuf.read_offset_end(4,3));
 }
 
 test "Ring buffer OOB read" {
@@ -55,10 +57,16 @@ test "Ring buffer OOB read" {
     for (0..2) |i| {
         _ = rbuf.push(@truncate(i));
     }
+    try std.testing.expectEqual(2, rbuf.count());
 
     try std.testing.expectError(
          RingBufferError.InvalidOffsetRead,
          rbuf.read_offset_end(2,1)
+    );
+
+    try std.testing.expectError(
+         RingBufferError.InvalidOffsetRead,
+        rbuf.read_offset_end(1,3)
     );
 
     _ = rbuf.push(@truncate(2));

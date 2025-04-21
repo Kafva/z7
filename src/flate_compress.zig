@@ -338,10 +338,13 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         var longest_match_length: u16 = 0;
         var longest_match_distance: u16 = 0;
         // Look for matches in the sliding_window
-        const window_length: u16 = @truncate(ctx.sliding_window.len());
+        const window_last_index: u16 = blk: {
+            const c: u16 = @truncate(ctx.sliding_window.count());
+            break :blk if (c == 0) c else c - 1;
+        };
         var ring_offset: u16 = 0;
 
-        while (ring_offset != window_length) {
+        while (ring_offset != window_last_index) {
             const window_byte: u8 = try ctx.sliding_window.read_offset_start(@as(i32, ring_offset));
             if (ctx.lookahead[match_length] != window_byte) {
                 // Reset and start matching from the beginning of the
@@ -368,7 +371,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
 
             // Update the longest match
             longest_match_length = match_length;
-            longest_match_distance = (window_length - (ring_offset-1)) + match_length;
+            longest_match_distance = (window_last_index - (ring_offset-1)) + match_length;
 
             if (ctx.processed_bytes == end) {
                 // Reached end of block, write queue will not fit more content
@@ -378,7 +381,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
                 });
                 break;
             }
-            if (longest_match_length == window_length) {
+            if (longest_match_length == window_last_index) {
                 // Matched entire lookahead
                 break;
             }
@@ -411,7 +414,7 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
 
         // Set starting byte for next iteration
         if (longest_match_length == 0 or
-            longest_match_length == window_length or
+            longest_match_length == window_last_index or
             longest_match_length == Flate.lookahead_length - 1) {
             // We need a new byte
             ctx.lookahead[0] = read_byte(ctx) catch {
@@ -452,6 +455,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // We will always have a saved `next_byte` after this call except for
     // when we reach eof in the input stream.
     const done = try lzss(ctx, block_length);
+    //const done = try lz(ctx, block_length);
 
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
