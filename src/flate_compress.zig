@@ -6,14 +6,14 @@ const Flate = @import("flate.zig").Flate;
 const FlateBlockType = @import("flate.zig").FlateBlockType;
 const FlateError = @import("flate.zig").FlateError;
 const FlateSymbol = @import("flate.zig").FlateSymbol;
-const Token = @import("flate.zig").Token;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const ClSymbol = @import("flate.zig").ClSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
+const lz = @import("lz.zig").lz;
 
-const CompressContext = struct {
+pub const CompressContext = struct {
     allocator: std.mem.Allocator,
     rng: std.Random.Xoshiro256,
     mode: FlateCompressMode,
@@ -119,197 +119,6 @@ pub fn compress(
         "Compression done: {} -> {} bytes",
         .{ctx.processed_bytes, @divFloor(ctx.written_bits, 8)}
     );
-}
-
-const LzItem = struct {
-    next: ?u32,
-    backward_offset: usize
-};
-
-const LzContext = struct {
-    start: usize,
-    end: usize,
-    /// Map from a past 4 byte value in the input stream onto the
-    /// next 4 byte value that occured in the input stream
-    lookup_table: std.AutoHashMap(u32, LzItem),
-    queue: RingBuffer(u32),
-    bytes: RingBuffer(u8),
-    head_item: ?LzItem,
-    head_key: u32,
-};
-
-fn lz_push(ctx: *CompressContext, lzctx: *LzContext, b: u8) !u32 {
-    // Add the new byte to the 4 byte buffer
-    _ = lzctx.bytes.push(b);
-
-    const bs = try lzctx.bytes.read_offset_end(Flate.min_length_match, Flate.min_length_match);
-    const key = bytes_to_u32(bs);
-
-    // Push the new u32 key into the queue
-    const delkey = lzctx.queue.push(key);
-    if (delkey) |k| {
-        // Delete oldest key if necessary
-        if (!lzctx.lookup_table.remove(k)) {
-            log.err(@src(), "Failed to remove key: {d}", .{k});
-            return FlateError.InternalError;
-        }
-    }
-
-    // Populate the lookup table
-    const lzitem = LzItem {
-        .next = null,
-        .backward_offset = ctx.processed_bytes - lzctx.start,
-    };
-
-    if (lzctx.head_item) |head| {
-        const new_head = LzItem {
-            .next = key,
-            .backward_offset = head.backward_offset
-        };
-        try lzctx.lookup_table.put(lzctx.head_key, new_head);
-
-        lzctx.head_key = key;
-        lzctx.head_item = lzitem;
-        try lzctx.lookup_table.put(key, lzitem);
-    }
-    else {
-        lzctx.head_key = key;
-        try lzctx.lookup_table.put(lzctx.head_key, lzitem);
-    }
-
-    return key;
-}
-
-fn lz(ctx: *CompressContext, block_length: usize) !bool {
-    // Restriction: Backreferences can not go back more than 32K
-    // Backreferences are allowed to go back into the previous block, (so we
-    // keep `read_window` bytes from previous invocation)
-    var lzctx = LzContext {
-        .start = ctx.processed_bytes,
-        .end = ctx.processed_bytes + block_length,
-        .lookup_table = std.AutoHashMap(u32, LzItem).init(ctx.allocator),
-        .queue = try RingBuffer(u32).init(ctx.allocator, Flate.window_length),
-        .bytes = try RingBuffer(u8).init(ctx.allocator, Flate.min_length_match),
-        .head_item = null,
-        .head_key = 0,
-    };
-    var done = false;
-
-    // Read initial 4 bytes to fill up `bytes`
-    for (0..4) |_| {
-        const b = read_byte(ctx) catch {
-            done = true;
-            break;
-        };
-        _ = lzctx.bytes.push(b);
-        try queue_symbol3(ctx, b);
-    }
-
-    while (!done and ctx.processed_bytes < lzctx.end) {
-        const b = read_byte(ctx) catch {
-            done = true;
-            break;
-        };
-        const key = try lz_push(ctx, &lzctx, b);
-
-        if (lzctx.lookup_table.get(key)) |item| {
-            // OK: 'key' is a backreference match 
-            const match_backward_offset = item.backward_offset;
-            var match_length = Flate.min_length_match;
-
-            // Keep on checking the 'next' pointer until the match ends
-            var iter_item: LzItem = item;
-            while (iter_item.next) |next| {
-                const next_bs = u32_to_bytes(next);
-
-                for (0..lzctx.bytes.data.len) |i| {
-                    const c = read_byte(ctx) catch {
-                        done = true;
-                        break;
-                    };
-                    _ = try lz_push(ctx, &lzctx, c);
-
-                    if (next_bs[i] != c) {
-                        break;
-                    }
-                    match_length += 1;
-                }
-                if (lzctx.lookup_table.get(next)) |v| {
-                    iter_item = v;
-                }
-                else {
-                    break;
-                }
-            }
-
-            // OK: insert the match into the write_queue
-            try queue_symbol2(
-                ctx,
-                @truncate(match_length),
-                @truncate(match_backward_offset)
-            );
-        }
-        else {
-            // No match: queue regular literal symbol into write queue
-            try queue_symbol3(ctx, b);
-        }
-    }
-
-    return done;
-}
-
-fn u32_to_bytes(int: u32) [4]u8 {
-    return [_]u8{
-       @as(u8, @truncate((int & 0xff00_0000) >> 24)),
-       @as(u8, @truncate((int & 0x00ff_0000) >> 16)),
-       @as(u8, @truncate((int & 0x0000_ff00) >> 8)),
-       @as(u8, @truncate((int & 0x0000_00ff)))
-    };
-}
-
-fn bytes_to_u32(bs: [4]u8) u32 {
-    return @as(u32, bs[0]) << 24 |
-           @as(u32, bs[1]) << 16 |
-           @as(u32, bs[2]) << 8 |
-           @as(u32, bs[3]);
-}
-
-fn queue_symbol2(
-    ctx: *CompressContext,
-    match_length: u16,
-    match_backward_offset: u16,
-) !void {
-    if (ctx.write_queue_index + 2 >= Flate.block_length_max) {
-        return FlateError.OutOfQueueSpace;
-    }
-
-    // Add the length symbol for the back-reference
-    const lenc = RangeSymbol.from_length(match_length);
-    const lsymbol = FlateSymbol { .length = lenc };
-    ctx.write_queue[ctx.write_queue_index] = lsymbol;
-    ctx.write_queue_index += 1;
-    log.debug(@src(), "Queued: {any}", .{lenc});
-
-    // Add the distance symbol for the back-reference
-    const denc = RangeSymbol.from_distance(match_backward_offset);
-    const dsymbol = FlateSymbol { .distance = denc };
-    ctx.write_queue[ctx.write_queue_index] = dsymbol;
-    ctx.write_queue_index += 1;
-    log.debug(@src(), "Queued: {any}", .{denc});
-}
-
-fn queue_symbol3(
-    ctx: *CompressContext,
-    byte: u8,
-) !void {
-    if (ctx.write_queue_index + 1 >= Flate.block_length_max) {
-        return FlateError.OutOfQueueSpace;
-    }
-
-    const symbol = FlateSymbol { .char = byte };
-    ctx.write_queue[ctx.write_queue_index] = symbol;
-    ctx.write_queue_index += 1;
-    log.debug(@src(), "Queued: {any}", .{symbol});
 }
 
 /// Go over `block_length` bytes in the input stream with lzss and store
@@ -454,8 +263,8 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // Populate the write_queue
     // We will always have a saved `next_byte` after this call except for
     // when we reach eof in the input stream.
-    const done = try lzss(ctx, block_length);
-    //const done = try lz(ctx, block_length);
+    //const done = try lzss(ctx, block_length);
+    const done = try lz(ctx, block_length);
 
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
@@ -1122,7 +931,7 @@ fn write_bits_be(
     try write_bits(ctx, u1, bit, 1);
 }
 
-fn read_byte(ctx: *CompressContext) !u8 {
+pub fn read_byte(ctx: *CompressContext) !u8 {
     const b = try ctx.reader.readByte();
     util.print_char(log.trace, "Input read", b);
     ctx.processed_bytes += 1;
