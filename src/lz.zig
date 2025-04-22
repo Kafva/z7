@@ -12,6 +12,7 @@ const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const read_byte = @import("flate_compress.zig").read_byte;
 const queue_symbol2 = @import("flate_compress.zig").queue_symbol2;
 const queue_symbol3 = @import("flate_compress.zig").queue_symbol3;
+const queue_symbol_raw = @import("flate_compress.zig").queue_symbol_raw;
 
 pub const LzContext = struct {
     /// Pointer back to the main compression context
@@ -75,6 +76,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
         // This literal will never take part in a match, time to queue it as a raw byte
         if (lit) |l| {
             try queue_symbol3(ctx.cctx, l);
+            try queue_symbol_raw(ctx.cctx, l);
         }
         else {
             // We have not filled the lookahead yet, go again
@@ -97,6 +99,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
     // Queue up all literals that are left
     while (ctx.lookahead.prune(1)) |lit| {
         try queue_symbol3(ctx.cctx, lit);
+        try queue_symbol_raw(ctx.cctx, lit);
     }
 
     return done;
@@ -120,7 +123,9 @@ fn lz_queue_match(ctx: *LzContext, key: u32, item: LzItem) !bool {
         };
 
         // The oldest byte that we drop here will be part of the back-reference
-        _ = ctx.lookahead.push(new_b.?);
+        if (ctx.lookahead.push(new_b.?)) |b| {
+            try queue_symbol_raw(ctx.cctx, b); // Save for NO_COMPRESSION queue
+        }
 
         const new_bs = try ctx.lookahead.read_offset_end(3, 4);
         const new_key = bytes_to_u32(new_bs);

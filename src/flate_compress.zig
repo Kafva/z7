@@ -427,6 +427,20 @@ pub fn queue_symbol3(
     util.print_char(log.debug, "Queued literal", symbol.char);
 }
 
+pub fn queue_symbol_raw(
+    ctx: *CompressContext,
+    byte: u8,
+) !void {
+    if (ctx.write_queue_raw_index + 1 > Flate.block_length_max) {
+        return FlateError.OutOfQueueSpace;
+    }
+
+    // Save for NO_COMPRESSION queue
+    ctx.write_queue_raw[ctx.write_queue_raw_index] = byte;
+    ctx.write_queue_raw_index += 1;
+}
+
+
 fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void {
     if (block_length > Flate.block_length_max) {
         return FlateError.InvalidBlockLength;
