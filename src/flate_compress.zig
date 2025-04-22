@@ -10,8 +10,10 @@ const RangeSymbol = @import("flate.zig").RangeSymbol;
 const ClSymbol = @import("flate.zig").ClSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
+const LzContext = @import("lz.zig").LzContext;
+const LzItem = @import("lz.zig").LzItem;
+const lz_compress = @import("lz.zig").lz;
 const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
-const lz = @import("lz.zig").lz;
 
 pub const CompressContext = struct {
     allocator: std.mem.Allocator,
@@ -26,6 +28,9 @@ pub const CompressContext = struct {
     written_bits: usize,
     processed_bytes: usize,
     block_start: usize,
+
+    lz: *LzContext,
+
     /// Initial offset into the input stream
     instream_offset: usize,
     /// Left over input byte to use from previous block
@@ -87,6 +92,7 @@ pub fn compress(
         .written_bits = 0,
         .processed_bytes = 0,
         .block_start = 0,
+        .lz = undefined,
         .instream_offset = instream_offset,
         .next_byte = null,
         .read_window = try allocator.alloc(u8, Flate.block_length_max),
@@ -103,6 +109,16 @@ pub fn compress(
         .d_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.d_symbol_max),
         .cl_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.cl_symbol_max),
     };
+    var lz = LzContext {
+        .cctx = &ctx,
+        .start = 0,
+        .end = 0,
+        .lookup_table = std.AutoHashMap(u32, LzItem).init(allocator),
+        .queue = try RingBuffer(u32).init(allocator, Flate.window_length),
+        .lookahead = try RingBuffer(u8).init(allocator, Flate.min_length_match),
+        .head_key = null,
+    };
+    ctx.lz = &lz;
 
     var done = false;
     while (!done) {
@@ -264,7 +280,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // We will always have a saved `next_byte` after this call except for
     // when we reach eof in the input stream.
     //const done = try lzss(ctx, block_length);
-    const done = try lz(ctx, block_length);
+    const done = try lz_compress(ctx.lz, block_length);
 
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
@@ -371,6 +387,44 @@ fn queue_symbol(
         ctx.write_queue[ctx.write_queue_index] = dsymbol;
         ctx.write_queue_index += 1;
     }
+}
+
+pub fn queue_symbol2(
+    ctx: *CompressContext,
+    match_length: u16,
+    match_backward_offset: u16,
+) !void {
+    if (ctx.write_queue_index + 2 >= Flate.block_length_max) {
+        return FlateError.OutOfQueueSpace;
+    }
+
+    // Add the length symbol for the back-reference
+    const lenc = RangeSymbol.from_length(match_length);
+    const lsymbol = FlateSymbol { .length = lenc };
+    ctx.write_queue[ctx.write_queue_index] = lsymbol;
+    ctx.write_queue_index += 1;
+    log.debug(@src(), "Queued length [{d}]: {any}", .{match_length, lenc});
+
+    // Add the distance symbol for the back-reference
+    const denc = RangeSymbol.from_distance(match_backward_offset);
+    const dsymbol = FlateSymbol { .distance = denc };
+    ctx.write_queue[ctx.write_queue_index] = dsymbol;
+    ctx.write_queue_index += 1;
+    log.debug(@src(), "Queued distance [{d}]: {any}", .{match_backward_offset, denc});
+}
+
+pub fn queue_symbol3(
+    ctx: *CompressContext,
+    byte: u8,
+) !void {
+    if (ctx.write_queue_index + 1 >= Flate.block_length_max) {
+        return FlateError.OutOfQueueSpace;
+    }
+
+    const symbol = FlateSymbol { .char = byte };
+    ctx.write_queue[ctx.write_queue_index] = symbol;
+    ctx.write_queue_index += 1;
+    util.print_char(log.debug, "Queued literal", symbol.char);
 }
 
 fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void {

@@ -8,9 +8,24 @@ const FlateError = @import("flate.zig").FlateError;
 const FlateSymbol = @import("flate.zig").FlateSymbol;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
-const read_byte = @import("flate_compress.zig").read_byte;
 
-const LzItem = struct {
+const read_byte = @import("flate_compress.zig").read_byte;
+const queue_symbol2 = @import("flate_compress.zig").queue_symbol2;
+const queue_symbol3 = @import("flate_compress.zig").queue_symbol3;
+
+pub const LzContext = struct {
+    cctx: *CompressContext,
+    start: usize,
+    end: usize,
+    /// Map from a past 4 byte value in the input stream onto the
+    /// next 4 byte value that occured in the input stream
+    lookup_table: std.AutoHashMap(u32, LzItem),
+    queue: RingBuffer(u32),
+    lookahead: RingBuffer(u8),
+    head_key: ?u32,
+};
+
+pub const LzItem = struct {
     next: ?u32,
     start_pos: usize,
 
@@ -36,34 +51,15 @@ const LzItem = struct {
     }
 };
 
-const LzContext = struct {
-    cctx: *CompressContext,
-    start: usize,
-    end: usize,
-    /// Map from a past 4 byte value in the input stream onto the
-    /// next 4 byte value that occured in the input stream
-    lookup_table: std.AutoHashMap(u32, LzItem),
-    queue: RingBuffer(u32),
-    lookahead: RingBuffer(u8),
-    head_key: ?u32,
-};
-
-pub fn lz(cctx: *CompressContext, block_length: usize) !bool {
+pub fn lz(ctx: *LzContext, block_length: usize) !bool {
     // Restriction: Backreferences can not go back more than 32K.
     // Backreferences are allowed to go back into the previous block.
-    var ctx = LzContext {
-        .cctx = cctx,
-        .start = cctx.processed_bytes,
-        .end = cctx.processed_bytes + block_length,
-        .lookup_table = std.AutoHashMap(u32, LzItem).init(cctx.allocator),
-        .queue = try RingBuffer(u32).init(cctx.allocator, Flate.window_length),
-        .lookahead = try RingBuffer(u8).init(cctx.allocator, Flate.min_length_match),
-        .head_key = null,
-    };
     var done = false;
+    ctx.start = ctx.cctx.processed_bytes;
+    ctx.end = ctx.start + block_length;
 
-    while (!done and cctx.processed_bytes < ctx.end) {
-        const b = read_byte(cctx) catch {
+    while (!done and ctx.cctx.processed_bytes < ctx.end) {
+        const b = read_byte(ctx.cctx) catch {
             done = true;
             break;
         };
@@ -92,7 +88,7 @@ pub fn lz(cctx: *CompressContext, block_length: usize) !bool {
             var new_b: ?u8 = null;
             while (iter_item.next) |next| {
                 const next_bs = u32_to_bytes(next);
-                new_b = read_byte(cctx) catch {
+                new_b = read_byte(ctx.cctx) catch {
                     done = true;
                     break;
                 };
@@ -122,7 +118,7 @@ pub fn lz(cctx: *CompressContext, block_length: usize) !bool {
                 // Wait with saving the new key until *after* fetching the next
                 // item, if we actually have a match the value we overwrite
                 // with `lz_save()` will be the next value!
-                try lz_save(&ctx, new_key);
+                try lz_save(ctx, new_key);
             }
 
             // Insert the match into the write_queue
@@ -139,7 +135,7 @@ pub fn lz(cctx: *CompressContext, block_length: usize) !bool {
         }
         else {
             // No match: Save current key into lookup table
-            try lz_save(&ctx, key);
+            try lz_save(ctx, key);
         }
     }
 
@@ -185,44 +181,6 @@ fn lz_save(ctx: *LzContext, key: u32) !void {
 
     // Repoint head to the new entry
     ctx.head_key = key;
-}
-
-fn queue_symbol2(
-    ctx: *CompressContext,
-    match_length: u16,
-    match_backward_offset: u16,
-) !void {
-    if (ctx.write_queue_index + 2 >= Flate.block_length_max) {
-        return FlateError.OutOfQueueSpace;
-    }
-
-    // Add the length symbol for the back-reference
-    const lenc = RangeSymbol.from_length(match_length);
-    const lsymbol = FlateSymbol { .length = lenc };
-    ctx.write_queue[ctx.write_queue_index] = lsymbol;
-    ctx.write_queue_index += 1;
-    log.debug(@src(), "Queued length [{d}]: {any}", .{match_length, lenc});
-
-    // Add the distance symbol for the back-reference
-    const denc = RangeSymbol.from_distance(match_backward_offset);
-    const dsymbol = FlateSymbol { .distance = denc };
-    ctx.write_queue[ctx.write_queue_index] = dsymbol;
-    ctx.write_queue_index += 1;
-    log.debug(@src(), "Queued distance [{d}]: {any}", .{match_backward_offset, denc});
-}
-
-fn queue_symbol3(
-    ctx: *CompressContext,
-    byte: u8,
-) !void {
-    if (ctx.write_queue_index + 1 >= Flate.block_length_max) {
-        return FlateError.OutOfQueueSpace;
-    }
-
-    const symbol = FlateSymbol { .char = byte };
-    ctx.write_queue[ctx.write_queue_index] = symbol;
-    ctx.write_queue_index += 1;
-    util.print_char(log.debug, "Queued literal", symbol.char);
 }
 
 fn log_u32(comptime prefix: []const u8, key: u32) void {
