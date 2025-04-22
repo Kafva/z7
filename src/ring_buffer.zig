@@ -30,7 +30,7 @@ pub fn RingBuffer(comptime T: type) type {
                 const start_index_i: i32 = @intCast(self.start_index);
                 const end_index_i: i32 = @intCast(end_index);
 
-                const diff = -1*(start_index_i - (end_index_i));
+                const diff = -1*(start_index_i - end_index_i);
                 // +1 for the count
                 return @intCast(@mod(diff, data_len_i) + 1); 
             } else {
@@ -114,6 +114,26 @@ pub fn RingBuffer(comptime T: type) type {
             }
 
             return null;
+        }
+
+        /// Drop the `prune_cnt` oldest value from the buffer, moving the
+        /// `start_index` closer to the `end_index`.
+        /// Returns the oldest value that was pruned.
+        pub fn prune(self: *@This(), prune_cnt: usize) ?T {
+            const cnt = self.count();
+            if (cnt > 0 and cnt >= prune_cnt and self.end_index != null) {
+                const item = self.data[self.start_index];
+                self.start_index = @mod(self.start_index + prune_cnt, self.data.len);
+
+                if (cnt == 1) {
+                    // Reset empty sentinel
+                    self.end_index = null;
+                }
+                return item;
+            }
+            else {
+                return null;
+            }
         }
     };
 }

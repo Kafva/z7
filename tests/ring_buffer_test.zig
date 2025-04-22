@@ -84,3 +84,28 @@ test "Ring buffer OOB read" {
         rbuf.read_offset_end(111, 1)
     );
 }
+
+test "Ring buffer prune" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var rbuf = try RingBuffer(u8).init(allocator, 4);
+    for (0..4) |i| {
+        _ = rbuf.push(@truncate(i));
+    }
+    try std.testing.expectEqual(4, rbuf.count());
+    try std.testing.expectEqual(0, rbuf.prune(1));
+
+    try std.testing.expectEqual(3, rbuf.count());
+    try std.testing.expectEqual(1, rbuf.prune(1));
+
+    try std.testing.expectEqual(2, rbuf.count());
+    try std.testing.expectEqual(2, rbuf.prune(1));
+
+    try std.testing.expectEqual(1, rbuf.count());
+    try std.testing.expectEqual(3, rbuf.prune(1));
+
+    try std.testing.expectEqual(0, rbuf.count());
+    try std.testing.expectEqual(null, rbuf.prune(1));
+}
