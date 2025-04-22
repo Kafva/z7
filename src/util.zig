@@ -89,6 +89,26 @@ pub fn print_bits(
     }
 }
 
+pub fn print_bytes(comptime prefix: []const u8, bs: [4]u8) void {
+    var printable = true;
+    for (0..4) |i| {
+        if (!std.ascii.isPrint(bs[i])) {
+            printable = false;
+            break;
+        }
+    }
+    if (printable) {
+        log.debug(@src(), prefix ++ ": '{c}{c}{c}{c}'", .{
+            bs[0], bs[1], bs[2], bs[3]
+        });
+    }
+    else {
+        log.debug(@src(), prefix ++ ": {{{d},{d},{d},{d}}}", .{
+            bs[0], bs[1], bs[2], bs[3]
+        });
+    }
+}
+
 pub fn print_char(
     comptime log_fn:  fn (
         comptime src: std.builtin.SourceLocation,

@@ -14,19 +14,26 @@ const queue_symbol2 = @import("flate_compress.zig").queue_symbol2;
 const queue_symbol3 = @import("flate_compress.zig").queue_symbol3;
 
 pub const LzContext = struct {
+    /// Pointer back to the main compression context
     cctx: *CompressContext,
     start: usize,
     end: usize,
     /// Map from a past 4 byte value in the input stream onto the
     /// next 4 byte value that occured in the input stream
     lookup_table: std.AutoHashMap(u32, LzItem),
+    /// Queue of all 4 byte tuples in the input stream, we maintain
+    /// this array so that we know how to retire the oldest value
+    /// from the `lookup_table` when neccessary.
     queue: RingBuffer(u32),
     lookahead: RingBuffer(u8),
     head_key: ?u32,
 };
 
 pub const LzItem = struct {
+    /// Pointer in teh lookup table to the next item
+    /// E.g. ' Huff' -> 'Huff' -> 'uffm'
     next: ?u32,
+    /// The starting offset in the input stream for this entry
     start_pos: usize,
 
     pub fn format(
@@ -51,9 +58,9 @@ pub const LzItem = struct {
     }
 };
 
-pub fn lz(ctx: *LzContext, block_length: usize) !bool {
-    // Restriction: Backreferences can not go back more than 32K.
-    // Backreferences are allowed to go back into the previous block.
+pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
+    // * Backreferences can not go back more than 32K.
+    // * Backreferences are allowed to go back into the previous block.
     var done = false;
     ctx.start = ctx.cctx.processed_bytes;
     ctx.end = ctx.start + block_length;
@@ -78,60 +85,8 @@ pub fn lz(ctx: *LzContext, block_length: usize) !bool {
         const key = bytes_to_u32(bs);
 
         if (ctx.lookup_table.get(key)) |item| {
-            // OK: 'key' is a backreference match
-            const match_backward_offset = ctx.cctx.processed_bytes - item.start_pos;
-            var match_length = Flate.min_length_match;
-            log_u32("Found initial backref match", key);
-
-            // Keep on checking the 'next' pointer until the match ends
-            var iter_item: LzItem = item;
-            var new_b: ?u8 = null;
-            while (iter_item.next) |next| {
-                const next_bs = u32_to_bytes(next);
-                new_b = read_byte(ctx.cctx) catch {
-                    done = true;
-                    break;
-                };
-
-                // The oldest byte that we drop here will be part of the back-reference
-                _ = ctx.lookahead.push(new_b.?);
-
-                const new_bs = try ctx.lookahead.read_offset_end(3, 4);
-                const new_key = bytes_to_u32(new_bs);
-
-                // Only the final byte in the 'next' object is actually new
-                if (next_bs[3] != new_b.?) {
-                    // No match
-                    break;
-                }
-                match_length += 1;
-                util.print_char(log.debug, "Extending match", new_b.?);
-                new_b = null;
-
-                iter_item = blk: {
-                    if (ctx.lookup_table.get(next)) |v| {
-                        break :blk v;
-                    }
-                    return FlateError.InternalError;
-                };
-
-                // Wait with saving the new key until *after* fetching the next
-                // item, if we actually have a match the value we overwrite
-                // with `lz_save()` will be the next value!
-                try lz_save(ctx, new_key);
-            }
-
-            // Insert the match into the write_queue
-            try queue_symbol2(
-                ctx.cctx,
-                @truncate(match_length),
-                @truncate(match_backward_offset)
-            );
-
-            // Everything currently in `lookahead` except the final byte was
-            // part of the backreference, clear out these values.
-            const prune_cnt: usize = if (new_b != null) 3 else 4;
-            _ = ctx.lookahead.prune(prune_cnt);
+            // Found match: Queue it into the write queue
+            done = try lz_queue_match(ctx, key, item);
         }
         else {
             // No match: Save current key into lookup table
@@ -143,6 +98,66 @@ pub fn lz(ctx: *LzContext, block_length: usize) !bool {
     while (ctx.lookahead.prune(1)) |lit| {
         try queue_symbol3(ctx.cctx, lit);
     }
+
+    return done;
+}
+
+fn lz_queue_match(ctx: *LzContext, key: u32, item: LzItem) !bool {
+    const match_backward_offset = ctx.cctx.processed_bytes - item.start_pos;
+    var match_length = Flate.min_length_match;
+    var iter_item: LzItem = item;
+    var new_b: ?u8 = null;
+    var done = false;
+
+    util.print_bytes("Found initial backref match", u32_to_bytes(key));
+
+    // Keep on checking the 'next' pointer until the match ends
+    while (iter_item.next) |next| {
+        const next_bs = u32_to_bytes(next);
+        new_b = read_byte(ctx.cctx) catch {
+            done = true;
+            break;
+        };
+
+        // The oldest byte that we drop here will be part of the back-reference
+        _ = ctx.lookahead.push(new_b.?);
+
+        const new_bs = try ctx.lookahead.read_offset_end(3, 4);
+        const new_key = bytes_to_u32(new_bs);
+
+        // Only the final byte in the 'next' object is actually new
+        if (next_bs[3] != new_b.?) {
+            // No match
+            break;
+        }
+        match_length += 1;
+        util.print_char(log.debug, "Extending match", new_b.?);
+        new_b = null;
+
+        iter_item = blk: {
+            if (ctx.lookup_table.get(next)) |v| {
+                break :blk v;
+            }
+            return FlateError.InternalError;
+        };
+
+        // Wait with saving the new key until *after* fetching the next
+        // item, if we actually have a match the value we overwrite
+        // with `lz_save()` will be the next value!
+        try lz_save(ctx, new_key);
+    }
+
+    // Insert the match into the write_queue
+    try queue_symbol2(
+        ctx.cctx,
+        @truncate(match_length),
+        @truncate(match_backward_offset)
+    );
+
+    // Everything currently in `lookahead` except the final byte was
+    // part of the backreference, clear out these values.
+    const prune_cnt: usize = if (new_b != null) 3 else 4;
+    _ = ctx.lookahead.prune(prune_cnt);
 
     return done;
 }
@@ -181,27 +196,6 @@ fn lz_save(ctx: *LzContext, key: u32) !void {
 
     // Repoint head to the new entry
     ctx.head_key = key;
-}
-
-fn log_u32(comptime prefix: []const u8, key: u32) void {
-    const bs = u32_to_bytes(key);
-    var printable = true;
-    for (0..4) |i| {
-        if (!std.ascii.isPrint(bs[i])) {
-            printable = false;
-            break;
-        }
-    }
-    if (printable) {
-        log.debug(@src(), prefix ++ ": '{c}{c}{c}{c}'", .{
-            bs[0], bs[1], bs[2], bs[3]
-        });
-    }
-    else {
-        log.debug(@src(), prefix ++ ": {{{d},{d},{d},{d}}}", .{
-            bs[0], bs[1], bs[2], bs[3]
-        });
-    }
 }
 
 fn u32_to_bytes(int: u32) [4]u8 {

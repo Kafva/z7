@@ -12,7 +12,7 @@ const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
 const LzContext = @import("lz.zig").LzContext;
 const LzItem = @import("lz.zig").LzItem;
-const lz_compress = @import("lz.zig").lz;
+const lz_compress = @import("lz.zig").lz_compress;
 const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
 
 pub const CompressContext = struct {
