@@ -10,9 +10,9 @@ const RangeSymbol = @import("flate.zig").RangeSymbol;
 const ClSymbol = @import("flate.zig").ClSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const HuffmanEncoding = @import("huffman.zig").HuffmanEncoding;
-const LzContext = @import("lz.zig").LzContext;
-const LzItem = @import("lz.zig").LzItem;
-const lz_compress = @import("lz.zig").lz_compress;
+const LzContext = @import("lz_compress.zig").LzContext;
+const LzItem = @import("lz_compress.zig").LzItem;
+const lz_compress = @import("lz_compress.zig").lz_compress;
 const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
 
 pub const CompressContext = struct {
@@ -28,9 +28,7 @@ pub const CompressContext = struct {
     written_bits: usize,
     processed_bytes: usize,
     block_start: usize,
-
     lz: *LzContext,
-
     /// Initial offset into the input stream
     instream_offset: usize,
     /// Left over input byte to use from previous block
@@ -114,7 +112,7 @@ pub fn compress(
         .start = 0,
         .end = 0,
         .lookup_table = std.AutoHashMap(u32, LzItem).init(allocator),
-        .queue = try RingBuffer(u32).init(allocator, Flate.window_length),
+        .start_pos_table = std.AutoHashMap(usize, u32).init(allocator),
         .lookahead = try RingBuffer(u8).init(allocator, Flate.min_length_match),
         .head_key = null,
     };
