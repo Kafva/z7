@@ -114,7 +114,6 @@ pub fn compress(
         .lookup_table = std.AutoHashMap(u32, LzItem).init(allocator),
         .start_pos_table = std.AutoHashMap(usize, u32).init(allocator),
         .lookahead = try RingBuffer(u8).init(allocator, Flate.min_length_match),
-        .head_key = null,
     };
     ctx.lz = &lz;
 

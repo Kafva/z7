@@ -27,7 +27,6 @@ pub const LzContext = struct {
     /// know which keys to retire once the sliding window is full.
     start_pos_table: std.AutoHashMap(usize, u32),
     lookahead: RingBuffer(u8),
-    head_key: ?u32,
 };
 
 const max_match_start_pos_count = @divFloor(Flate.lookahead_length, 4);
@@ -47,14 +46,15 @@ pub const LzItem = struct {
     ///
     /// 'foo1' -> { start_pos: [0] }
     /// 'foo2' -> { start_pos: [4] }
-    /// 'aaaa' -> { start_pos: [8,12,24,28,32] }
+    /// 'aaaa' -> { start_pos: [32,28,24,16,8,-1,-1...] }
     /// 'foo3' -> { start_pos: [16] }
     /// 'foo4' -> { start_pos: [20] }
     ///
     /// Prune everything that only has a start_pos behind the sliding window
     ///
     /// The starting offset in the input stream for this entry
-    start_pos: [max_match_start_pos_count]usize,
+    start_pos: [max_match_start_pos_count]i32,
+    start_pos_cnt: usize,
 
     pub fn format(
         self: *const @This(),
@@ -75,6 +75,25 @@ pub const LzItem = struct {
         else {
             return writer.print("{{ .next = null, .start_pos = {d} }}", .{self.start_pos});
         }
+    }
+
+    /// Are all `start_pos` values below or equal to `limit`?
+    pub fn all_le(self: @This(), limit: usize) bool {
+        for (0..self.start_pos_cnt) |i| {
+            if (self.start_pos[i] > limit) return false;
+        }
+        return true;
+    }
+
+    pub fn best_start_pos(self: @This()) !usize {
+        if (self.start_pos_cnt == 0) {
+            return FlateError.InternalError;
+        }
+        const oldest_value = self.start_pos[self.start_pos_cnt - 1];
+        if (oldest_value < 0) {
+            return FlateError.InternalError;
+        }
+        return @intCast(oldest_value);
     }
 };
 
@@ -125,7 +144,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
 }
 
 fn lz_queue_match(ctx: *LzContext, key: u32, item: LzItem) !bool {
-    const match_backward_offset = ctx.cctx.processed_bytes - item.start_pos;
+    const match_backward_offset = ctx.cctx.processed_bytes - try item.best_start_pos();
     var match_length = Flate.min_length_match;
     var iter_item: LzItem = item;
     var new_b: ?u8 = null;
@@ -134,7 +153,7 @@ fn lz_queue_match(ctx: *LzContext, key: u32, item: LzItem) !bool {
 
     util.print_bytes("Found initial backref match", u32_to_bytes(key));
 
-    // Keep on checking the 'next' pointer until the match ends
+    // TODO: Keep on checking the 'next' pointer until the match ends
     while (iter_item.next) |next| {
         const bs_to_match = u32_to_bytes(next);
         new_b = read_byte(ctx.cctx) catch {
@@ -193,39 +212,57 @@ fn lz_queue_match(ctx: *LzContext, key: u32, item: LzItem) !bool {
 }
 
 fn lz_save(ctx: *LzContext, key: u32, start_pos: usize) !void {
-    // Push the new u32 key into the queue
-    const delkey = ctx.queue.push(key);
-    if (delkey) |k| {
-        // Delete oldest key if necessary
-        if (!ctx.lookup_table.remove(k)) {
-            log.err(@src(), "Failed to remove key: {d}", .{k});
+    const sliding_window_start = ctx.cctx.processed_bytes - Flate.window_length;
+
+    // Remove start positions from the lookup_table which are no longer
+    // within the sliding window range
+    if (ctx.start_pos_table.get(sliding_window_start - 1)) |k| {
+        if (ctx.lookup_table.getPtr(k)) |ptr| {
+            if (ptr.all_le(start_pos)) {
+                // Drop the entry, all positions are before the start of the window
+                ctx.start_pos_table.remove(sliding_window_start);
+                ctx.lookup_table.remove(k);
+            }
+            else {
+                // Remove the start position furthest back in the sliding window
+                ptr.start_pos[ptr.start_pos_cnt - 1] = -1;
+            }
+        }
+        else {
             return FlateError.InternalError;
         }
     }
 
-    // Create the value for the new 'key', this is the newest
-    // entry so no 'next' value yet.
-    const lzitem = LzItem {
-        .next = null,
-        .start_pos = start_pos,
+    // Save the 'start_pos' -> 'key' map
+    ctx.start_pos_table.put(start_pos, key);
+
+    const lzitem = blk: {
+        if (ctx.lookup_table.getPtr(key)) |ptr| {
+            // Update existing key
+            if (ptr.start_pos_cnt == ptr.start_pos.len) {
+                // TODO: overwrite the most recent value...
+                ptr.start_pos[0] = start_pos;
+            }
+            else {
+                // TODO: inserting at worst position for sort...
+                ptr.start_pos[ptr.start_pos_cnt] = start_pos;
+                ptr.start_pos_cnt += 1;
+                std.sort.insertion(usize, ptr.start_pos[0..ptr.start_pos_cnt], {}, std.sort.desc);
+            }
+        }
+        else {
+            // Create new key
+            var item = LzItem {
+                .start_pos = [_]i32{-1}**max_match_start_pos_count,
+                .start_pos_cnt = 1,
+            };
+            item.start_pos[0] = start_pos;
+            break :blk item;
+        }
     };
 
-    if (ctx.head_key) |head| {
-        // Overwrite the 'next' field of the current head to point to
-        // the new entry.
-        const head_item = ctx.lookup_table.get(head);
-        const new_head = LzItem {
-            .next = key,
-            .start_pos = head_item.?.start_pos,
-        };
-        try ctx.lookup_table.put(head, new_head);
-    }
-
-    // Insert the new value
+    // Save the 'key' -> 'LzItem' map
     try ctx.lookup_table.put(key, lzitem);
-
-    // Repoint head to the new entry
-    ctx.head_key = key;
 }
 
 fn u32_to_bytes(int: u32) [4]u8 {
