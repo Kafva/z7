@@ -75,9 +75,9 @@ test "Ring buffer OOB read" {
     try std.testing.expectEqual(.{1}, try rbuf.read_offset_end(1,1));
     try std.testing.expectEqual(.{2}, try rbuf.read_offset_end(0,1));
 
-    try std.testing.expectEqual(0, try rbuf.read_offset_start(0));
-    try std.testing.expectEqual(1, try rbuf.read_offset_start(1));
-    try std.testing.expectEqual(2, try rbuf.read_offset_start(2));
+    try std.testing.expectEqual(.{0}, try rbuf.read_offset_start(0,1));
+    try std.testing.expectEqual(.{1}, try rbuf.read_offset_start(1,1));
+    try std.testing.expectEqual(.{2}, try rbuf.read_offset_start(2,1));
 
     try std.testing.expectError(
          RingBufferError.InvalidOffsetRead,

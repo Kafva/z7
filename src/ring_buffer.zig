@@ -71,21 +71,30 @@ pub fn RingBuffer(comptime T: type) type {
 
         /// Offset 0 will return the first item at `start_index`
         /// Offset 1 will return the item one index after `start_index`
-        /// etc.
-        pub fn read_offset_start(self: *@This(), forward_offset: i32) !T {
+        /// With `ret_count=2`, Offset 1 would return [start_index..start_index + 1] inclusive.
+        pub fn read_offset_start(
+            self: *@This(),
+            forward_offset: i32,
+            comptime ret_count: usize,
+        ) ![ret_count]T {
             const cnt = self.count();
             if (cnt > 0 and self.end_index != null) {
                 const data_len_i: i32 = @intCast(self.data.len);
                 const start_index_i: i32 = @intCast(self.start_index);
 
-                if (forward_offset > cnt - 1) {
+                if (forward_offset > cnt - 1 or ret_count > cnt) {
                     return RingBufferError.InvalidOffsetRead;
                 }
 
                 const offset_start_i: i32 = start_index_i + forward_offset;
-                const ring_index: usize = @intCast(@mod(offset_start_i, data_len_i));
 
-                return self.data[ring_index];
+                var r = [_]T{0}**ret_count;
+                for (0..ret_count) |i| {
+                    const i_i: i32 = @intCast(i);
+                    const ri: usize = @intCast(@mod(offset_start_i + i_i, data_len_i));
+                    r[i] = self.data[ri];
+                }
+                return r;
             }
 
             return RingBufferError.EmptyRead;
