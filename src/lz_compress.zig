@@ -106,6 +106,20 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
     ctx.start = ctx.cctx.processed_bytes;
     ctx.end = ctx.start + block_length;
 
+    // Always start with 4 raw bytes
+    // var start_key = [_]u8{0}**4;
+    // for (0..4) |i| {
+    //     const b = read_byte(ctx.cctx) catch {
+    //         done = true;
+    //         break;
+    //     };
+    //     _ = ctx.sliding_window.push(b);
+    //     try queue_symbol3(ctx.cctx, b);
+    //     try queue_symbol_raw(ctx.cctx, b);
+    //     start_key[i] = b;
+    // }
+    // try lz_save(ctx, bytes_to_u32(start_key), ctx.cctx.processed_bytes - 4);
+
     while (!done and ctx.cctx.processed_bytes < ctx.end) {
         const b = read_byte(ctx.cctx) catch {
             done = true;
@@ -168,6 +182,11 @@ fn lz_queue_match(ctx: *LzContext, key: u32, item: LzItem) !bool {
 
         // The oldest byte that we drop here will be part of the back-reference
         if (ctx.lookahead.push(new_b.?)) |b| {
+            if (ctx.cctx.processed_bytes < 9) // TODO TODO
+                // EDGE case: if we found a match in the first four bytes, these
+                // bytes need to be queued as their own symbols!
+                try queue_symbol3(ctx.cctx, b);
+
             try queue_symbol_raw(ctx.cctx, b); // Save for NO_COMPRESSION queue
         }
 
@@ -194,7 +213,8 @@ fn lz_queue_match(ctx: *LzContext, key: u32, item: LzItem) !bool {
     }
 
     // Insert the match into the write_queue
-    const match_backward_offset = ctx.cctx.processed_bytes - match_start_pos - match_length - 1;
+    var match_backward_offset = ctx.cctx.processed_bytes - match_start_pos - match_length;
+    if (new_b) |_| match_backward_offset -= 1; 
     try queue_symbol2(
         ctx.cctx,
         @truncate(match_length),

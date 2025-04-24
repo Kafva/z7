@@ -168,8 +168,8 @@ fn lzss(ctx: *CompressContext, block_length: usize) !bool {
         var ring_offset: u16 = 0;
 
         while (ring_offset != window_last_index) {
-            const window_byte: u8 = try ctx.sliding_window.read_offset_start(@as(i32, ring_offset), 1);
-            if (ctx.lookahead[match_length] != window_byte) {
+            const bs: [1]u8 = try ctx.sliding_window.read_offset_start(@as(i32, ring_offset), 1);
+            if (ctx.lookahead[match_length] != bs[0]) {
                 // Reset and start matching from the beginning of the
                 // lookahead again
                 //
