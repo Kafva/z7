@@ -24,9 +24,6 @@ pub const LzContext = struct {
     /// of starting positions in the sliding window where that
     /// input sequence occurs.
     lookup_table: std.AutoHashMap(u32, LzItem),
-    /// Inverse lookup table from start_pos -> 'key', we maintain this to easily
-    /// know which keys to retire once the sliding window is full.
-    start_pos_table: std.AutoHashMap(usize, u32),
     /// 4 byte lookahead
     lookahead: RingBuffer(u8),
 };
@@ -117,6 +114,12 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
         };
 
         const old = ctx.lookahead.push(b);
+
+        if (ctx.lookahead.count() != Flate.min_length_match) {
+            // We have not filled the lookahead yet, go again
+            continue;
+        }
+
         if (old) |old_b| {
             // Queue each byte that exits the lookahead onto the sliding window
             _ = ctx.sliding_window.push(old_b);
@@ -124,12 +127,8 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
             try queue_symbol_raw(ctx.cctx, b);
         }
 
-        if (ctx.lookahead.count() != Flate.min_length_match) {
-            // We have not filled the lookahead yet, go again
-            continue;
-        }
-
         if (maybe_match_start_pos) |match_start_pos| {
+            // Handle match in progress
             const offset = match_start_pos + match_length;
             const bs = try ctx.sliding_window.read_offset_start(offset, 1);
 
@@ -187,19 +186,38 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
         }
     }
 
+    // Finish any in-progress match
+    if (maybe_match_start_pos) |match_start_pos| {
+        log.debug(@src(), "Ending match due to input EOF @{d}", .{
+            match_start_pos + match_length,
+        });
+        try queue_symbol2(
+            ctx.cctx,
+            @intCast(match_length),
+            @intCast(match_start_window_pos - match_start_pos),
+        );
+        // We can only get into this branch if we were extending a match
+        // in the last iteration, in that case, the entire lookahead was
+        // part of the match.
+        for (0..4) |_| {
+            if (ctx.lookahead.prune(1)) |l| _ = ctx.sliding_window.push(l);
+        }
+    }
+
     // Queue up any left over literals as-is
-    while (ctx.lookahead.prune(1)) |lit| {
-        try queue_symbol3(ctx.cctx, lit);
-        try queue_symbol_raw(ctx.cctx, lit);
+    if (ctx.lookahead.count() > 0) {
+        log.debug(@src(), "Appending left-over raw bytes", .{});
+
+        while (ctx.lookahead.prune(1)) |lit| {
+            try queue_symbol3(ctx.cctx, lit);
+            try queue_symbol_raw(ctx.cctx, lit);
+        }
     }
 
     return done;
 }
 
 fn lz_save(ctx: *LzContext, key: u32, start_pos: usize) !void {
-    // Save the 'start_pos' -> 'key' map
-    try ctx.start_pos_table.put(start_pos, key);
-
     if (ctx.lookup_table.getPtr(key)) |ptr| {
         // Update existing key
         if (ptr.start_pos_cnt == ptr.start_pos.len) {
@@ -212,8 +230,6 @@ fn lz_save(ctx: *LzContext, key: u32, start_pos: usize) !void {
             ptr.start_pos_cnt += 1;
             std.sort.insertion(i32, ptr.start_pos[0..ptr.start_pos_cnt], {}, std.sort.desc(i32));
         }
-        //util.print_bytes("Updated key", u32_to_bytes(key));
-        //log.debug(@src(), "start_pos: {any}", .{ptr.start_pos[0..ptr.start_pos_cnt]});
     }
     else {
         // Create new key
@@ -224,8 +240,6 @@ fn lz_save(ctx: *LzContext, key: u32, start_pos: usize) !void {
         item.start_pos[0] = @intCast(start_pos);
         // Save the 'key' -> 'LzItem' map
         try ctx.lookup_table.put(key, item);
-        // util.print_bytes("Saved new key", u32_to_bytes(key));
-        // log.debug(@src(), "start_pos: {any}", .{item.start_pos[0..item.start_pos_cnt]});
     }
 }
 
