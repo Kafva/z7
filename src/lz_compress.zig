@@ -14,11 +14,15 @@ const queue_symbol2 = @import("flate_compress.zig").queue_symbol2;
 const queue_symbol3 = @import("flate_compress.zig").queue_symbol3;
 const queue_symbol_raw = @import("flate_compress.zig").queue_symbol_raw;
 
+const max_match_start_pos_count = @divFloor(Flate.lookahead_length, 4);
+
 pub const LzContext = struct {
     /// Pointer back to the main compression context
     cctx: *CompressContext,
     start: usize,
     end: usize,
+    sliding_window_min_index: usize,
+    sliding_window_index: usize,
     sliding_window: RingBuffer(u8),
     /// Map from a 4 byte value in the input stream onto an array
     /// of starting positions in the sliding window where that
@@ -28,32 +32,33 @@ pub const LzContext = struct {
     lookahead: RingBuffer(u8),
 };
 
-const max_match_start_pos_count = @divFloor(Flate.lookahead_length, 4);
-
 pub const LzItem = struct {
-    /// Pointer in teh lookup table to the next item
-    /// E.g. ' Huff' -> 'Huff' -> 'uffm'
+    /// The starting offset(s) in the input stream for this entry
+    /// Example:
     ///
-    /// With 4 byte keys we cannot have match chains the repeat the same key, 
-    /// e.g. 'aaaa' -> 'aaaa' -> 'aaaa'.
     /// [ foo1 foo2 aaaa aaaa foo3 foo4 aaaa aaaa aaaa ]
     ///
-    /// How do we keep several 'aaaa' match sequences of different lengths while keeping
-    /// the quick lookup property...
+    /// =>
     ///
-    /// ....
+    /// 'foo1' -> { start_indices: [0] }
+    /// 'foo2' -> { start_indices: [4] }
+    /// 'aaaa' -> { start_indices: [32,28,24,16,8,-1,-1...] }
+    /// 'aaaa' -> { start_indices: [-1,-1,...,8,16,24,28,32] }
+    /// 'foo3' -> { start_indices: [16] }
+    /// 'foo4' -> { start_indices: [20] }
     ///
-    /// 'foo1' -> { start_pos: [0] }
-    /// 'foo2' -> { start_pos: [4] }
-    /// 'aaaa' -> { start_pos: [32,28,24,16,8,-1,-1...] }
-    /// 'foo3' -> { start_pos: [16] }
-    /// 'foo4' -> { start_pos: [20] }
-    ///
-    /// Prune everything that only has a start_pos behind the sliding window
-    ///
-    /// The starting offset in the input stream for this entry
-    start_pos: [max_match_start_pos_count]i32,
-    start_pos_cnt: usize,
+    /// Prune everything that only has a start_indices behind the sliding window
+    start_indices: [max_match_start_pos_count]i32,
+    start_indices_cnt: usize,
+
+    pub fn init(start_indices: usize) @This() {
+        var item = LzItem {
+            .start_indices = [_]i32{-1}**max_match_start_pos_count,
+            .start_indices_cnt = 1,
+        };
+        item.start_indices[max_match_start_pos_count - 1] = @intCast(start_indices);
+        return item;
+    }
 
     pub fn format(
         self: *const @This(),
@@ -67,30 +72,49 @@ pub const LzItem = struct {
         if (self.next) |n| {
             const bs = u32_to_bytes(n);
             return writer.print(
-                "{{ .next = '{c}{c}{c}{c}', .start_pos = {d} }}",
-                .{bs[0], bs[1], bs[2], bs[3], self.start_pos}
+                "{{ .next = '{c}{c}{c}{c}', .start_indices = {d} }}",
+                .{bs[0], bs[1], bs[2], bs[3], self.start_indices}
             );
         }
         else {
-            return writer.print("{{ .next = null, .start_pos = {d} }}", .{self.start_pos});
+            return writer.print("{{ .next = null, .start_indices = {d} }}", .{self.start_indices});
         }
     }
 
-    /// Are all `start_pos` values below `limit`?
-    pub fn all_lt(self: @This(), limit: usize) bool {
-        for (0..self.start_pos_cnt) |i| {
-            if (self.start_pos[i] >= limit) return false;
+    /// Remove all starting positions below the `low_limit`
+    pub fn prune(self: *@This(), low_limit: usize) void {
+        const idx = max_match_start_pos_count - self.start_indices_cnt;
+        for (idx..self.start_indices.len) |i| {
+            if (self.start_indices[i] != -1 and self.start_indices[i] < low_limit) {
+                log.debug(@src(), "Pruning start index: {d}", .{self.start_indices[i]});
+                self.start_indices[i] = -1;
+            }
         }
-        return true;
+        std.sort.insertion(i32, self.start_indices[idx..], {}, std.sort.asc(i32));
     }
 
-    pub fn best_start_pos(self: @This()) !i32 {
-        if (self.start_pos_cnt == 0) {
-            return FlateError.InternalError;
+    pub fn add(self: *@This(), new_start_pos: i32) void {
+        if (self.start_indices_cnt == self.start_indices.len) {
+            // Keep overwriting the newest value
+            self.start_indices[self.start_indices_cnt - 1] = @intCast(new_start_pos);
         }
-        const oldest_value = self.start_pos[self.start_pos_cnt - 1];
+        else {
+            // Insert at tail of array and keep it sorted in ascending order
+            self.start_indices[self.start_indices_cnt] = @intCast(new_start_pos);
+            self.start_indices_cnt += 1;
+            std.sort.insertion(i32, self.start_indices[0..self.start_indices_cnt], {}, std.sort.asc(i32));
+        }
+    }
+
+    pub fn best_start_pos(self: @This()) ?i32 {
+        if (self.start_indices_cnt == 0) {
+            return null;
+        }
+        // Always take the oldest match (furthest to the front)
+        const idx = max_match_start_pos_count - self.start_indices_cnt;
+        const oldest_value = self.start_indices[idx];
         if (oldest_value < 0) {
-            return FlateError.InternalError;
+            return null;
         }
         return @intCast(oldest_value);
     }
@@ -105,6 +129,8 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
     var match_length: i32 = 0;
     ctx.start = ctx.cctx.processed_bytes;
     ctx.end = ctx.start + block_length;
+    ctx.sliding_window_min_index = ctx.start;
+    ctx.sliding_window_index = ctx.start;
 
     while (!done and ctx.cctx.processed_bytes < ctx.end) {
         // Read next byte for lookahead
@@ -112,6 +138,12 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
             done = true;
             break;
         };
+
+        if (ctx.sliding_window.count() == Flate.window_length) {
+            // Slide the window forward once we reach the end of the first section.
+            ctx.sliding_window_min_index += 1;
+            log.debug(@src(), "Bumped window index {d}", .{ctx.sliding_window_min_index});
+        }
 
         const old = ctx.lookahead.push(b);
 
@@ -123,6 +155,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
         if (old) |old_b| {
             // Queue each byte that exits the lookahead onto the sliding window
             _ = ctx.sliding_window.push(old_b);
+            ctx.sliding_window_index += 1;
             // Save for NO_COMPRESSION queue
             try queue_symbol_raw(ctx.cctx, b);
         }
@@ -147,7 +180,10 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
                 // Everything in the lookahead except the final
                 // byte was made part of the backref
                 for (0..3) |_| {
-                    if (ctx.lookahead.prune(1)) |l| _ = ctx.sliding_window.push(l);
+                    if (ctx.lookahead.prune(1)) |l| {
+                        _ = ctx.sliding_window.push(l);
+                        ctx.sliding_window_index += 1;
+                    }
                 }
             }
             else {
@@ -161,16 +197,21 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
             const bs = try ctx.lookahead.read_offset_end(3, 4);
             const key = bytes_to_u32(bs);
 
-            if (ctx.lookup_table.get(key)) |item| {
-                // New match
-                maybe_match_start_pos = try item.best_start_pos();
-                match_start_window_pos = @intCast(ctx.sliding_window.count());
-                match_length = @intCast(Flate.min_length_match);
-                util.print_bytes("Found initial backref match", u32_to_bytes(key));
-                log.debug(@src(), "Starting match @{d} [window @{d}]", .{
-                    maybe_match_start_pos.?,
-                    ctx.sliding_window.count(),
-                });
+            if (ctx.lookup_table.getPtr(key)) |ptr| { // New match
+                // Remove start positions past the sliding window,
+                // this could cause us to no longer have a match!
+                ptr.prune(ctx.sliding_window_min_index);
+                maybe_match_start_pos = ptr.best_start_pos();
+
+                if (maybe_match_start_pos) |match_start_pos| {
+                    match_start_window_pos = @intCast(ctx.sliding_window.count());
+                    match_length = @intCast(Flate.min_length_match);
+                    util.print_bytes("Found initial backref match", u32_to_bytes(key));
+                    log.debug(@src(), "Starting match @{d} [window @{d}]", .{
+                        match_start_pos,
+                        ctx.sliding_window.count(),
+                    });
+                }
             }
             if (old) |old_b|  {
                 // No match: Queue the dropped byte as a raw literal
@@ -182,7 +223,17 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
             // Add a lookup entry for the byte that was dropped into the lookahead 
             const window_bs = try ctx.sliding_window.read_offset_end(3, 4);
             const window_key = bytes_to_u32(window_bs);
-            try lz_save(ctx, window_key, ctx.sliding_window.count() - 4);
+            const start_idx = ctx.sliding_window.count() - 4;
+
+            if (ctx.lookup_table.getPtr(window_key)) |ptr| {
+                // Update key with new start position
+                ptr.add(@intCast(start_idx));
+            }
+            else {
+                // Save the 'key' -> 'LzItem' map
+                try ctx.lookup_table.put(window_key, LzItem.init(start_idx));
+            }
+
         }
     }
 
@@ -213,32 +264,6 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
     }
 
     return done;
-}
-
-fn lz_save(ctx: *LzContext, key: u32, start_pos: usize) !void {
-    if (ctx.lookup_table.getPtr(key)) |ptr| {
-        // Update existing key
-        if (ptr.start_pos_cnt == ptr.start_pos.len) {
-            // TODO: overwrite the most recent value...
-            ptr.start_pos[0] = @intCast(start_pos);
-        }
-        else {
-            // TODO: inserting at worst position for sort...
-            ptr.start_pos[ptr.start_pos_cnt] = @intCast(start_pos);
-            ptr.start_pos_cnt += 1;
-            std.sort.insertion(i32, ptr.start_pos[0..ptr.start_pos_cnt], {}, std.sort.desc(i32));
-        }
-    }
-    else {
-        // Create new key
-        var item = LzItem {
-            .start_pos = [_]i32{-1}**max_match_start_pos_count,
-            .start_pos_cnt = 1,
-        };
-        item.start_pos[0] = @intCast(start_pos);
-        // Save the 'key' -> 'LzItem' map
-        try ctx.lookup_table.put(key, item);
-    }
 }
 
 fn u32_to_bytes(int: u32) [4]u8 {

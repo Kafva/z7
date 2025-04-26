@@ -14,6 +14,7 @@ pub fn RingBuffer(comptime T: type) type {
         /// The newest value is at this index (tail), set to `null` when the 
         /// buffer is empty.
         maybe_end_index: ?i32 = null,
+        /// Keep the data size as signed integer to simplify type conversions
         capacity: i32,
 
         pub fn init(allocator: std.mem.Allocator, capacity: usize) !@This() {
@@ -54,15 +55,8 @@ pub fn RingBuffer(comptime T: type) type {
                     return RingBufferError.InvalidOffsetRead;
                 }
 
-                const offset_start_i: i32 = self.maybe_end_index.? - backward_offset;
-
-                var r = [_]T{0}**ret_count;
-                for (0..ret_count) |i| {
-                    const i_i: i32 = @intCast(i);
-                    const ri: usize = @intCast(@mod(offset_start_i + i_i, self.capacity));
-                    r[i] = self.data[ri];
-                }
-                return r;
+                const offset_start: i32 = self.maybe_end_index.? - backward_offset;
+                return self.return_array(offset_start, ret_count);
             }
 
             return RingBufferError.EmptyRead;
@@ -82,15 +76,8 @@ pub fn RingBuffer(comptime T: type) type {
                     return RingBufferError.InvalidOffsetRead;
                 }
 
-                const offset_start_i: i32 = self.start_index + forward_offset;
-
-                var r = [_]T{0}**ret_count;
-                for (0..ret_count) |i| {
-                    const i_i: i32 = @intCast(i);
-                    const ri: usize = @intCast(@mod(offset_start_i + i_i, self.capacity));
-                    r[i] = self.data[ri];
-                }
-                return r;
+                const offset_start: i32 = self.start_index + forward_offset;
+                return self.return_array(offset_start, ret_count);
             }
 
             return RingBufferError.EmptyRead;
@@ -140,6 +127,20 @@ pub fn RingBuffer(comptime T: type) type {
             else {
                 return null;
             }
+        }
+
+        fn return_array(
+            self: *@This(),
+            offset_start: i32,
+            comptime ret_count: usize,
+        ) ![ret_count]T {
+            var r = [_]T{0}**ret_count;
+            for (0..ret_count) |i_usize| {
+                const i: i32 = @intCast(i_usize);
+                const ret_i: usize = @intCast(@mod(offset_start + i, self.capacity));
+                r[i_usize] = self.data[ret_i];
+            }
+            return r;
         }
     };
 }

@@ -111,6 +111,8 @@ pub fn compress(
         .cctx = &ctx,
         .start = 0,
         .end = 0,
+        .sliding_window_min_index = 0,
+        .sliding_window_index = 0,
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookup_table = std.AutoHashMap(u32, LzItem).init(allocator),
         .lookahead = try RingBuffer(u8).init(allocator, Flate.min_length_match),
