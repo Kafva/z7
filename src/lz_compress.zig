@@ -152,7 +152,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
             }
             else {
                 // Extend match!
-                log.debug(@src(), "Extending match '{c}' @{d} ", .{b, offset});
+                util.print_char(log.debug, "Extending match", b);
                 match_length += 1;
             }
         }
@@ -199,9 +199,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
         // We can only get into this branch if we were extending a match
         // in the last iteration, in that case, the entire lookahead was
         // part of the match.
-        for (0..4) |_| {
-            if (ctx.lookahead.prune(1)) |l| _ = ctx.sliding_window.push(l);
-        }
+        _ = ctx.lookahead.prune(4);
     }
 
     // Queue up any left over literals as-is

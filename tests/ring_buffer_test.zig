@@ -21,7 +21,7 @@ test "Ring buffer push" {
     //
     try std.testing.expectEqualDeep(@constCast(&expected), rbuf.data);
     try std.testing.expectEqual(2, rbuf.start_index);
-    try std.testing.expectEqual(1, rbuf.end_index);
+    try std.testing.expectEqual(1, rbuf.maybe_end_index.?);
 }
 
 test "Ring buffer read" {

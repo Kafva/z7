@@ -10,29 +10,27 @@ pub fn RingBuffer(comptime T: type) type {
     return struct {
         data: []T,
         /// The oldest value is at this index (head)
-        start_index: usize = 0,
+        start_index: i32 = 0,
         /// The newest value is at this index (tail), set to `null` when the 
         /// buffer is empty.
-        end_index: ?usize = null,
+        maybe_end_index: ?i32 = null,
+        capacity: i32,
 
         pub fn init(allocator: std.mem.Allocator, capacity: usize) !@This() {
             return @This() {
                 .data = try allocator.alloc(T, capacity),
+                .capacity = @intCast(capacity),
                 .start_index = 0,
-                .end_index = null,
+                .maybe_end_index = null,
             };
         }
 
         /// The number of items currently in the ring buffer
         pub fn count(self: @This()) usize {
-            if (self.end_index) |end_index| {
-                const data_len_i: i32 = @intCast(self.data.len);
-                const start_index_i: i32 = @intCast(self.start_index);
-                const end_index_i: i32 = @intCast(end_index);
-
-                const diff = -1*(start_index_i - end_index_i);
+            if (self.maybe_end_index) |end_index| {
+                const diff = -1*(self.start_index - end_index);
                 // +1 for the count
-                return @intCast(@mod(diff, data_len_i) + 1); 
+                return @intCast(@mod(diff, self.capacity) + 1); 
             } else {
                 return 0;
             }
@@ -46,11 +44,8 @@ pub fn RingBuffer(comptime T: type) type {
             backward_offset: i32,
             comptime ret_count: usize,
         ) ![ret_count]T {
-            const cnt = self.count();
-            if (cnt > 0 and self.end_index != null) {
-                const data_len_i: i32 = @intCast(self.data.len);
-                const end_index_i: i32 = @intCast(self.end_index.?);
-
+            const cnt: i32 = @intCast(self.count());
+            if (cnt > 0 and self.maybe_end_index != null) {
                 if (backward_offset > cnt - 1 or ret_count > cnt) {
                     log.err(@src(), "Attempting to read from backward offset {d} with {d} items", .{
                         backward_offset,
@@ -59,12 +54,12 @@ pub fn RingBuffer(comptime T: type) type {
                     return RingBufferError.InvalidOffsetRead;
                 }
 
-                const offset_start_i: i32 = end_index_i - backward_offset;
+                const offset_start_i: i32 = self.maybe_end_index.? - backward_offset;
 
                 var r = [_]T{0}**ret_count;
                 for (0..ret_count) |i| {
                     const i_i: i32 = @intCast(i);
-                    const ri: usize = @intCast(@mod(offset_start_i + i_i, data_len_i));
+                    const ri: usize = @intCast(@mod(offset_start_i + i_i, self.capacity));
                     r[i] = self.data[ri];
                 }
                 return r;
@@ -81,21 +76,18 @@ pub fn RingBuffer(comptime T: type) type {
             forward_offset: i32,
             comptime ret_count: usize,
         ) ![ret_count]T {
-            const cnt = self.count();
-            if (cnt > 0 and self.end_index != null) {
-                const data_len_i: i32 = @intCast(self.data.len);
-                const start_index_i: i32 = @intCast(self.start_index);
-
+            const cnt: i32 = @intCast(self.count());
+            if (cnt > 0 and self.maybe_end_index != null) {
                 if (forward_offset > cnt - 1 or ret_count > cnt) {
                     return RingBufferError.InvalidOffsetRead;
                 }
 
-                const offset_start_i: i32 = start_index_i + forward_offset;
+                const offset_start_i: i32 = self.start_index + forward_offset;
 
                 var r = [_]T{0}**ret_count;
                 for (0..ret_count) |i| {
                     const i_i: i32 = @intCast(i);
-                    const ri: usize = @intCast(@mod(offset_start_i + i_i, data_len_i));
+                    const ri: usize = @intCast(@mod(offset_start_i + i_i, self.capacity));
                     r[i] = self.data[ri];
                 }
                 return r;
@@ -107,23 +99,24 @@ pub fn RingBuffer(comptime T: type) type {
         /// Push a new item onto the end of the ring buffer, if the buffer is full,
         /// overwrite the oldest item.
         pub fn push(self: *@This(), item: T) ?T {
-            if (self.end_index) |end_index| {
-                self.end_index = (end_index + 1) % self.data.len;
+            if (self.maybe_end_index) |end_index| {
+                self.maybe_end_index = @mod(end_index + 1, self.capacity);
 
-                const old = self.data[self.end_index.?];
-                self.data[self.end_index.?] = item;
+                const new_end_index: usize = @intCast(self.maybe_end_index.?);
+                const old = self.data[new_end_index];
+                self.data[new_end_index] = item;
 
                 // We overwrote the oldest value, move the start_index forward.
-                if (self.end_index.? == self.start_index) {
+                if (self.maybe_end_index.? == self.start_index) {
                     self.start_index += 1;
-                    self.start_index %= self.data.len;
+                    self.start_index = @mod(self.start_index, self.capacity);
                     return old;
                 }
             }
             else {
                 // First item added
-                self.end_index = 0;
-                self.data[self.end_index.?] = item;
+                self.maybe_end_index = 0;
+                self.data[@intCast(self.maybe_end_index.?)] = item;
             }
 
             return null;
@@ -132,15 +125,15 @@ pub fn RingBuffer(comptime T: type) type {
         /// Drop the `prune_cnt` oldest value from the buffer, moving the
         /// `start_index` closer to the `end_index`.
         /// Returns the oldest value that was pruned.
-        pub fn prune(self: *@This(), prune_cnt: usize) ?T {
-            const cnt = self.count();
-            if (cnt > 0 and cnt >= prune_cnt and self.end_index != null) {
-                const item = self.data[self.start_index];
-                self.start_index = @mod(self.start_index + prune_cnt, self.data.len);
+        pub fn prune(self: *@This(), prune_cnt: i32) ?T {
+            const cnt: i32 = @intCast(self.count());
+            if (cnt > 0 and cnt >= prune_cnt and self.maybe_end_index != null) {
+                const item = self.data[@intCast(self.start_index)];
+                self.start_index = @mod(self.start_index + prune_cnt, self.capacity);
 
                 if (cnt - prune_cnt == 0) {
                     // Reset empty sentinel
-                    self.end_index = null;
+                    self.maybe_end_index = null;
                 }
                 return item;
             }
