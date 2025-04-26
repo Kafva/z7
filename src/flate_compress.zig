@@ -277,8 +277,8 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // Populate the write_queue
     // We will always have a saved `next_byte` after this call except for
     // when we reach eof in the input stream.
-    //const done = try lzss(ctx, block_length);
-    const done = try lz_compress(ctx.lz, block_length);
+    const done = try lzss(ctx, block_length);
+    //const done = try lz_compress(ctx.lz, block_length);
 
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {

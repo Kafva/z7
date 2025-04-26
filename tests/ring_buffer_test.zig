@@ -109,3 +109,18 @@ test "Ring buffer prune" {
     try std.testing.expectEqual(0, rbuf.count());
     try std.testing.expectEqual(null, rbuf.prune(1));
 }
+
+test "Ring buffer prune multiple" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var rbuf = try RingBuffer(u8).init(allocator, 4);
+    for (0..4) |i| {
+        _ = rbuf.push(@truncate(i));
+    }
+    try std.testing.expectEqual(4, rbuf.count());
+    try std.testing.expectEqual(0, rbuf.prune(4));
+    try std.testing.expectEqual(0, rbuf.count());
+}
+

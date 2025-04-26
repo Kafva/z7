@@ -52,6 +52,10 @@ pub fn RingBuffer(comptime T: type) type {
                 const end_index_i: i32 = @intCast(self.end_index.?);
 
                 if (backward_offset > cnt - 1 or ret_count > cnt) {
+                    log.err(@src(), "Attempting to read from backward offset {d} with {d} items", .{
+                        backward_offset,
+                        cnt,
+                    });
                     return RingBufferError.InvalidOffsetRead;
                 }
 
@@ -134,7 +138,7 @@ pub fn RingBuffer(comptime T: type) type {
                 const item = self.data[self.start_index];
                 self.start_index = @mod(self.start_index + prune_cnt, self.data.len);
 
-                if (cnt == 1) {
+                if (cnt - prune_cnt == 0) {
                     // Reset empty sentinel
                     self.end_index = null;
                 }
