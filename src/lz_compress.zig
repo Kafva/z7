@@ -151,7 +151,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
                 bs[0] != b                                         // Backref no longer matches
             ) {
                 // End match!
-                log.debug(@src(), "Ending match @{d} ", .{match_start_pos + ctx.match_length});
+                log.debug(@src(), "Ending match @{d}", .{match_start_pos + ctx.match_length});
                 try queue_symbol2(
                     ctx.cctx,
                     @intCast(ctx.match_length),
@@ -195,12 +195,13 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
                     ctx.maybe_match_start_pos = ptr.best_start_pos();
                     if (ctx.maybe_match_start_pos) |match_start_pos| {
                         ctx.match_length = @intCast(Flate.min_length_match);
-
-                        // We need to make sure that the match does not go past where the
-                        // sliding window was during the start of the match
-                        //const processed_bytes_i: i32 = @intCast(ctx.cctx.processed_bytes);
-                        //ctx.match_distance = processed_bytes_i - ctx.match_length - match_start_pos;
-
+                        if (match_start_pos > ctx.processed_bytes_sliding_window) {
+                            log.err(@src(), "Invalid backreference position: @{d} [sliding window @{d}]", .{
+                                match_start_pos,
+                                ctx.processed_bytes_sliding_window,
+                            });
+                            return FlateError.InternalError;
+                        }
                         ctx.match_distance = ctx.processed_bytes_sliding_window - match_start_pos;
 
                         util.print_bytes(log.debug, "Found initial backref match", bs);
@@ -265,29 +266,25 @@ fn sliding_window_push(ctx: *LzContext, b: u8) !void {
 
     if (ctx.sliding_window.count() >= 4) {
         // Add a lookup entry for the byte that was dropped into the lookahead
-        try lookup_add(ctx);
+        const window_bs = try ctx.sliding_window.read_offset_end(3, 4);
+        const window_key = bytes_to_u32(window_bs);
+        // The global start index of the match in the input stream!
+        const start_idx = ctx.processed_bytes_sliding_window - 4;
+
+        if (ctx.lookup_table.getPtr(window_key)) |ptr| {
+            // Update key with new start position
+            ptr.add(@intCast(start_idx));
+        }
+        else {
+            // Save the 'key' -> 'LzItem' map
+            try ctx.lookup_table.put(window_key, LzItem.init(@intCast(start_idx)));
+        }
     }
 
     if (ctx.sliding_window.count() == Flate.window_length) {
         // Once the sliding window is filled, slide it one byte forward every iteration
         ctx.maybe_sliding_window_min_index =
             if (ctx.maybe_sliding_window_min_index) |s| s + 1 else 1;
-    }
-}
-
-fn lookup_add(ctx: *LzContext) !void {
-    const window_bs = try ctx.sliding_window.read_offset_end(3, 4);
-    const window_key = bytes_to_u32(window_bs);
-    // The global start index of the match in the input stream!
-    const start_idx = ctx.cctx.processed_bytes - ctx.lookahead.count() - 4;
-
-    if (ctx.lookup_table.getPtr(window_key)) |ptr| {
-        // Update key with new start position
-        ptr.add(@intCast(start_idx));
-    }
-    else {
-        // Save the 'key' -> 'LzItem' map
-        try ctx.lookup_table.put(window_key, LzItem.init(start_idx));
     }
 }
 

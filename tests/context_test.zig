@@ -40,7 +40,7 @@ pub const TestContext = struct {
 
         const in = blk: {
             if (std.mem.eql(u8, inputfile, random_label)) {
-                break :blk try TestContext.read_random(allocator, &tmp, 128);
+                break :blk try TestContext.read_random(allocator, &tmp, 40*1024);
             } else {
                 break :blk try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
             }
