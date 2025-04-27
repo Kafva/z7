@@ -142,7 +142,7 @@ pub const RangeSymbol = struct {
     ///  264   0    10       274   3   43-50     284   5  227-257
     ///  265   1  11,12      275   3   51-58     285   0    258
     ///  266   1  13,14      276   3   59-66
-    pub fn from_length(length: u16) RangeSymbol {
+    pub fn from_length(length: u16) !RangeSymbol {
         const r: [3]u16 = switch (length) {
             3 => .{ 257, 0, 3 },
             4 => .{ 258, 0, 4 },
@@ -173,7 +173,10 @@ pub const RangeSymbol = struct {
             195...226 => .{ 283, 5, 195 },
             227...257 => .{ 284, 5, 227 },
             258 => .{ 285, 0, 258 },
-            else => unreachable,
+            else => {
+                log.err(@src(), "Bad length value: {d}", .{length});
+                return FlateError.InvalidLength;
+            },
         };
         return RangeSymbol {
             .value = length,
@@ -197,7 +200,7 @@ pub const RangeSymbol = struct {
     ///   7   2  13-16   17   7    385-512   27   12 12289-16384
     ///   8   3  17-24   18   8    513-768   28   13 16385-24576
     ///   9   3  25-32   19   8   769-1024   29   13 24577-32768
-    pub fn from_distance(distance: u16) RangeSymbol {
+    pub fn from_distance(distance: u16) !RangeSymbol {
         const r: [3]u16 = switch (distance) {
             1 => .{0, 0, 1},
             2 => .{1, 0, 2},
@@ -229,7 +232,10 @@ pub const RangeSymbol = struct {
             12289...16384 => .{27, 12, 12289},
             16385...24576 => .{28, 13, 16385},
             24577...32768 => .{29, 13, 24577},
-            else => unreachable,
+            else => {
+                log.err(@src(), "Bad distance value: {d}", .{distance});
+                return FlateError.InvalidDistance;
+            },
         };
         return RangeSymbol {
             .value = distance,
@@ -240,7 +246,7 @@ pub const RangeSymbol = struct {
     }
 
     /// Fetch the `RangeSymbol` for a given length 'Code'.
-    pub fn from_length_code(length_code: u16) RangeSymbol {
+    pub fn from_length_code(length_code: u16) !RangeSymbol {
         const r: [2]u16 = switch (length_code) {
             257 => .{ 0, 3 },
             258 => .{ 0, 4 },
@@ -271,7 +277,10 @@ pub const RangeSymbol = struct {
             283 => .{ 5, 195 },
             284 => .{ 5, 227 },
             285 => .{ 0, 258 },
-            else => unreachable,
+            else => {
+                log.err(@src(), "Bad length code: {d}", .{length_code});
+                return FlateError.InvalidLength;
+            },
         };
         return RangeSymbol {
             .value = null,
@@ -282,7 +291,7 @@ pub const RangeSymbol = struct {
     }
 
     /// Fetch the `RangeSymbol` for a given distance 'Code'.
-    pub fn from_distance_code(distance_code: u5) RangeSymbol {
+    pub fn from_distance_code(distance_code: u5) !RangeSymbol {
         const r: [2]u16 = switch (distance_code) {
             0 => .{0, 1},
             1 => .{0, 2},
@@ -314,7 +323,10 @@ pub const RangeSymbol = struct {
             27 => .{12, 12289},
             28 => .{13, 16385},
             29 => .{13, 24577},
-            else => unreachable,
+            else => {
+                log.err(@src(), "Bad distance code: {d}", .{distance_code});
+                return FlateError.InvalidDistance;
+            },
         };
         return RangeSymbol {
             .value = null,

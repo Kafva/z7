@@ -375,13 +375,13 @@ fn queue_symbol(
         }
 
         // Add the length symbol for the back-reference
-        const lenc = RangeSymbol.from_length(longest_match_length);
+        const lenc = try RangeSymbol.from_length(longest_match_length);
         const lsymbol = FlateSymbol { .length = lenc };
         ctx.write_queue[ctx.write_queue_index] = lsymbol;
         ctx.write_queue_index += 1;
 
         // Add the distance symbol for the back-reference
-        const denc = RangeSymbol.from_distance(longest_match_distance);
+        const denc = try RangeSymbol.from_distance(longest_match_distance);
         const dsymbol = FlateSymbol { .distance = denc };
         ctx.write_queue[ctx.write_queue_index] = dsymbol;
         ctx.write_queue_index += 1;
@@ -398,14 +398,14 @@ pub fn queue_symbol2(
     }
 
     // Add the length symbol for the back-reference
-    const lenc = RangeSymbol.from_length(match_length);
+    const lenc = try RangeSymbol.from_length(match_length);
     const lsymbol = FlateSymbol { .length = lenc };
     ctx.write_queue[ctx.write_queue_index] = lsymbol;
     ctx.write_queue_index += 1;
     log.debug(@src(), "Queued length [{d}]: {any}", .{match_length, lenc});
 
     // Add the distance symbol for the back-reference
-    const denc = RangeSymbol.from_distance(match_backward_offset);
+    const denc = try RangeSymbol.from_distance(match_backward_offset);
     const dsymbol = FlateSymbol { .distance = denc };
     ctx.write_queue[ctx.write_queue_index] = dsymbol;
     ctx.write_queue_index += 1;

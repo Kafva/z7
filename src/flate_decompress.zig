@@ -499,7 +499,7 @@ fn read_symbol_backref_length(ctx: *DecompressContext, v: u16) !u16 {
     log.debug(@src(), "backref(length-code): {d}", .{v});
 
     // Get the corresponding `RangeSymbol` for the 'Code'
-    const rsym = RangeSymbol.from_length_code(v);
+    const rsym = try RangeSymbol.from_length_code(v);
 
     // Determine the length of the match
     const length: u16 = blk: {
@@ -520,7 +520,7 @@ fn read_symbol_backref_length(ctx: *DecompressContext, v: u16) !u16 {
 }
 
 fn read_symbol_backref_distance(ctx: *DecompressContext, v: u16) !u16 {
-    const denc = RangeSymbol.from_distance_code(@truncate(v));
+    const denc = try RangeSymbol.from_distance_code(@truncate(v));
     log.debug(@src(), "backref(distance-code): {d}", .{v});
 
     const distance: u16 = blk: {

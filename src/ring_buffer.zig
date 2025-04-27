@@ -73,6 +73,10 @@ pub fn RingBuffer(comptime T: type) type {
             const cnt: i32 = @intCast(self.count());
             if (cnt > 0 and self.maybe_end_index != null) {
                 if (forward_offset > cnt - 1 or ret_count > cnt) {
+                    log.err(@src(), "Attempting to read from forward offset {d} with {d} items", .{
+                        forward_offset,
+                        cnt,
+                    });
                     return RingBufferError.InvalidOffsetRead;
                 }
 
