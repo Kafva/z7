@@ -37,6 +37,27 @@ pub fn RingBuffer(comptime T: type) type {
             }
         }
 
+        /// Return the internal index in the ring buffer `backward_offset` steps
+        /// backwards.
+        pub fn index_offset_end(self: @This(), backward_offset: i32) !usize {
+            const cnt: i32 = @intCast(self.count());
+            if (cnt > 0 and self.maybe_end_index != null) {
+                if (backward_offset > cnt - 1) {
+                    log.err(@src(), "Attempting to retrieve index for backward offset {d} with {d} items", .{
+                        backward_offset,
+                        cnt,
+                    });
+                    return RingBufferError.InvalidOffsetRead;
+                }
+
+                const offset_index: i32 = @mod(self.maybe_end_index.? - backward_offset, self.capacity);
+                return @intCast(offset_index);
+            }
+
+            return RingBufferError.EmptyRead;
+
+        }
+
         /// Offset 0 will return the latest item at `end_index`
         /// Offset 1 will return the item one index before `end_index`
         /// With `ret_count=2`, Offset 1 would return [end_index - 1..end_index] inclusive.
@@ -99,8 +120,7 @@ pub fn RingBuffer(comptime T: type) type {
 
                 // We overwrote the oldest value, move the start_index forward.
                 if (self.maybe_end_index.? == self.start_index) {
-                    self.start_index += 1;
-                    self.start_index = @mod(self.start_index, self.capacity);
+                    self.start_index = @mod(self.start_index + 1, self.capacity);
                     return old;
                 }
             }

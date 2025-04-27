@@ -18,10 +18,16 @@ const queue_symbol_raw = @import("flate_compress.zig").queue_symbol_raw;
 pub const LzContext = struct {
     /// Pointer back to the main compression context
     cctx: *CompressContext,
-    start: usize,
     end: usize,
+    /// The *total* number of bytes processed into the sliding window
+    processed_bytes_sliding_window: i32,
+    /// Starting position of a backref match relative to the start of the input stream
+    maybe_match_start_pos: ?i32,
+    /// Length of current match
+    match_length: i32,
+    /// Backreference distance of current match
+    match_distance: i32,
     maybe_sliding_window_min_index: ?usize,
-    sliding_window_index: usize,
     sliding_window: RingBuffer(u8),
     /// Map from a 4 byte value in the input stream onto an array
     /// of starting positions in the sliding window where that
@@ -50,27 +56,6 @@ pub const LzItem = struct {
     /// Note: These indices are relative to the *start of the input stream*!
     start_indices: [LzItem.start_indices_max]i32,
     start_indices_cnt: usize,
-
-    pub fn format(
-        self: *const @This(),
-        comptime fmt: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype
-    ) !void {
-        if (fmt.len != 0) {
-            return std.fmt.invalidFmtError(fmt, self);
-        }
-        if (self.next) |n| {
-            const bs = u32_to_bytes(n);
-            return writer.print(
-                "{{ .next = '{c}{c}{c}{c}', .start_indices = {d} }}",
-                .{bs[0], bs[1], bs[2], bs[3], self.start_indices}
-            );
-        }
-        else {
-            return writer.print("{{ .next = null, .start_indices = {d} }}", .{self.start_indices});
-        }
-    }
 
     pub fn init(start_index: usize) @This() {
         var item = LzItem {
@@ -120,7 +105,6 @@ pub const LzItem = struct {
         const idx = LzItem.start_indices_max - self.start_indices_cnt;
         const oldest_value = self.start_indices[idx];
         if (oldest_value < 0) {
-            log.debug(@src(), "{any}", .{self.start_indices});
             return null;
         }
         return @intCast(oldest_value);
@@ -131,15 +115,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
     // * Backreferences can not go back more than 32K.
     // * Backreferences are allowed to go back into the previous block.
     var done = false;
-    // Starting position of a backref match relative to the start of the input stream
-    var maybe_match_start_pos: ?i32 = null;
-    var match_length: i32 = 0;
-    // The distance to the end of the sliding window from the start of a new match.
-    // The length of a match can not exceed this value
-    var dist_to_sliding_window_end: i32 = 0;
-    ctx.start = ctx.cctx.processed_bytes;
-    ctx.end = ctx.start + block_length;
-    ctx.sliding_window_index = ctx.start;
+    ctx.end = ctx.cctx.processed_bytes + block_length;
 
     while (!done and ctx.cctx.processed_bytes < ctx.end) {
         // Read next byte for lookahead
@@ -157,79 +133,43 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
 
         if (maybe_old) |old| {
             // Queue each byte that exits the lookahead onto the sliding window
-            _ = ctx.sliding_window.push(old);
-            ctx.sliding_window_index += 1;
-            // Save for NO_COMPRESSION queue
-            try queue_symbol_raw(ctx.cctx, b);
-
-            if (ctx.sliding_window.count() >= 4) {
-                // Add a lookup entry for the byte that was dropped into the lookahead
-                const window_bs = try ctx.sliding_window.read_offset_end(3, 4);
-                const window_key = bytes_to_u32(window_bs);
-                const start_idx = ctx.sliding_window.count() - 4;
-
-                if (ctx.lookup_table.getPtr(window_key)) |ptr| {
-                    // Update key with new start position
-                    ptr.add(@intCast(start_idx));
-                }
-                else {
-                    // Save the 'key' -> 'LzItem' map
-                    try ctx.lookup_table.put(window_key, LzItem.init(start_idx));
-                }
-            }
+            try sliding_window_push(ctx, old);
         }
 
-        if (ctx.sliding_window.count() == Flate.window_length) {
-            // Once the sliding window is filled, slide it one byte forward every iteration.
-            ctx.maybe_sliding_window_min_index =
-                if (ctx.maybe_sliding_window_min_index) |s| s + 1 else 1;
-        }
-
-        if (maybe_match_start_pos) |match_start_pos| {
+        if (ctx.maybe_match_start_pos) |match_start_pos| {
             // Handle match in progress
-            const offset = match_start_pos + match_length;
-            const bs = try ctx.sliding_window.read_offset_start(offset, 1);
 
-            if (match_length == dist_to_sliding_window_end or      // Reached the end of the window
-                match_length + 1 == Flate.lookahead_length or      // Maximum length match
+            // The backward offset will be the initial distance to the match from where
+            // the window was when the match started excluding the match length.
+            // This distance remains the same since we are adding bytes to window
+            // as we go (at the same time as we increase the match length)
+            const backward_offset: i32 = ctx.match_distance - 4; 
+            const bs = try ctx.sliding_window.read_offset_end(backward_offset, 1);
+
+            if (ctx.match_length == ctx.match_distance or          // Reached the end of the window
+                ctx.match_length + 1 == Flate.lookahead_length or  // Maximum length match
                 bs[0] != b                                         // Backref no longer matches
             ) {
                 // End match!
-                log.debug(@src(), "Ending match @{d} ", .{offset});
-
-                const processed_bytes_i: i32 = @intCast(ctx.cctx.processed_bytes);
-                const backref_dist: u16 = @intCast(processed_bytes_i - 1 - match_length - match_start_pos);
+                log.debug(@src(), "Ending match @{d} ", .{match_start_pos + ctx.match_length});
                 try queue_symbol2(
                     ctx.cctx,
-                    @intCast(match_length),
-                    backref_dist
+                    @intCast(ctx.match_length),
+                    @intCast(ctx.match_distance),
                 );
-                maybe_match_start_pos = null;
+                ctx.maybe_match_start_pos = null;
+
                 // Everything in the lookahead except the final byte was made part of the backref
                 for (0..3) |_| {
                     if (ctx.lookahead.prune(1)) |l| {
-                        _ = ctx.sliding_window.push(l);
-                        ctx.sliding_window_index += 1;
-                        // Add a lookup entry for each one
-                        if (ctx.sliding_window.count() >= 4) {
-                            const window_bs = try ctx.sliding_window.read_offset_end(3, 4);
-                            const window_key = bytes_to_u32(window_bs);
-                            const start_idx = ctx.sliding_window.count() - 4;
-
-                            if (ctx.lookup_table.getPtr(window_key)) |ptr| {
-                                ptr.add(@intCast(start_idx));
-                            }
-                            else {
-                                try ctx.lookup_table.put(window_key, LzItem.init(start_idx));
-                            }
-                        }
+                        try sliding_window_push(ctx, l);
                     }
                 }
             }
             else {
                 // Extend match!
                 util.print_char(log.debug, "Extending match", b);
-                match_length += 1;
+                ctx.match_length += 1;
             }
         }
         else {
@@ -244,7 +184,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
 
             if (ctx.lookup_table.getPtr(key)) |ptr| {
                 // New match: Save the distance and length and continue the match
-
+                
                 // Remove start positions past the sliding window
                 if (ctx.maybe_sliding_window_min_index) |sliding_window_min_index| {
                     ptr.prune(sliding_window_min_index);
@@ -252,19 +192,21 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
 
                 if (ptr.start_indices_cnt > 0) {
                     // There was a match, but it may have been outside the sliding window
-                    maybe_match_start_pos = ptr.best_start_pos();
-                    if (maybe_match_start_pos) |match_start_pos| {
-                        match_length = @intCast(Flate.min_length_match);
+                    ctx.maybe_match_start_pos = ptr.best_start_pos();
+                    if (ctx.maybe_match_start_pos) |match_start_pos| {
+                        ctx.match_length = @intCast(Flate.min_length_match);
 
-                        const processed_bytes_i: i32 = @intCast(ctx.cctx.processed_bytes);
                         // We need to make sure that the match does not go past where the
                         // sliding window was during the start of the match
-                        dist_to_sliding_window_end = processed_bytes_i - match_length - match_start_pos;
+                        //const processed_bytes_i: i32 = @intCast(ctx.cctx.processed_bytes);
+                        //ctx.match_distance = processed_bytes_i - ctx.match_length - match_start_pos;
+
+                        ctx.match_distance = ctx.processed_bytes_sliding_window - match_start_pos;
 
                         util.print_bytes(log.debug, "Found initial backref match", bs);
-                        log.debug(@src(), "Starting match @{d} [distance to window end: {d}]", .{
+                        log.debug(@src(), "Starting match @{d} [sliding window @{d}]", .{
                             match_start_pos,
-                            dist_to_sliding_window_end,
+                            ctx.processed_bytes_sliding_window,
                         });
                     }
                     else {
@@ -284,17 +226,17 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
     }
 
     // Finish any in-progress match
-    if (maybe_match_start_pos) |match_start_pos| {
+    if (ctx.maybe_match_start_pos) |match_start_pos| {
         log.debug(@src(), "Ending match due to input EOF @{d}", .{
-            match_start_pos + match_length,
+            match_start_pos + ctx.match_length,
         });
-        const processed_bytes_i: i32 = @intCast(ctx.cctx.processed_bytes);
-        const backref_dist: u16 = @intCast(processed_bytes_i - match_length - match_start_pos);
+
         try queue_symbol2(
             ctx.cctx,
-            @intCast(match_length),
-            backref_dist
+            @intCast(ctx.match_length),
+            @intCast(ctx.match_distance),
         );
+
         // We can only get into this branch if we were extending a match
         // in the last iteration, in that case, the entire lookahead was
         // part of the match.
@@ -312,6 +254,41 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
     }
 
     return done;
+}
+
+fn sliding_window_push(ctx: *LzContext, b: u8) !void {
+    _ = ctx.sliding_window.push(b);
+    ctx.processed_bytes_sliding_window += 1;
+
+    // Save for NO_COMPRESSION queue
+    try queue_symbol_raw(ctx.cctx, b);
+
+    if (ctx.sliding_window.count() >= 4) {
+        // Add a lookup entry for the byte that was dropped into the lookahead
+        try lookup_add(ctx);
+    }
+
+    if (ctx.sliding_window.count() == Flate.window_length) {
+        // Once the sliding window is filled, slide it one byte forward every iteration
+        ctx.maybe_sliding_window_min_index =
+            if (ctx.maybe_sliding_window_min_index) |s| s + 1 else 1;
+    }
+}
+
+fn lookup_add(ctx: *LzContext) !void {
+    const window_bs = try ctx.sliding_window.read_offset_end(3, 4);
+    const window_key = bytes_to_u32(window_bs);
+    // The global start index of the match in the input stream!
+    const start_idx = ctx.cctx.processed_bytes - ctx.lookahead.count() - 4;
+
+    if (ctx.lookup_table.getPtr(window_key)) |ptr| {
+        // Update key with new start position
+        ptr.add(@intCast(start_idx));
+    }
+    else {
+        // Save the 'key' -> 'LzItem' map
+        try ctx.lookup_table.put(window_key, LzItem.init(start_idx));
+    }
 }
 
 fn u32_to_bytes(int: u32) [4]u8 {

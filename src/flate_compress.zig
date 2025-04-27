@@ -109,10 +109,12 @@ pub fn compress(
     };
     var lz = LzContext {
         .cctx = &ctx,
-        .start = 0,
         .end = 0,
+        .processed_bytes_sliding_window = 0,
+        .match_length = 0,
+        .match_distance = 0,
+        .maybe_match_start_pos = null,
         .maybe_sliding_window_min_index = null,
-        .sliding_window_index = 0,
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookup_table = std.AutoHashMap(u32, LzItem).init(allocator),
         .lookahead = try RingBuffer(u8).init(allocator, Flate.min_length_match),
