@@ -10,9 +10,9 @@ const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 
 const read_byte = @import("flate_compress.zig").read_byte;
-const queue_symbol2 = @import("flate_compress.zig").queue_symbol2;
-const queue_symbol3 = @import("flate_compress.zig").queue_symbol3;
-const queue_symbol_raw = @import("flate_compress.zig").queue_symbol_raw;
+const queue_push_range = @import("flate_compress.zig").queue_push_range;
+const queue_push_char = @import("flate_compress.zig").queue_push_char;
+const raw_queue_push_char = @import("flate_compress.zig").raw_queue_push_char;
 
 
 pub const LzContext = struct {
@@ -152,7 +152,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
             ) {
                 // End match!
                 log.debug(@src(), "Ending match @{d}", .{match_start_pos + ctx.match_length});
-                try queue_symbol2(
+                try queue_push_range(
                     ctx.cctx,
                     @intCast(ctx.match_length),
                     @intCast(ctx.match_distance),
@@ -175,7 +175,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
         else {
             // Queue the dropped byte as a raw literal
             if (maybe_old) |old|  {
-                try queue_symbol3(ctx.cctx, old);
+                try queue_push_char(ctx.cctx, old);
             }
 
             // Look for new match
@@ -232,7 +232,7 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
             match_start_pos + ctx.match_length,
         });
 
-        try queue_symbol2(
+        try queue_push_range(
             ctx.cctx,
             @intCast(ctx.match_length),
             @intCast(ctx.match_distance),
@@ -249,8 +249,8 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
         log.debug(@src(), "Appending left-over raw bytes", .{});
 
         while (ctx.lookahead.prune(1)) |lit| {
-            try queue_symbol3(ctx.cctx, lit);
-            try queue_symbol_raw(ctx.cctx, lit);
+            try queue_push_char(ctx.cctx, lit);
+            try raw_queue_push_char(ctx.cctx, lit);
         }
     }
 
@@ -262,7 +262,7 @@ fn sliding_window_push(ctx: *LzContext, b: u8) !void {
     ctx.processed_bytes_sliding_window += 1;
 
     // Save for NO_COMPRESSION queue
-    try queue_symbol_raw(ctx.cctx, b);
+    try raw_queue_push_char(ctx.cctx, b);
 
     if (ctx.sliding_window.count() >= 4) {
         // Add a lookup entry for the byte that was dropped into the lookahead

@@ -31,13 +31,6 @@ pub const CompressContext = struct {
     lz: *LzContext,
     /// Initial offset into the input stream
     instream_offset: usize,
-    /// Left over input byte to use from previous block
-    next_byte: ?u8,
-    /// Sliding window for back-references in LZSS
-    sliding_window: RingBuffer(u8),
-    read_window: []u8,
-    read_window_index: usize,
-    lookahead: []u8,
     /// Queue of symbols to write to the output stream, we need to keep this
     /// in memory so that we can create Huffman trees for these symbols in
     /// block type-2.
@@ -56,6 +49,7 @@ pub const CompressContext = struct {
     d_enc_map: []?HuffmanEncoding,
     /// Code length Huffman encoding mapping for block type-2
     cl_enc_map: []?HuffmanEncoding,
+
 };
 
 /// Integer representation needs to match enums in Golang for unit tests!
@@ -92,11 +86,6 @@ pub fn compress(
         .block_start = 0,
         .lz = undefined,
         .instream_offset = instream_offset,
-        .next_byte = null,
-        .read_window = try allocator.alloc(u8, Flate.block_length_max),
-        .read_window_index = 0,
-        .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
-        .lookahead = try allocator.alloc(u8, Flate.lookahead_length),
         .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length_max),
         .write_queue_index = 0,
         .write_queue_raw = try allocator.alloc(u8, Flate.block_length_max),
@@ -138,149 +127,8 @@ pub fn compress(
     );
 }
 
-/// Go over `block_length` bytes in the input stream with lzss and store
-/// the resulting `FlateSymbol` objects into the write queue.
-fn lzss(ctx: *CompressContext, block_length: usize) !bool {
-    ctx.block_start = ctx.processed_bytes;
-    const end: usize = ctx.processed_bytes + block_length;
-    var done = false;
-    ctx.lookahead[0] = blk: {
-        if (ctx.next_byte) |b| {
-            ctx.next_byte = null;
-            break :blk b;
-        }
-        break :blk read_byte(ctx) catch {
-            done = true;
-            break :blk 0;
-        };
-    };
-
-    while (!done and ctx.processed_bytes < end) {
-        // The current number of matches within the lookahead
-        var match_length: u16 = 0;
-        // Max number of matches in the lookahead this iteration
-        // XXX: The byte at the `longest_match_length` index is not part
-        // of the match!
-        var longest_match_length: u16 = 0;
-        var longest_match_distance: u16 = 0;
-        // Look for matches in the sliding_window
-        const window_last_index: u16 = blk: {
-            const c: u16 = @truncate(ctx.sliding_window.count());
-            break :blk if (c == 0) c else c - 1;
-        };
-        var ring_offset: u16 = 0;
-
-        while (ring_offset != window_last_index) {
-            const bs: [1]u8 = try ctx.sliding_window.read_offset_start(@as(i32, ring_offset), 1);
-            if (ctx.lookahead[match_length] != bs[0]) {
-                // Reset and start matching from the beginning of the
-                // lookahead again
-                //
-                // Try the same index in the sliding_window again
-                // if we had found a partial match, otherwise move on
-                if (match_length == 0) {
-                    ring_offset += 1;
-                }
-
-                match_length = 0;
-                continue;
-            }
-
-            ring_offset += 1;
-            match_length += 1;
-
-            // When `match_cnt` exceeds `longest_match_cant` we
-            // need to feed another byte into the lookahead.
-            if (match_length <= longest_match_length) {
-                continue;
-            }
-
-            // Update the longest match
-            longest_match_length = match_length;
-            longest_match_distance = (window_last_index - (ring_offset-1)) + match_length;
-
-            if (ctx.processed_bytes == end) {
-                // Reached end of block, write queue will not fit more content
-                log.debug(@src(), "Write queue filled [{d}/{d}]", .{
-                    ctx.processed_bytes - ctx.block_start,
-                    block_length,
-                });
-                break;
-            }
-            if (longest_match_length == window_last_index) {
-                // Matched entire lookahead
-                break;
-            }
-            else if (longest_match_length == Flate.lookahead_length - 1) {
-                // Longest supported match
-                break;
-            }
-
-            ctx.lookahead[longest_match_length] = read_byte(ctx) catch {
-                done = true;
-                break;
-            };
-            log.trace(@src(), "Extending lookahead to {d}", .{longest_match_length});
-        }
-
-        const lookahead_end = if (longest_match_length == 0) 1
-                              else longest_match_length;
-        // Update the sliding window with the characters from the lookahead
-        for (0..lookahead_end) |i| {
-            _ = ctx.sliding_window.push(ctx.lookahead[i]);
-        }
-
-        // Save the symbols for the characters in the lookahead
-        try queue_symbol(
-            ctx,
-            lookahead_end,
-            longest_match_length,
-            longest_match_distance
-        );
-
-        // Set starting byte for next iteration
-        if (longest_match_length == 0 or
-            longest_match_length == window_last_index or
-            longest_match_length == Flate.lookahead_length - 1) {
-            // We need a new byte
-            ctx.lookahead[0] = read_byte(ctx) catch {
-                done = true;
-                break;
-            };
-        }
-        else {
-            // The final char from the lookahead should be passed to
-            // the next iteration.
-            util.print_char(log.trace, "Saving for next pass", ctx.lookahead[longest_match_length]);
-            ctx.lookahead[0] = ctx.lookahead[longest_match_length];
-        }
-    }
-
-    // Save starting byte for next block
-    if (!done) {
-        util.print_char(log.debug, "Saving for next block", ctx.lookahead[0]);
-        ctx.next_byte = ctx.lookahead[0];
-    }
-
-    log.debug(
-        @src(),
-        "Done processing input for new block [{}+{} bytes]",
-        .{ctx.block_start, ctx.processed_bytes - ctx.block_start}
-    );
-
-    if (done and ctx.next_byte != null) {
-        util.print_char(log.err, "Reached eof with extra byte present", ctx.next_byte.?);
-        return FlateError.InternalError;
-    }
-
-    return done;
-}
-
 fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // Populate the write_queue
-    // We will always have a saved `next_byte` after this call except for
-    // when we reach eof in the input stream.
-    //const done = try lzss(ctx, block_length);
     const done = try lz_compress(ctx.lz, block_length);
 
     // TODO: analyze write queue and decide which type to use
@@ -336,7 +184,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     }
     log.debug(@src(), "Done compressing block #{d} [{d} bytes]", .{
         ctx.block_cnt,
-        if (ctx.next_byte) |_| ctx.processed_bytes - 1 else ctx.processed_bytes,
+        ctx.processed_bytes,
     });
     ctx.write_queue_index = 0;
     ctx.write_queue_raw_index = 0;
@@ -344,53 +192,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     return done;
 }
 
-fn queue_symbol(
-    ctx: *CompressContext,
-    lookahead_end: u16,
-    longest_match_length: u16,
-    longest_match_distance: u16,
-) !void {
-    if (ctx.write_queue_raw_index + lookahead_end > Flate.block_length_max) {
-        return FlateError.OutOfQueueSpace;
-    }
-
-    // Save everything for the raw write queue
-    for (0..lookahead_end) |i| {
-        ctx.write_queue_raw[ctx.write_queue_raw_index] = ctx.lookahead[i];
-        ctx.write_queue_raw_index += 1;
-    }
-
-    if (longest_match_length <= Flate.min_length_match) {
-        // Prefer raw characters for small matches
-        for (0..lookahead_end) |i| {
-            if (ctx.write_queue_index + 1 >= Flate.block_length_max) {
-                return FlateError.OutOfQueueSpace;
-            }
-            const symbol = FlateSymbol { .char = ctx.lookahead[i] };
-            ctx.write_queue[ctx.write_queue_index] = symbol;
-            ctx.write_queue_index += 1;
-        }
-    }
-    else {
-        if (ctx.write_queue_index + 2 >= Flate.block_length_max) {
-            return FlateError.OutOfQueueSpace;
-        }
-
-        // Add the length symbol for the back-reference
-        const lenc = try RangeSymbol.from_length(longest_match_length);
-        const lsymbol = FlateSymbol { .length = lenc };
-        ctx.write_queue[ctx.write_queue_index] = lsymbol;
-        ctx.write_queue_index += 1;
-
-        // Add the distance symbol for the back-reference
-        const denc = try RangeSymbol.from_distance(longest_match_distance);
-        const dsymbol = FlateSymbol { .distance = denc };
-        ctx.write_queue[ctx.write_queue_index] = dsymbol;
-        ctx.write_queue_index += 1;
-    }
-}
-
-pub fn queue_symbol2(
+pub fn queue_push_range(
     ctx: *CompressContext,
     match_length: u16,
     match_backward_offset: u16,
@@ -414,7 +216,7 @@ pub fn queue_symbol2(
     log.debug(@src(), "Queued distance [{d}]: {any}", .{match_backward_offset, denc});
 }
 
-pub fn queue_symbol3(
+pub fn queue_push_char(
     ctx: *CompressContext,
     byte: u8,
 ) !void {
@@ -428,7 +230,8 @@ pub fn queue_symbol3(
     util.print_char(log.debug, "Queued literal", symbol.char);
 }
 
-pub fn queue_symbol_raw(
+/// Save for NO_COMPRESSION queue
+pub fn raw_queue_push_char(
     ctx: *CompressContext,
     byte: u8,
 ) !void {
@@ -436,11 +239,9 @@ pub fn queue_symbol_raw(
         return FlateError.OutOfQueueSpace;
     }
 
-    // Save for NO_COMPRESSION queue
     ctx.write_queue_raw[ctx.write_queue_raw_index] = byte;
     ctx.write_queue_raw_index += 1;
 }
-
 
 fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void {
     if (block_length > Flate.block_length_max) {
