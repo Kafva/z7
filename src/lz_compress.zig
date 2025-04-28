@@ -18,7 +18,6 @@ const raw_queue_push_char = @import("flate_compress.zig").raw_queue_push_char;
 pub const LzContext = struct {
     /// Pointer back to the main compression context
     cctx: *CompressContext,
-    end: usize,
     /// The *total* number of bytes processed into the sliding window
     processed_bytes_sliding_window: i32,
     /// Starting position of a backref match relative to the start of the input stream
@@ -111,13 +110,13 @@ pub const LzItem = struct {
     }
 };
 
-pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
+pub fn lz_compress(ctx: *LzContext) !bool {
     // * Backreferences can not go back more than 32K.
     // * Backreferences are allowed to go back into the previous block.
     var done = false;
-    ctx.end = ctx.cctx.processed_bytes + block_length;
+    const end = ctx.cctx.processed_bytes + ctx.cctx.block_length;
 
-    while (!done and ctx.cctx.processed_bytes < ctx.end) {
+    while (!done and ctx.cctx.processed_bytes < end) {
         // Read next byte for lookahead
         const b = read_byte(ctx.cctx) catch {
             done = true;
@@ -241,7 +240,9 @@ pub fn lz_compress(ctx: *LzContext, block_length: usize) !bool {
         // We can only get into this branch if we were extending a match
         // in the last iteration, in that case, the entire lookahead was
         // part of the match.
-        _ = ctx.lookahead.prune(4);
+        while (ctx.lookahead.prune(1)) |lit| {
+            try raw_queue_push_char(ctx.cctx, lit);
+        }
     }
 
     // Queue up any left over literals as-is
@@ -286,15 +287,6 @@ fn sliding_window_push(ctx: *LzContext, b: u8) !void {
         ctx.maybe_sliding_window_min_index =
             if (ctx.maybe_sliding_window_min_index) |s| s + 1 else 1;
     }
-}
-
-fn u32_to_bytes(int: u32) [4]u8 {
-    return [_]u8{
-       @as(u8, @truncate((int & 0xff00_0000) >> 24)),
-       @as(u8, @truncate((int & 0x00ff_0000) >> 16)),
-       @as(u8, @truncate((int & 0x0000_ff00) >> 8)),
-       @as(u8, @truncate((int & 0x0000_00ff)))
-    };
 }
 
 fn bytes_to_u32(bs: [4]u8) u32 {

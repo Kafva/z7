@@ -20,6 +20,8 @@ pub const CompressContext = struct {
     rng: std.Random.Xoshiro256,
     mode: FlateCompressMode,
     crc: *std.hash.Crc32,
+    /// Number of bytes from the input stream to compress for the current block
+    block_length: usize,
     /// The current type of block to write
     block_type: FlateBlockType,
     block_cnt: usize,
@@ -78,6 +80,7 @@ pub fn compress(
         .mode = mode,
         .crc = crc,
         .block_type = FlateBlockType.RESERVED,
+        .block_length = 0,
         .block_cnt = 0,
         .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
         .reader = instream.reader().any(),
@@ -98,7 +101,6 @@ pub fn compress(
     };
     var lz = LzContext {
         .cctx = &ctx,
-        .end = 0,
         .processed_bytes_sliding_window = 0,
         .match_length = 0,
         .match_distance = 0,
@@ -113,8 +115,8 @@ pub fn compress(
     var done = false;
     while (!done) {
         // TODO: fixed block length
-        done = try write_block(&ctx, Flate.block_length_max);
-        //done = try write_block(&ctx, 256);
+        ctx.block_length = Flate.block_length_max;
+        done = try write_block(&ctx);
     }
 
     // Incomplete bytes will be padded when flushing, wait until all
@@ -127,9 +129,9 @@ pub fn compress(
     );
 }
 
-fn write_block(ctx: *CompressContext, block_length: usize) !bool {
+fn write_block(ctx: *CompressContext) !bool {
     // Populate the write_queue
-    const done = try lz_compress(ctx.lz, block_length);
+    const done = try lz_compress(ctx.lz);
 
     // TODO: analyze write queue and decide which type to use
     ctx.block_type = switch (ctx.mode) {
@@ -157,7 +159,7 @@ fn write_block(ctx: *CompressContext, block_length: usize) !bool {
     // Encode everything from the write queue onto the output stream
     switch (ctx.block_type) {
         FlateBlockType.NO_COMPRESSION => {
-            try no_compression_write_block(ctx, block_length);
+            try no_compression_write_block(ctx);
         },
         FlateBlockType.FIXED_HUFFMAN => {
             // Write encoded data
@@ -235,6 +237,10 @@ pub fn raw_queue_push_char(
     ctx: *CompressContext,
     byte: u8,
 ) !void {
+    if (ctx.block_length > Flate.block_length_max) {
+        // The block length is too big for NO_COMPRESSION, skip.
+        return;
+    }
     if (ctx.write_queue_raw_index + 1 > Flate.block_length_max) {
         return FlateError.OutOfQueueSpace;
     }
@@ -243,8 +249,8 @@ pub fn raw_queue_push_char(
     ctx.write_queue_raw_index += 1;
 }
 
-fn no_compression_write_block(ctx: *CompressContext, block_length: usize) !void {
-    if (block_length > Flate.block_length_max) {
+fn no_compression_write_block(ctx: *CompressContext) !void {
+    if (ctx.block_length > Flate.block_length_max) {
         return FlateError.InvalidBlockLength;
     }
     // Fill up with zeroes to the next byte boundary
