@@ -25,6 +25,8 @@ pub const LzContext = struct {
     /// Length of current match
     match_length: i32,
     /// Backreference distance of current match
+    /// * can not go back more than 32K
+    /// * allowed to go back into the previous block
     match_distance: i32,
     maybe_sliding_window_min_index: ?usize,
     sliding_window: RingBuffer(u8),
@@ -111,10 +113,9 @@ pub const LzItem = struct {
 };
 
 pub fn lz_compress(ctx: *LzContext) !bool {
-    // * Backreferences can not go back more than 32K.
-    // * Backreferences are allowed to go back into the previous block.
     var done = false;
-    const end = ctx.cctx.processed_bytes + ctx.cctx.block_length;
+    // Slack space to able to fill out with left-over bytes
+    const end = ctx.cctx.processed_bytes + ctx.cctx.block_length - 4;
 
     while (!done and ctx.cctx.processed_bytes < end) {
         // Read next byte for lookahead
@@ -226,9 +227,9 @@ pub fn lz_compress(ctx: *LzContext) !bool {
     }
 
     // Finish any in-progress match
-    if (ctx.maybe_match_start_pos) |match_start_pos| {
-        log.debug(@src(), "Ending match due to input EOF @{d}", .{
-            match_start_pos + ctx.match_length,
+    if (ctx.maybe_match_start_pos) |_| {
+        log.debug(@src(), "Ending match due to input EOB/EOF @{d}", .{
+            ctx.processed_bytes_sliding_window,
         });
 
         try queue_push_range(
@@ -236,6 +237,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
             @intCast(ctx.match_length),
             @intCast(ctx.match_distance),
         );
+        ctx.maybe_match_start_pos = null;
 
         // We can only get into this branch if we were extending a match
         // in the last iteration, in that case, the entire lookahead was
