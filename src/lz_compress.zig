@@ -243,6 +243,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
         // in the last iteration, in that case, the entire lookahead was
         // part of the match.
         while (ctx.lookahead.prune(1)) |lit| {
+            try sliding_window_push(ctx, lit);
             try raw_queue_push_char(ctx.cctx, lit);
         }
     }
@@ -252,6 +253,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
         log.debug(@src(), "Appending left-over raw bytes", .{});
 
         while (ctx.lookahead.prune(1)) |lit| {
+            try sliding_window_push(ctx, lit);
             try queue_push_char(ctx.cctx, lit);
             try raw_queue_push_char(ctx.cctx, lit);
         }

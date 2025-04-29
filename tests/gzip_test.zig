@@ -108,12 +108,13 @@ fn check_ref_ok(ctx: *TestContext) !void {
 ////////////////////////////////////////////////////////////////////////////////
 
 test "Gzip tmp" {
-    try run("tests/testdata/flate_test.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
-    try run("tests/testdata/over_9000_a.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
-    try run("tests/testdata/rfc1951.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
-    try run(TestContext.random_label, "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
-    // try run("tests/testdata/wallpaper_small.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.NO_COMPRESSION);
-    //try run("tests/testdata/image.png", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    //try run("tests/testdata/flate_test.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    // try run("tests/testdata/over_9000_a.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    // try run("tests/testdata/rfc1951.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    // try run(TestContext.random_label, "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    try run("tests/testdata/wallpaper_small.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    try run("tests/testdata/wallpaper.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    //try run("tests/testdata/image.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

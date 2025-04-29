@@ -116,7 +116,6 @@ pub fn compress(
     while (!done) {
         // TODO: fixed block length
         ctx.block_length = Flate.block_length_max;
-        // ctx.block_length = 64;
         done = try write_block(&ctx);
     }
 
