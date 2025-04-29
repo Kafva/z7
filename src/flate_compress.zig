@@ -121,7 +121,7 @@ pub fn compress(
     // Incomplete bytes will be padded when flushing, wait until all
     // writes are done.
     try ctx.bit_writer.flushBits();
-    log.info(
+    log.debug(
         @src(),
         "Compression done: {} -> {} bytes",
         .{ctx.processed_bytes, @divFloor(ctx.written_bits, 8)}
@@ -137,7 +137,7 @@ fn write_block(ctx: *CompressContext) !bool {
 
     const btype: u3 = @intFromEnum(ctx.block_type);
 
-    log.info(@src(), "Writing type-{d} block #{} [maxsize: {} bytes]{s}", .{
+    log.info(@src(), "Writing type-{d} block #{} [maxsize: {d: >8} bytes]{s}", .{
         @intFromEnum(ctx.block_type),
         ctx.block_cnt,
         ctx.block_length,
