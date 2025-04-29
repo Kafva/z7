@@ -374,8 +374,12 @@ pub const Flate = struct {
     pub const lookahead_length: usize = 258;
     /// Valid distances must be within the window length, i.e. (1..2**15)
     pub const window_length: usize = std.math.pow(usize, 2, 15);
+    /// Minimum block size
+    pub const block_length_min = std.math.pow(usize, 2, 15);
     /// Maximum block size for type-0 blocks
-    pub const block_length_max: usize = std.math.pow(usize, 2, 16);
+    pub const no_compression_block_length_max: usize = std.math.pow(usize, 2, 16);
+    /// Maximum block size for type-1/type-2 blocks
+    pub const compression_block_length_max: usize = 3*1024*1024;
     /// Maximum value for deflate literal/length symbols (non-inclusive)
     pub const ll_symbol_max: usize = 286;
     /// Maximum value for deflate distance symbols (non-inclusive)

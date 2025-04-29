@@ -51,18 +51,17 @@ pub const CompressContext = struct {
     d_enc_map: []?HuffmanEncoding,
     /// Code length Huffman encoding mapping for block type-2
     cl_enc_map: []?HuffmanEncoding,
-
 };
 
 /// Integer representation needs to match enums in Golang for unit tests!
 ///   src/compress/flate/deflate.go
 pub const FlateCompressMode = enum(u8) {
     /// Only block type-0
-    NO_COMPRESSION = 0,   
+    NO_COMPRESSION = 0,
     /// Prefer block type-1
-    BEST_SPEED = 1,    
+    BEST_SPEED = 1,
     /// Prefer block type-2
-    BEST_SIZE = 9,        
+    BEST_SIZE = 9,
 };
 
 pub fn compress(
@@ -80,7 +79,7 @@ pub fn compress(
         .mode = mode,
         .crc = crc,
         .block_type = FlateBlockType.RESERVED,
-        .block_length = 0,
+        .block_length = Flate.no_compression_block_length_max,
         .block_cnt = 0,
         .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
         .reader = instream.reader().any(),
@@ -89,9 +88,9 @@ pub fn compress(
         .block_start = 0,
         .lz = undefined,
         .instream_offset = instream_offset,
-        .write_queue = try allocator.alloc(FlateSymbol, Flate.block_length_max),
+        .write_queue = try allocator.alloc(FlateSymbol, Flate.compression_block_length_max),
         .write_queue_index = 0,
-        .write_queue_raw = try allocator.alloc(u8, Flate.block_length_max),
+        .write_queue_raw = try allocator.alloc(u8, Flate.compression_block_length_max),
         .write_queue_raw_index = 0,
         .write_queue_cl = try allocator.alloc(ClSymbol, cl_queue_max),
         .write_queue_cl_index = 0,
@@ -109,20 +108,20 @@ pub fn compress(
         .sliding_window = try RingBuffer(u8).init(allocator, Flate.window_length),
         .lookup_table = std.AutoHashMap(u32, LzItem).init(allocator),
         .lookahead = try RingBuffer(u8).init(allocator, Flate.min_length_match),
+        .backref_lengths_sum = 0,
+        .backref_total_count = 0,
     };
     ctx.lz = &lz;
 
     var done = false;
     while (!done) {
-        // TODO: fixed block length
-        ctx.block_length = Flate.block_length_max;
         done = try write_block(&ctx);
     }
 
     // Incomplete bytes will be padded when flushing, wait until all
     // writes are done.
     try ctx.bit_writer.flushBits();
-    log.debug(
+    log.info(
         @src(),
         "Compression done: {} -> {} bytes",
         .{ctx.processed_bytes, @divFloor(ctx.written_bits, 8)}
@@ -133,21 +132,16 @@ fn write_block(ctx: *CompressContext) !bool {
     // Populate the write_queue
     const done = try lz_compress(ctx.lz);
 
-    // TODO: analyze write queue and decide which type to use
-    ctx.block_type = switch (ctx.mode) {
-        .NO_COMPRESSION => FlateBlockType.NO_COMPRESSION,
-        .BEST_SPEED => FlateBlockType.FIXED_HUFFMAN,
-        else =>
-            //@enumFromInt(ctx.rng.random().intRangeAtMost(u2, 0, 3)),
-            //@enumFromInt(ctx.block_cnt % 2),
-            FlateBlockType.DYNAMIC_HUFFMAN,
-    };
+    // Decide which block type to use
+    const next_block_length = try pick_block_type(ctx);
+
     const btype: u3 = @intFromEnum(ctx.block_type);
 
-    log.debug(@src(), "Writing type-{d} block{s} #{}", .{
+    log.info(@src(), "Writing type-{d} block #{} [maxsize: {} bytes]{s}", .{
         @intFromEnum(ctx.block_type),
+        ctx.block_cnt,
+        ctx.block_length,
         if (done) " (final)" else "",
-        ctx.block_cnt
     });
 
     // Write block header
@@ -184,14 +178,66 @@ fn write_block(ctx: *CompressContext) !bool {
             return FlateError.UnexpectedBlockType;
         }
     }
-    log.debug(@src(), "Done compressing block #{d} [{d} bytes]", .{
+    log.debug(@src(), "Done compressing type-{d} block #{d} [{d} bytes]", .{
+        @intFromEnum(ctx.block_type),
         ctx.block_cnt,
         ctx.processed_bytes,
     });
     ctx.write_queue_index = 0;
     ctx.write_queue_raw_index = 0;
     ctx.block_cnt += 1;
+    ctx.block_length = next_block_length;
     return done;
+}
+
+pub fn pick_block_type(ctx: *CompressContext) !usize {
+    var next_block_length: usize = undefined;
+    const average_len = ctx.lz.backref_average_length();
+    log.debug(@src(), "Average match length: {d} bytes", .{average_len});
+
+    if (ctx.block_length <= Flate.no_compression_block_length_max and
+        (ctx.mode == FlateCompressMode.NO_COMPRESSION or average_len == 0)) {
+        // Use NO_COMPRESSION if explicitly configured or if there was not
+        // a single back reference match
+        next_block_length = ctx.block_length - @divFloor(ctx.block_length, 32);
+        if (next_block_length < Flate.block_length_min) {
+            next_block_length = Flate.block_length_min;
+        }
+        ctx.block_type = FlateBlockType.NO_COMPRESSION;
+    }
+    else if (ctx.mode == FlateCompressMode.BEST_SPEED or
+             (ctx.block_length <= Flate.no_compression_block_length_max and
+              average_len == Flate.min_length_match)) {
+        // Use FIXED_HUFFMAN if configured for max speed or if the average
+        // match length was very low.
+        if (ctx.mode == FlateCompressMode.BEST_SPEED and average_len > Flate.min_length_match) {
+            // Bump the block size if we are using BEST_SPEED and got a decent match
+            next_block_length = ctx.block_length * 2;
+            if (next_block_length < Flate.block_length_min) {
+                next_block_length = Flate.block_length_min;
+            }
+        }
+        else {
+            // Decrease the block size if we are aiming for BEST_SIZE
+            next_block_length = ctx.block_length - @divFloor(ctx.block_length, 32);
+            if (next_block_length < Flate.block_length_min) {
+                next_block_length = Flate.block_length_min;
+            }
+        }
+        ctx.block_type = FlateBlockType.FIXED_HUFFMAN;
+    }
+    else {
+        // Otherwise, use DYNAMIC_HUFFMAN and increase the block size for the
+        // next iteration
+        next_block_length = ctx.block_length * 4;
+        if (next_block_length < Flate.block_length_min or
+            next_block_length > ctx.write_queue_raw.len) {
+            next_block_length = ctx.write_queue_raw.len;
+        }
+        ctx.block_type = FlateBlockType.DYNAMIC_HUFFMAN;
+    }
+
+    return next_block_length;
 }
 
 pub fn queue_push_range(
@@ -199,7 +245,7 @@ pub fn queue_push_range(
     match_length: u16,
     match_backward_offset: u16,
 ) !void {
-    if (ctx.write_queue_index + 2 >= Flate.block_length_max) {
+    if (ctx.write_queue_index + 2 >= ctx.write_queue.len) {
         return FlateError.OutOfQueueSpace;
     }
 
@@ -222,7 +268,7 @@ pub fn queue_push_char(
     ctx: *CompressContext,
     byte: u8,
 ) !void {
-    if (ctx.write_queue_index + 1 >= Flate.block_length_max) {
+    if (ctx.write_queue_index + 1 >= ctx.write_queue.len) {
         return FlateError.OutOfQueueSpace;
     }
 
@@ -237,11 +283,11 @@ pub fn raw_queue_push_char(
     ctx: *CompressContext,
     byte: u8,
 ) !void {
-    if (ctx.block_length > Flate.block_length_max) {
-        // The block length is too big for NO_COMPRESSION, skip.
+    if (ctx.block_length > Flate.no_compression_block_length_max) {
+        // The block length is too large for NO_COMPRESSION, skip
         return;
     }
-    if (ctx.write_queue_raw_index + 1 > Flate.block_length_max) {
+    if (ctx.write_queue_raw_index + 1 > ctx.write_queue_raw.len) {
         return FlateError.OutOfQueueSpace;
     }
 
@@ -250,7 +296,7 @@ pub fn raw_queue_push_char(
 }
 
 fn no_compression_write_block(ctx: *CompressContext) !void {
-    if (ctx.block_length > Flate.block_length_max) {
+    if (ctx.block_length > ctx.write_queue_raw.len) {
         return FlateError.InvalidBlockLength;
     }
     // Fill up with zeroes to the next byte boundary
@@ -474,7 +520,7 @@ fn dynamic_code_gen_enc_map_cl(ctx: *CompressContext) !void {
 }
 
 /// Layout of metadata:
-/// +-------------------------------------------------+     +-----------------+ 
+/// +-------------------------------------------------+     +-----------------+
 /// | HLIT | HDIST | HCLEN | "CL header" | CL symbols | ... | Compressed data |
 /// +-------------------------------------------------+     +-----------------+
 fn dynamic_code_write_metadata(ctx: *CompressContext) !void {

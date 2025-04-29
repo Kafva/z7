@@ -36,6 +36,16 @@ pub const LzContext = struct {
     lookup_table: std.AutoHashMap(u32, LzItem),
     /// 4 byte lookahead
     lookahead: RingBuffer(u8),
+    /// Sum of all match lengths
+    backref_lengths_sum: usize,
+    /// Number of back reference matches encountered
+    backref_total_count: usize,
+
+    pub fn backref_average_length(self: @This()) usize {
+        if (self.backref_total_count == 0)
+            return 0;
+        return @divFloor(self.backref_lengths_sum, self.backref_total_count);
+    }
 };
 
 pub const LzItem = struct {
@@ -112,6 +122,7 @@ pub const LzItem = struct {
     }
 };
 
+/// the average match length
 pub fn lz_compress(ctx: *LzContext) !bool {
     var done = false;
     // Slack space to able to fill out with left-over bytes
@@ -143,7 +154,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
             // the window was when the match started excluding the match length.
             // This distance remains the same since we are adding bytes to window
             // as we go (at the same time as we increase the match length)
-            const backward_offset: i32 = ctx.match_distance - 4; 
+            const backward_offset: i32 = ctx.match_distance - 4;
             const bs = try ctx.sliding_window.read_offset_end(backward_offset, 1);
 
             if (ctx.match_length == ctx.match_distance or          // Reached the end of the window
@@ -157,6 +168,9 @@ pub fn lz_compress(ctx: *LzContext) !bool {
                     @intCast(ctx.match_length),
                     @intCast(ctx.match_distance),
                 );
+                ctx.backref_total_count += 1;
+                ctx.backref_lengths_sum += @intCast(ctx.match_length);
+
                 ctx.maybe_match_start_pos = null;
 
                 // Everything in the lookahead except the final byte was made part of the backref
@@ -184,7 +198,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
 
             if (ctx.lookup_table.getPtr(key)) |ptr| {
                 // New match: Save the distance and length and continue the match
-                
+
                 // Remove start positions past the sliding window
                 if (ctx.maybe_sliding_window_min_index) |sliding_window_min_index| {
                     ptr.prune(sliding_window_min_index);
@@ -237,6 +251,8 @@ pub fn lz_compress(ctx: *LzContext) !bool {
             @intCast(ctx.match_length),
             @intCast(ctx.match_distance),
         );
+        ctx.backref_total_count += 1;
+        ctx.backref_lengths_sum += @intCast(ctx.match_length);
         ctx.maybe_match_start_pos = null;
 
         // We can only get into this branch if we were extending a match

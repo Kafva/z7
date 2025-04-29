@@ -26,7 +26,7 @@ fn run(
     var ctx = try TestContext.init(allocator, inputfile, label);
     defer ctx.deinit();
 
-    ctx.mode = mode;
+    ctx.maybe_mode = mode;
     try runFn(&ctx);
 }
 
@@ -37,14 +37,15 @@ fn check_z7_ok(ctx: *TestContext) !void {
         ctx.inputfile,
         &ctx.in,
         &ctx.compressed,
-        ctx.mode.?,
+        ctx.maybe_mode.?,
         // XXX: gzstat.py does not handle gzip flags
         @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
     );
-
-    try ctx.log_result(try ctx.compressed.getPos());
+    ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
     try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
+
+    try ctx.log_result(try ctx.compressed.getPos());
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -55,11 +56,11 @@ fn check_go_decompress_z7(ctx: *TestContext) !void {
     const compressed_len = libflate.Gzip(
         try ctx.inputfile_s(),
         try ctx.compressed_path_s(),
-        @intFromEnum(ctx.mode.?),
+        @intFromEnum(ctx.maybe_mode.?),
     );
-    try std.testing.expect(compressed_len > 0);
+    ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
-    // try ctx.log_result(@intCast(compressed_len));
+    try std.testing.expect(compressed_len > 0);
 
     try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
 
@@ -69,9 +70,8 @@ fn check_go_decompress_z7(ctx: *TestContext) !void {
 
 /// Compress with z7 and decompress with Golang
 fn check_z7_decompress_go(ctx: *TestContext) !void {
-    try gzip(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, ctx.mode.?, 0);
-
-    // try ctx.log_result(try ctx.compressed.getPos());
+    try gzip(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, ctx.maybe_mode.?, 0);
+    ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
     // Decompress with Go flate implementation
     const decompressed_len = libflate.Gunzip(
@@ -89,17 +89,17 @@ fn check_ref_ok(ctx: *TestContext) !void {
     const compressed_len = libflate.Gzip(
         try ctx.inputfile_s(),
         try ctx.compressed_path_s(),
-        @intFromEnum(ctx.mode.?),
+        @intFromEnum(ctx.maybe_mode.?),
     );
-    try std.testing.expect(compressed_len > 0);
-
-    try ctx.log_result(@intCast(compressed_len));
+    ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
     const decompressed_len = libflate.Gunzip(
         try ctx.compressed_path_s(),
         try ctx.decompressed_path_s()
     );
     try std.testing.expect(decompressed_len > 0);
+
+    try ctx.log_result(@intCast(compressed_len));
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -112,8 +112,8 @@ test "Gzip tmp" {
     // try run("tests/testdata/over_9000_a.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
     // try run("tests/testdata/rfc1951.txt", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
     // try run(TestContext.random_label, "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
-    try run("tests/testdata/wallpaper_small.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
-    try run("tests/testdata/wallpaper.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    //try run("tests/testdata/wallpaper_small.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SIZE);
+    try run("tests/testdata/wallpaper.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SIZE);
     //try run("tests/testdata/image.jpg", "gzip-z7-only", check_z7_ok, FlateCompressMode.BEST_SPEED);
 }
 

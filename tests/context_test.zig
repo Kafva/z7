@@ -18,11 +18,12 @@ pub const TestContext = struct {
     inputfile: []const u8,
     in: std.fs.File,
     in_size: usize,
-    start_time: f64,
+    start_time_compress: f64,
+    end_time_compress: f64,
     compressed: std.fs.File,
     decompressed: std.fs.File,
     label: []const u8,
-    mode: ?FlateCompressMode,
+    maybe_mode: ?FlateCompressMode,
 
     /// Maximum input/output file size to handle (7 MB)
     const max_size = 7*1024*1024;
@@ -53,11 +54,12 @@ pub const TestContext = struct {
             .inputfile = inputfile,
             .in = in,
             .in_size = in_size,
-            .start_time = @floatFromInt(std.time.nanoTimestamp()),
+            .start_time_compress = @floatFromInt(std.time.nanoTimestamp()),
+            .end_time_compress = 0,
             .compressed = compressed,
             .decompressed = decompressed,
             .label = label,
-            .mode = null,
+            .maybe_mode = null,
         };
     }
 
@@ -75,8 +77,10 @@ pub const TestContext = struct {
             return;
         }
 
-        const end_time: f64 = @floatFromInt(std.time.nanoTimestamp());
-        const time_taken: f64 = (end_time - self.start_time) / 1_000_000_000;
+        const time_taken_compress: f64 = (self.end_time_compress - self.start_time_compress) / 1_000_000_000;
+
+        const end_time_decompress: f64 = @floatFromInt(std.time.nanoTimestamp());
+        const time_taken_decompress: f64 = (end_time_decompress - self.end_time_compress) / 1_000_000_000;
 
         const istty = std.io.getStdErr().isTty();
         const filename = std.fs.path.basename(self.inputfile);
@@ -97,17 +101,18 @@ pub const TestContext = struct {
         const m: f64 = @floatFromInt(self.in_size);
         const percent = if (m == 0) 0 else 100 * (k / m);
         const ansi_post = if (istty) "\x1b[0m" else "";
-        std.debug.print("{d:<7} -> {d:<7} ({s}{d:5.1}{s} %) ({d: >6.1} sec) [{s}({s})] {s}\n",
+        std.debug.print("{d:<7} -> {d:<7} ({s}{d:5.1}{s} %) ({d: >6.1} sec, {d: >6.1} sec) [{s}({s})] {s}\n",
                         .{
                             self.in_size,
                             new_size,
                             sign,
                             percent,
                             ansi_post,
-                            time_taken,
+                            time_taken_compress,
+                            time_taken_decompress,
                             self.label,
                             filename,
-                            if (self.mode) |mode| @tagName(mode) else "",
+                            if (self.maybe_mode) |mode| @tagName(mode) else "",
                         });
     }
 
