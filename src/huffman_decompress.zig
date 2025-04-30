@@ -132,7 +132,7 @@ pub fn reconstruct_canonical_code(
     );
 
     // 1. Count how many entries there are for each code length (bit length)
-    var max_seen_bits: u4 = 0;
+    var max_seen_bits: usize = 0;
     var bit_length_counts = try allocator.*.alloc(u16, sorted_code_lengths.len);
     @memset(bit_length_counts, 0);
 

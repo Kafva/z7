@@ -37,14 +37,14 @@ pub const CompressContext = struct {
     /// in memory so that we can create Huffman trees for these symbols in
     /// block type-2.
     write_queue: []FlateSymbol,
-    write_queue_index: usize,
+    write_queue_count: usize,
     /// Queue of raw bytes for type-0 blocks.
     write_queue_raw: []u8,
-    write_queue_raw_index: usize,
+    write_queue_raw_count: usize,
     /// Queue of CL symbols, we need a write queue for these symbols so that
     /// we can perform frequency analysis and decide upon a Huffman encoding
     write_queue_cl: []ClSymbol,
-    write_queue_cl_index: usize,
+    write_queue_cl_count: usize,
     /// Literal/Length Huffman encoding mappings for block type-2
     ll_enc_map: []?HuffmanEncoding,
     /// Distance Huffman encoding mappings for block type-2
@@ -89,11 +89,11 @@ pub fn compress(
         .lz = undefined,
         .instream_offset = instream_offset,
         .write_queue = try allocator.alloc(FlateSymbol, Flate.compression_block_length_max),
-        .write_queue_index = 0,
+        .write_queue_count = 0,
         .write_queue_raw = try allocator.alloc(u8, Flate.compression_block_length_max),
-        .write_queue_raw_index = 0,
+        .write_queue_raw_count = 0,
         .write_queue_cl = try allocator.alloc(ClSymbol, cl_queue_max),
-        .write_queue_cl_index = 0,
+        .write_queue_cl_count = 0,
         .ll_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.ll_symbol_max),
         .d_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.d_symbol_max),
         .cl_enc_map = try allocator.alloc(?HuffmanEncoding, Flate.cl_symbol_max),
@@ -137,7 +137,7 @@ fn write_block(ctx: *CompressContext) !bool {
 
     const btype: u3 = @intFromEnum(ctx.block_type);
 
-    log.info(@src(), "Writing type-{d} block #{} [maxsize: {d: >8} bytes]{s}", .{
+    log.info(@src(), "Writing type-{d} block #{d: <2} [maxsize {d: >8} bytes]{s}", .{
         @intFromEnum(ctx.block_type),
         ctx.block_cnt,
         ctx.block_length,
@@ -157,7 +157,7 @@ fn write_block(ctx: *CompressContext) !bool {
         },
         FlateBlockType.FIXED_HUFFMAN => {
             // Write encoded data
-            for (0..ctx.write_queue_index) |i| {
+            for (0..ctx.write_queue_count) |i| {
                 try fixed_code_write_symbol(ctx, ctx.write_queue[i]);
             }
             // Write end-of-block marker
@@ -168,7 +168,7 @@ fn write_block(ctx: *CompressContext) !bool {
             try dynamic_code_write_metadata(ctx);
 
             // Write encoded data
-            for (0..ctx.write_queue_index) |i| {
+            for (0..ctx.write_queue_count) |i| {
                 try dynamic_code_write_symbol(ctx, ctx.write_queue[i]);
             }
             // Write end-of-block marker
@@ -178,20 +178,21 @@ fn write_block(ctx: *CompressContext) !bool {
             return FlateError.UnexpectedBlockType;
         }
     }
+
     log.debug(@src(), "Done compressing type-{d} block #{d} [{d} bytes]", .{
         @intFromEnum(ctx.block_type),
         ctx.block_cnt,
         ctx.processed_bytes,
     });
-    ctx.write_queue_index = 0;
-    ctx.write_queue_raw_index = 0;
+    ctx.write_queue_count = 0;
+    ctx.write_queue_raw_count = 0;
     ctx.block_cnt += 1;
     ctx.block_length = next_block_length;
     return done;
 }
 
 pub fn pick_block_type(ctx: *CompressContext) !usize {
-    var next_block_length: usize = undefined;
+    var next_block_length: usize = ctx.block_length;
     const average_len = ctx.lz.backref_average_length();
     log.debug(@src(), "Average match length: {d} bytes", .{average_len});
 
@@ -199,9 +200,12 @@ pub fn pick_block_type(ctx: *CompressContext) !usize {
         (ctx.mode == FlateCompressMode.NO_COMPRESSION or average_len == 0)) {
         // Use NO_COMPRESSION if explicitly configured or if there was not
         // a single back reference match
-        next_block_length = ctx.block_length - @divFloor(ctx.block_length, 32);
-        if (next_block_length < Flate.block_length_min) {
-            next_block_length = Flate.block_length_min;
+        if (ctx.mode != FlateCompressMode.NO_COMPRESSION) {
+            // Decrease the block size unless explicitly configured for NO_COMPRESSION
+            next_block_length = ctx.block_length - @divFloor(ctx.block_length, 32);
+            if (next_block_length < Flate.block_length_min) {
+                next_block_length = Flate.block_length_min;
+            }
         }
         ctx.block_type = FlateBlockType.NO_COMPRESSION;
     }
@@ -245,22 +249,22 @@ pub fn queue_push_range(
     match_length: u16,
     match_backward_offset: u16,
 ) !void {
-    if (ctx.write_queue_index + 2 >= ctx.write_queue.len) {
+    if (ctx.write_queue_count + 2 > ctx.write_queue.len) {
         return FlateError.OutOfQueueSpace;
     }
 
     // Add the length symbol for the back-reference
     const lenc = try RangeSymbol.from_length(match_length);
     const lsymbol = FlateSymbol { .length = lenc };
-    ctx.write_queue[ctx.write_queue_index] = lsymbol;
-    ctx.write_queue_index += 1;
+    ctx.write_queue[ctx.write_queue_count] = lsymbol;
+    ctx.write_queue_count += 1;
     log.debug(@src(), "Queued length [{d}]: {any}", .{match_length, lenc});
 
     // Add the distance symbol for the back-reference
     const denc = try RangeSymbol.from_distance(match_backward_offset);
     const dsymbol = FlateSymbol { .distance = denc };
-    ctx.write_queue[ctx.write_queue_index] = dsymbol;
-    ctx.write_queue_index += 1;
+    ctx.write_queue[ctx.write_queue_count] = dsymbol;
+    ctx.write_queue_count += 1;
     log.debug(@src(), "Queued distance [{d}]: {any}", .{match_backward_offset, denc});
 }
 
@@ -268,13 +272,18 @@ pub fn queue_push_char(
     ctx: *CompressContext,
     byte: u8,
 ) !void {
-    if (ctx.write_queue_index + 1 >= ctx.write_queue.len) {
+    if (ctx.mode == FlateCompressMode.NO_COMPRESSION) {
+        // No need to save when using explicit NO_COMPRESSION
+        return;
+    }
+
+    if (ctx.write_queue_count + 1 > ctx.write_queue.len) {
         return FlateError.OutOfQueueSpace;
     }
 
     const symbol = FlateSymbol { .char = byte };
-    ctx.write_queue[ctx.write_queue_index] = symbol;
-    ctx.write_queue_index += 1;
+    ctx.write_queue[ctx.write_queue_count] = symbol;
+    ctx.write_queue_count += 1;
     util.print_char(log.debug, "Queued literal", symbol.char);
 }
 
@@ -287,12 +296,12 @@ pub fn raw_queue_push_char(
         // The block length is too large for NO_COMPRESSION, skip
         return;
     }
-    if (ctx.write_queue_raw_index + 1 > ctx.write_queue_raw.len) {
+    if (ctx.write_queue_raw_count + 1 > ctx.write_queue_raw.len) {
         return FlateError.OutOfQueueSpace;
     }
 
-    ctx.write_queue_raw[ctx.write_queue_raw_index] = byte;
-    ctx.write_queue_raw_index += 1;
+    ctx.write_queue_raw[ctx.write_queue_raw_count] = byte;
+    ctx.write_queue_raw_count += 1;
 }
 
 fn no_compression_write_block(ctx: *CompressContext) !void {
@@ -305,13 +314,13 @@ fn no_compression_write_block(ctx: *CompressContext) !void {
     }
 
     // Write length header
-    const len: u16 = @truncate(ctx.write_queue_raw_index);
+    const len: u16 = @truncate(ctx.write_queue_raw_count);
     log.debug(@src(), "Writing LEN: {d}", .{len});
     try write_bits(ctx, u16, len, 16);
     try write_bits(ctx, u16, ~len, 16);
 
     // Write the uncompressed content from the write_queue
-    for (0..ctx.write_queue_raw_index) |i| {
+    for (0..ctx.write_queue_raw_count) |i| {
         try write_bits(ctx, u8, ctx.write_queue_raw[i], 8);
     }
 }
@@ -396,7 +405,7 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
     @memset(d_freq, 0);
 
     // Calculate the frequency of each `FlateSymbol`
-    for (0..ctx.write_queue_index) |i| {
+    for (0..ctx.write_queue_count) |i| {
         const sym = ctx.write_queue[i];
         switch (sym) {
             .length => {
@@ -486,8 +495,8 @@ fn dynamic_code_enqueue_cl_symbols(ctx: *CompressContext) ![2]usize {
             match_cnt = dynamic_code_lookahead_eql(ctx, codes_done, b);
         }
         const cl_sym = try ClSymbol.init(bit_length, match_cnt);
-        ctx.write_queue_cl[ctx.write_queue_cl_index] = cl_sym;
-        ctx.write_queue_cl_index += 1;
+        ctx.write_queue_cl[ctx.write_queue_cl_count] = cl_sym;
+        ctx.write_queue_cl_count += 1;
 
         codes_done += if (cl_sym.repeat_length == 0) 1 else cl_sym.repeat_length;
         prev_bit_length = bit_length;
@@ -508,7 +517,7 @@ fn dynamic_code_gen_enc_map_cl(ctx: *CompressContext) !void {
     var cl_freq = try ctx.allocator.alloc(usize, Flate.cl_symbol_max);
     var cl_cnt: usize = 0;
     @memset(cl_freq, 0);
-    for (0..ctx.write_queue_cl_index) |i| {
+    for (0..ctx.write_queue_cl_count) |i| {
         const v = ctx.write_queue_cl[i].value;
         if (cl_freq[v] == 0) {
             cl_cnt += 1;
@@ -570,15 +579,15 @@ fn dynamic_code_write_metadata(ctx: *CompressContext) !void {
     // Dequeue everything from the CL queue, i.e. write the encoded CL symbols
     // for `ll_enc_map` and `d_enc_map` to the output stream.
     var cl_cnt: usize = 0;
-    for (0..ctx.write_queue_cl_index) |i| {
+    for (0..ctx.write_queue_cl_count) |i| {
         try dynamic_code_write_cl_symbol(ctx, ctx.write_queue_cl[i]);
         cl_cnt += 1 + ctx.write_queue_cl[i].repeat_length;
     }
     log.debug(@src(), "Wrote {d} CL symbols ({} total)", .{
-        ctx.write_queue_cl_index,
+        ctx.write_queue_cl_count,
         cl_cnt
     });
-    ctx.write_queue_cl_index = 0;
+    ctx.write_queue_cl_count = 0;
 
     log.debug(@src(), "Done writing Huffman metadata for block #{d} @{d}", .{
         ctx.block_cnt,

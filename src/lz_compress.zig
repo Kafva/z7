@@ -2,12 +2,13 @@ const std = @import("std");
 const log = @import("log.zig");
 const util = @import("util.zig");
 
-const CompressContext = @import("flate_compress.zig").CompressContext;
 const Flate = @import("flate.zig").Flate;
 const FlateError = @import("flate.zig").FlateError;
 const FlateSymbol = @import("flate.zig").FlateSymbol;
 const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
+const FlateCompressMode = @import("flate_compress.zig").FlateCompressMode;
+const CompressContext = @import("flate_compress.zig").CompressContext;
 
 const read_byte = @import("flate_compress.zig").read_byte;
 const queue_push_range = @import("flate_compress.zig").queue_push_range;
@@ -122,13 +123,12 @@ pub const LzItem = struct {
     }
 };
 
-/// the average match length
 pub fn lz_compress(ctx: *LzContext) !bool {
     var done = false;
-    // Slack space to able to fill out with left-over bytes
-    const end = ctx.cctx.processed_bytes + ctx.cctx.block_length - 4;
+    const end: usize = ctx.cctx.processed_bytes + ctx.cctx.block_length;
 
-    while (!done and ctx.cctx.processed_bytes < end) {
+    // Slack space to able to fill out with left-over bytes
+    while (!done and ctx.cctx.processed_bytes < end - 4) {
         // Read next byte for lookahead
         const b = read_byte(ctx.cctx) catch {
             done = true;
@@ -145,6 +145,11 @@ pub fn lz_compress(ctx: *LzContext) !bool {
         if (maybe_old) |old| {
             // Queue each byte that exits the lookahead onto the sliding window
             try sliding_window_push(ctx, old);
+        }
+
+        if (ctx.cctx.mode == FlateCompressMode.NO_COMPRESSION) {
+            // No need to check for back references
+            continue;
         }
 
         if (ctx.maybe_match_start_pos) |match_start_pos| {
@@ -260,19 +265,33 @@ pub fn lz_compress(ctx: *LzContext) !bool {
         // part of the match.
         while (ctx.lookahead.prune(1)) |lit| {
             try sliding_window_push(ctx, lit);
-            try raw_queue_push_char(ctx.cctx, lit);
         }
     }
 
     // Queue up any left over literals as-is
     if (ctx.lookahead.count() > 0) {
-        log.debug(@src(), "Appending left-over raw bytes", .{});
+        log.debug(@src(), "Appending left-over lookahead bytes", .{});
 
         while (ctx.lookahead.prune(1)) |lit| {
             try sliding_window_push(ctx, lit);
             try queue_push_char(ctx.cctx, lit);
-            try raw_queue_push_char(ctx.cctx, lit);
         }
+    }
+
+    // Fill up the desired block length with raw bytes once the lookahead
+    // is empty if necessary
+    if (!done and ctx.cctx.processed_bytes < end) {
+        log.debug(@src(), "Appending {d} byte(s) to reach EOB", .{
+            end - ctx.cctx.processed_bytes,
+        });
+    }
+    while (!done and ctx.cctx.processed_bytes < end) {
+        const b = read_byte(ctx.cctx) catch {
+            done = true;
+            break;
+        };
+        try sliding_window_push(ctx, b);
+        try queue_push_char(ctx.cctx, b);
     }
 
     return done;

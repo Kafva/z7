@@ -129,7 +129,7 @@ pub fn print_char(
     if (std.ascii.isPrint(byte) and byte != '\n') {
         log_fn(@src(), "{s}: '{c}'", .{prefix, byte});
     } else {
-        log_fn(@src(), "{s}: 0x{x}", .{prefix, byte});
+        log_fn(@src(), "{s}: 0x{x:0>2}", .{prefix, byte});
     }
 }
 
