@@ -50,11 +50,11 @@ test "Huffman node sorting" {
 
     for (0..size) |i| {
        arr[i] = HuffmanTreeNode {
-            .value = null,
+            .maybe_value = null,
             .weight = random.int(u4) % 4,
             .freq = random.int(usize) % 1000,
-            .left_child_index = undefined,
-            .right_child_index = undefined
+            .maybe_left_child_index = undefined,
+            .maybe_right_child_index = undefined
        };
        std.sort.insertion(HuffmanTreeNode, arr[0..i+1], {}, HuffmanTreeNode.greater_than);
     }

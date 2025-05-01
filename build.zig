@@ -6,7 +6,7 @@ const std = @import("std");
 //  https://github.com/ziglang/zig/issues/22775
 const version = "0.0.0";
 
-fn build_exe(
+fn run_exe(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
@@ -35,6 +35,27 @@ fn build_exe(
     if (b.args) |args| {
         exe_run.addArgs(args);
     }
+}
+
+fn build_release(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    build_options: *std.Build.Step.Options,
+) void {
+    const exe = b.addExecutable(.{
+        .name = "z7",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    exe.root_module.addOptions("build_options", build_options);
+
+    // Install `z7` binary into standard binary path with `zig install`
+    const exe_install = b.addInstallArtifact(exe, .{});
+    // Add targets to the `zig build --help` menu
+    const exe_step = b.step("release", "Optimized release build");
+
+    exe_step.dependOn(&exe_install.step);
 }
 
 fn build_tests(
@@ -128,6 +149,7 @@ pub fn build(b: *std.Build) void {
     const quiet_opt = b.option(bool, "quiet", "Quiet test result output") orelse false;
     build_options.addOption(bool, "quiet", quiet_opt);
 
-    build_exe(b, target, optimize, build_options);
+    run_exe(b, target, optimize, build_options);
     build_tests(b, target, optimize, build_options);
+    build_release(b, target, build_options);
 }

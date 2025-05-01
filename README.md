@@ -2,7 +2,12 @@
 Gzip implementation in Zig. Compatible with zig 0.14.0.
 
 ```bash
+# Debug build
 zig build run -- --help
+
+# Optimized build
+zig build release
+./zig-out/bin/z7-test --help
 ```
 
 ## Unit tests

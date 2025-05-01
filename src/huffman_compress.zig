@@ -8,14 +8,14 @@ const color_base = @import("huffman.zig").color_base;
 
 pub const HuffmanTreeNode = struct {
     /// Only leaf nodes contain a character
-    value: ?u16,
+    maybe_value: ?u16,
     freq: usize,
     /// A lower weight has lower priority (minimum weight is 0).
     /// The maximum weight represents the maximum depth of the tree,
     /// a higher weight should be placed higher up in the tree.
     weight: u4,
-    left_child_index: ?usize,
-    right_child_index: ?usize,
+    maybe_left_child_index: ?usize,
+    maybe_right_child_index: ?usize,
 
     /// Priority sort comparison method (descending):
     ///
@@ -55,7 +55,7 @@ pub const HuffmanTreeNode = struct {
             return std.fmt.invalidFmtError(fmt, self);
         }
 
-        if (self.value) |value| {
+        if (self.maybe_value) |value| {
             if (value < 256) {
                 const char: u8 = @truncate(value);
                 if (std.ascii.isPrint(char) and char != '\n') {
@@ -209,11 +209,11 @@ fn build_huffman_tree(
             continue;
         }
         queue[index] = HuffmanTreeNode {
-            .value = v,
+            .maybe_value = v,
             .weight = 15, // placeholder
             .freq = ctx.frequencies[v],
-            .left_child_index = undefined,
-            .right_child_index = undefined
+            .maybe_left_child_index = undefined,
+            .maybe_right_child_index = undefined
         };
         // Sort in descending order with the highest frequency+weight first
         index += 1;
@@ -299,11 +299,11 @@ fn construct_max_depth_tree(
     // Let all nodes start at the bottom (lowest possible weight value)
     for (0..queue_initial_cnt) |i| {
         queue[i] = HuffmanTreeNode {
-            .value = queue_initial.*[i].value,
+            .maybe_value = queue_initial.*[i].maybe_value,
             .weight = 0,
             .freq = queue_initial.*[i].freq,
-            .left_child_index = undefined,
-            .right_child_index = undefined
+            .maybe_left_child_index = null,
+            .maybe_right_child_index = null
         };
     }
 
@@ -356,11 +356,11 @@ fn construct_max_depth_tree(
         // We always create parent nodes with both child positions filled,
         // the child pointers of this node will not change after creation.
         const parent_node = HuffmanTreeNode {
-            .value = undefined,
+            .maybe_value = null,
             .freq = left_child.freq + right_child.freq,
             .weight = parent_weight,
-            .left_child_index = array_cnt - 2,
-            .right_child_index = array_cnt - 1
+            .maybe_left_child_index = array_cnt - 2,
+            .maybe_right_child_index = array_cnt - 1
         };
 
         // Insert the parent node into the priority queue, overwriting
@@ -437,17 +437,18 @@ fn walk_generate_translation(
     bits: u16,
     bit_shift: u4,
 ) !void {
-    const left_child_index = ctx.array.items[index].left_child_index;
-    const right_child_index = ctx.array.items[index].right_child_index;
+    log.debug(@src(), "index: {d}", .{index});
+    const maybe_left_child_index = ctx.array.items[index].maybe_left_child_index;
+    const maybe_right_child_index = ctx.array.items[index].maybe_right_child_index;
 
     if (bit_shift >= 15) {
         log.err(@src(), "Huffman tree too deep: node requires {} bits", .{bit_shift});
         return HuffmanError.BadTreeStructure;
     }
 
-    if (left_child_index == null and right_child_index == null) {
+    if (maybe_left_child_index == null and maybe_right_child_index == null) {
         // Reached leaf
-        if (ctx.array.items[index].value) |value| {
+        if (ctx.array.items[index].maybe_value) |value| {
             const shift = if (bit_shift == 0) 1 else bit_shift;
             const enc = HuffmanEncoding { .bit_shift = shift, .bits = bits };
             ctx.enc_map[value] = enc;
@@ -456,12 +457,12 @@ fn walk_generate_translation(
             return HuffmanError.BadTreeStructure;
         }
     } else {
-        if (left_child_index) |child_index| {
+        if (maybe_left_child_index) |child_index| {
             // left: 0
             // Append the new bit to the END of the bit-string
             try walk_generate_translation(ctx, child_index, (bits << 1), bit_shift + 1);
         }
-        if (right_child_index) |child_index| {
+        if (maybe_right_child_index) |child_index| {
             // right: 1
             try walk_generate_translation(
                 ctx,
@@ -547,12 +548,12 @@ fn dump_tree(ctx: *HuffmanCompressContext, comptime depth: u4, index: usize) voi
         node.dump(0, "root");
     }
 
-    if (ctx.array.items[index].left_child_index) |child_index| {
+    if (ctx.array.items[index].maybe_left_child_index) |child_index| {
         const node = ctx.array.items[child_index];
         node.dump(depth + 1, "0");
         dump_tree(ctx, depth + 1, child_index);
     }
-    if (ctx.array.items[index].right_child_index) |child_index| {
+    if (ctx.array.items[index].maybe_right_child_index) |child_index| {
         const node = ctx.array.items[child_index];
         node.dump(depth + 1, "1");
         dump_tree(ctx, depth + 1, child_index);

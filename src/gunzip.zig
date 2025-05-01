@@ -42,6 +42,7 @@ pub fn decompress(
     var handle_fhcrc = false;
 
     // Always start from the beginning of the input stream and output stream
+    // TODO
     try instream.seekTo(0);
     try outstream.seekTo(0);
 

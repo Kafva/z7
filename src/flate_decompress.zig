@@ -73,6 +73,7 @@ pub fn decompress(
     };
 
     // We may want to start from an offset in the input stream
+    // TODO
     log.debug(@src(), "Seeking to {} byte offset", .{instream_offset});
     try instream.seekTo(instream_offset);
     // Always start from the beginning in the output stream
