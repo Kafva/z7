@@ -26,6 +26,29 @@ pub fn RingBuffer(comptime T: type) type {
             };
         }
 
+        pub fn format(
+            self: *const @This(),
+            comptime fmt: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype
+        ) !void {
+            if (fmt.len != 0) {
+                return std.fmt.invalidFmtError(fmt, self);
+            }
+            if (self.maybe_end_index) |end_index| {
+                return writer.print(
+                    "{{ .start_index = {d}, .end_index = {d}, .count = {d} .capacity = {d}, .data = {any} }}",
+                    .{ self.start_index, end_index, self.count(), self.capacity, self.data}
+                );
+            }
+            else {
+                return writer.print(
+                    "{{ .start_index = {d}, .count = {d} .capacity = {d}, .data = {any} }}",
+                    .{ self.start_index, self.count(), self.capacity, self.data}
+                );
+            }
+        }
+
         /// The number of items currently in the ring buffer
         pub fn count(self: @This()) usize {
             if (self.maybe_end_index) |end_index| {
@@ -119,7 +142,7 @@ pub fn RingBuffer(comptime T: type) type {
                 self.data[new_end_index] = item;
 
                 // We overwrote the oldest value, move the start_index forward.
-                if (self.maybe_end_index.? == self.start_index) {
+                if (new_end_index == self.start_index) {
                     self.start_index = @mod(self.start_index + 1, self.capacity);
                     return old;
                 }
@@ -143,7 +166,8 @@ pub fn RingBuffer(comptime T: type) type {
                 self.start_index = @mod(self.start_index + prune_cnt, self.capacity);
 
                 if (cnt - prune_cnt == 0) {
-                    // Reset empty sentinel
+                    // Reset to original state when emptied
+                    self.start_index = 0;
                     self.maybe_end_index = null;
                 }
                 return item;

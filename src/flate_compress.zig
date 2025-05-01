@@ -137,7 +137,7 @@ fn write_block(ctx: *CompressContext) !bool {
 
     const btype: u3 = @intFromEnum(ctx.block_type);
 
-    log.info(@src(), "Writing type-{d} block #{d: <2} [maxsize {d: >8} bytes]{s}", .{
+    log.debug(@src(), "Writing type-{d} block #{d: <2} [maxsize {d: >8} bytes]{s}", .{
         @intFromEnum(ctx.block_type),
         ctx.block_cnt,
         ctx.block_length,
@@ -242,66 +242,6 @@ pub fn pick_block_type(ctx: *CompressContext) !usize {
     }
 
     return next_block_length;
-}
-
-pub fn queue_push_range(
-    ctx: *CompressContext,
-    match_length: u16,
-    match_backward_offset: u16,
-) !void {
-    if (ctx.write_queue_count + 2 > ctx.write_queue.len) {
-        return FlateError.OutOfQueueSpace;
-    }
-
-    // Add the length symbol for the back-reference
-    const lenc = try RangeSymbol.from_length(match_length);
-    const lsymbol = FlateSymbol { .length = lenc };
-    ctx.write_queue[ctx.write_queue_count] = lsymbol;
-    ctx.write_queue_count += 1;
-    log.debug(@src(), "Queued length [{d}]: {any}", .{match_length, lenc});
-
-    // Add the distance symbol for the back-reference
-    const denc = try RangeSymbol.from_distance(match_backward_offset);
-    const dsymbol = FlateSymbol { .distance = denc };
-    ctx.write_queue[ctx.write_queue_count] = dsymbol;
-    ctx.write_queue_count += 1;
-    log.debug(@src(), "Queued distance [{d}]: {any}", .{match_backward_offset, denc});
-}
-
-pub fn queue_push_char(
-    ctx: *CompressContext,
-    byte: u8,
-) !void {
-    if (ctx.mode == FlateCompressMode.NO_COMPRESSION) {
-        // No need to save when using explicit NO_COMPRESSION
-        return;
-    }
-
-    if (ctx.write_queue_count + 1 > ctx.write_queue.len) {
-        return FlateError.OutOfQueueSpace;
-    }
-
-    const symbol = FlateSymbol { .char = byte };
-    ctx.write_queue[ctx.write_queue_count] = symbol;
-    ctx.write_queue_count += 1;
-    util.print_char(log.debug, "Queued literal", symbol.char);
-}
-
-/// Save for NO_COMPRESSION queue
-pub fn raw_queue_push_char(
-    ctx: *CompressContext,
-    byte: u8,
-) !void {
-    if (ctx.block_length > Flate.no_compression_block_length_max) {
-        // The block length is too large for NO_COMPRESSION, skip
-        return;
-    }
-    if (ctx.write_queue_raw_count + 1 > ctx.write_queue_raw.len) {
-        return FlateError.OutOfQueueSpace;
-    }
-
-    ctx.write_queue_raw[ctx.write_queue_raw_count] = byte;
-    ctx.write_queue_raw_count += 1;
 }
 
 fn no_compression_write_block(ctx: *CompressContext) !void {

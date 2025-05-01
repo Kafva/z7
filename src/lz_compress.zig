@@ -9,11 +9,7 @@ const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const FlateCompressMode = @import("flate_compress.zig").FlateCompressMode;
 const CompressContext = @import("flate_compress.zig").CompressContext;
-
 const read_byte = @import("flate_compress.zig").read_byte;
-const queue_push_range = @import("flate_compress.zig").queue_push_range;
-const queue_push_char = @import("flate_compress.zig").queue_push_char;
-const raw_queue_push_char = @import("flate_compress.zig").raw_queue_push_char;
 
 
 pub const LzContext = struct {
@@ -326,6 +322,66 @@ fn sliding_window_push(ctx: *LzContext, b: u8) !void {
         ctx.maybe_sliding_window_min_index =
             if (ctx.maybe_sliding_window_min_index) |s| s + 1 else 1;
     }
+}
+
+fn queue_push_range(
+    ctx: *CompressContext,
+    match_length: u16,
+    match_backward_offset: u16,
+) !void {
+    if (ctx.write_queue_count + 2 > ctx.write_queue.len) {
+        return FlateError.OutOfQueueSpace;
+    }
+
+    // Add the length symbol for the back-reference
+    const lenc = try RangeSymbol.from_length(match_length);
+    const lsymbol = FlateSymbol { .length = lenc };
+    ctx.write_queue[ctx.write_queue_count] = lsymbol;
+    ctx.write_queue_count += 1;
+    log.debug(@src(), "Queued length [{d}]: {any}", .{match_length, lenc});
+
+    // Add the distance symbol for the back-reference
+    const denc = try RangeSymbol.from_distance(match_backward_offset);
+    const dsymbol = FlateSymbol { .distance = denc };
+    ctx.write_queue[ctx.write_queue_count] = dsymbol;
+    ctx.write_queue_count += 1;
+    log.debug(@src(), "Queued distance [{d}]: {any}", .{match_backward_offset, denc});
+}
+
+fn queue_push_char(
+    ctx: *CompressContext,
+    byte: u8,
+) !void {
+    if (ctx.mode == FlateCompressMode.NO_COMPRESSION) {
+        // No need to save when using explicit NO_COMPRESSION
+        return;
+    }
+
+    if (ctx.write_queue_count + 1 > ctx.write_queue.len) {
+        return FlateError.OutOfQueueSpace;
+    }
+
+    const symbol = FlateSymbol { .char = byte };
+    ctx.write_queue[ctx.write_queue_count] = symbol;
+    ctx.write_queue_count += 1;
+    util.print_char(log.debug, "Queued literal", symbol.char);
+}
+
+/// Save for NO_COMPRESSION queue
+fn raw_queue_push_char(
+    ctx: *CompressContext,
+    byte: u8,
+) !void {
+    if (ctx.block_length > Flate.no_compression_block_length_max) {
+        // The block length is too large for NO_COMPRESSION, skip
+        return;
+    }
+    if (ctx.write_queue_raw_count + 1 > ctx.write_queue_raw.len) {
+        return FlateError.OutOfQueueSpace;
+    }
+
+    ctx.write_queue_raw[ctx.write_queue_raw_count] = byte;
+    ctx.write_queue_raw_count += 1;
 }
 
 fn bytes_to_u32(bs: [4]u8) u32 {
