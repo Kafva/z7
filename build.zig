@@ -68,7 +68,10 @@ fn build_tests(
     var root_source_file: []const u8 = "tests/test.zig";
     if (b.args) |args| {
         for (args) |arg| {
-            root_source_file = arg;
+            if (!std.mem.eql(u8, "--", arg)) {
+                root_source_file = arg;
+            }
+            break;
         }
     }
 

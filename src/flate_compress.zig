@@ -17,6 +17,9 @@ const huffman_build_encoding = @import("huffman_compress.zig").build_encoding;
 
 pub const CompressContext = struct {
     allocator: std.mem.Allocator,
+    /// Show progress?
+    progress: bool,
+    maybe_inputfile_size: ?f64,
     rng: std.Random.Xoshiro256,
     mode: FlateCompressMode,
     crc: *std.hash.Crc32,
@@ -70,11 +73,19 @@ pub fn compress(
     outstream: *const std.fs.File,
     instream_offset: usize,
     mode: FlateCompressMode,
+    progress: bool,
     crc: *std.hash.Crc32,
 ) !void {
     const cl_queue_max = Flate.ll_symbol_max + Flate.d_symbol_max;
     var ctx = CompressContext {
         .allocator = allocator,
+        .progress = progress,
+        .maybe_inputfile_size =  blk: {
+            const st = instream.stat() catch {
+                break :blk null;
+            };
+            break :blk @floatFromInt(st.size);
+        },
         .rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp())),
         .mode = mode,
         .crc = crc,
@@ -812,6 +823,12 @@ pub fn read_byte(ctx: *CompressContext) !u8 {
     // it incrementally as we process each byte.
     const bytearr = [1]u8 { b };
     ctx.crc.update(&bytearr);
+
+    if (ctx.progress) {
+        if (ctx.maybe_inputfile_size) |inputfile_size| {
+            try util.progress("Compressing...", ctx.processed_bytes, inputfile_size);
+        }
+    }
 
     return b;
 }

@@ -141,3 +141,19 @@ pub fn strtime(epoch: u32) [*c]u8 {
     s[len - 1] = 0;
     return s;
 }
+
+pub fn progress(comptime prefix: []const u8, current_bytes: usize, total_bytes: f64) !void {
+    const written: f64 = @floatFromInt(current_bytes);
+    const percent: f64 = 100 * (written / total_bytes);
+    try std.io.getStdOut().writer().print("\r{s} {d:5.1} %", .{prefix, percent});
+}
+
+pub fn hide_cursor() !void {
+    _ = try std.io.getStdErr().write("\x1b[?25l");
+    _ = try std.io.getStdOut().write("\x1b[?25l");
+}
+
+pub fn show_cursor() !void {
+    _ = try std.io.getStdErr().write("\x1b[?25l");
+    _ = try std.io.getStdOut().write("\x1b[?25h");
+}

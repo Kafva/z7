@@ -21,6 +21,9 @@ const DecompressError = error {
 
 const DecompressContext = struct {
     allocator: std.mem.Allocator,
+    /// Show progress?
+    progress: bool,
+    maybe_inputfile_size: ?f64,
     crc: *std.hash.Crc32,
     /// The current type of block to decode
     block_type: FlateBlockType,
@@ -50,11 +53,19 @@ pub fn decompress(
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
     instream_offset: usize,
+    progress: bool,
     crc: *std.hash.Crc32,
 ) !void {
     var done = false;
     var ctx = DecompressContext {
         .allocator = allocator,
+        .progress = progress,
+        .maybe_inputfile_size =  blk: {
+            const st = instream.stat() catch {
+                break :blk null;
+            };
+            break :blk @floatFromInt(st.size);
+        },
         .crc = crc,
         .block_type = FlateBlockType.RESERVED,
         .block_cnt = 0,
@@ -558,9 +569,21 @@ fn read_bits(ctx: *DecompressContext, comptime T: type, num_bits: u16) !T {
     const bits = ctx.bit_reader.readBitsNoEof(T, num_bits) catch |e| {
         return e;
     };
-    const offset = ctx.start_offset + @divFloor(ctx.processed_bits, 8);
+    const processed_bytes = @divFloor(ctx.processed_bits, 8);
+    const offset = ctx.start_offset + processed_bytes;
     util.print_bits(log.trace, T, "Input read", bits, num_bits, offset);
     ctx.processed_bits += num_bits;
+
+    if (ctx.progress) {
+        if (ctx.maybe_inputfile_size) |input_filesize| {
+            try util.progress(
+                "Decompressing...",
+                ctx.start_offset + processed_bytes,
+                input_filesize
+            );
+        }
+    }
+
     return bits;
 }
 

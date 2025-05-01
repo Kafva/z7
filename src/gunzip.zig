@@ -27,6 +27,7 @@ pub fn decompress(
     allocator: std.mem.Allocator,
     instream: *const std.fs.File,
     outstream: *const std.fs.File,
+    progress: bool,
 ) !void {
     var ctx = GunzipContext {
         .instream = instream,
@@ -121,6 +122,7 @@ pub fn decompress(
         ctx.instream,
         ctx.outstream,
         ctx.header_size,
+        progress,
         &ctx.crc
     );
 

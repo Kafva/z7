@@ -1,6 +1,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
+const util = @import("util.zig");
 const log = @import("log.zig");
 const Flag = @import("flags.zig").Flag;
 const FlagIterator = @import("flags.zig").FlagIterator;
@@ -17,6 +18,7 @@ const usage =
     \\
     \\  -c, --stdout      write on standard output, keep original files unchanged
     \\  -d, --decompress  decompress
+    \\  -p, --progress    show progress
     \\  -h, --help        give this help
     \\  -v, --verbose     verbose mode
     \\  -V, --version     display version number
@@ -42,6 +44,7 @@ pub fn main() !u8 {
 
     opts['h'] = .{ .short = 'h', .long = "help", .value = .{ .active = false } };
     opts['V'] = .{ .short = 'V', .long = "version", .value = .{ .active = false } };
+    opts['p'] = .{ .short = 'p', .long = "progress", .value = .{ .active = false } };
     opts['v'] = .{ .short = 'v', .long = "verbose", .value = .{ .active = false } };
     opts['d'] = .{ .short = 'd', .long = "decompress", .value = .{ .active = false } };
     opts['c'] = .{ .short = 'c', .long = "stdout", .value = .{ .active = false } };
@@ -61,6 +64,7 @@ pub fn main() !u8 {
         return 0;
     }
 
+    const progress = opts['p'].?.value.active;
     const keep = opts['k'].?.value.active;
     const gzip_flags = @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC);
     const mode: FlateCompressMode = blk: {
@@ -69,6 +73,18 @@ pub fn main() !u8 {
         break :blk FlateCompressMode.BEST_SIZE;
     };
     log.enable_debug = opts['v'].?.value.active;
+
+    // Make sure to restore cursor if --progress option was passed
+    // and we quit out with ctrl-c
+    if (progress) {
+        var act: std.posix.Sigaction = .{
+            .handler = .{ .sigaction = signal_handler },
+            .mask = std.posix.empty_sigset,
+            .flags = 0,
+        };
+        std.posix.sigaction(std.posix.SIG.INT, &act, null);
+    }
+
     log.debug(@src(), "Starting z7 {s}", .{build_options.version});
 
     if (first_arg) |inputfile| {
@@ -98,11 +114,29 @@ pub fn main() !u8 {
         };
         defer outstream.close();
 
-        if (opts['d'].?.value.active) {
-            try gunzip(allocator, &instream, &outstream);
-        } else {
-            try gzip(allocator, inputfile, &instream, &outstream, mode, gzip_flags);
+        if (progress) {
+            try util.hide_cursor();
         }
+
+        if (opts['d'].?.value.active) {
+            try gunzip(allocator, &instream, &outstream, progress);
+        } else {
+            try gzip(
+                allocator,
+                inputfile,
+                &instream,
+                &outstream,
+                mode,
+                gzip_flags,
+                progress
+            );
+        }
+
+        if (progress) {
+            _ = try std.io.getStdOut().write("\n");
+            try util.show_cursor();
+        }
+
         if (!keep) {
             try std.fs.Dir.deleteFile(std.fs.cwd(), inputfile);
         }
@@ -135,4 +169,14 @@ fn open_output(allocator: std.mem.Allocator, inputfile: []const u8) !std.fs.File
         };
         return try std.fs.cwd().createFile(outfile, .{});
     }
+}
+
+fn signal_handler(
+    _: i32,
+    _: *const std.posix.siginfo_t,
+    _: ?*anyopaque,
+) callconv(.c) noreturn {
+    _ = std.io.getStdOut().write("\n") catch {};
+    util.show_cursor() catch {};
+    std.process.exit(4);
 }
