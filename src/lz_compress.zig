@@ -133,7 +133,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
 
         const maybe_old = ctx.lookahead.push(b);
 
-        if (ctx.lookahead.count() != Flate.min_length_match) {
+        if (ctx.lookahead.count != Flate.min_length_match) {
             // We have not filled the lookahead yet, go again
             continue;
         }
@@ -190,7 +190,9 @@ pub fn lz_compress(ctx: *LzContext) !bool {
         else {
             // Queue the dropped byte as a raw literal
             if (maybe_old) |old|  {
-                try queue_push_char(ctx.cctx, old);
+                if (ctx.cctx.mode != FlateCompressMode.NO_COMPRESSION) {
+                    try queue_push_char(ctx.cctx, old);
+                }
             }
 
             // Look for new match
@@ -265,12 +267,14 @@ pub fn lz_compress(ctx: *LzContext) !bool {
     }
 
     // Queue up any left over literals as-is
-    if (ctx.lookahead.count() > 0) {
+    if (ctx.lookahead.count > 0) {
         log.debug(@src(), "Appending left-over lookahead bytes", .{});
 
         while (ctx.lookahead.prune(1)) |lit| {
             try sliding_window_push(ctx, lit);
-            try queue_push_char(ctx.cctx, lit);
+            if (ctx.cctx.mode != FlateCompressMode.NO_COMPRESSION) {
+                try queue_push_char(ctx.cctx, lit);
+            }
         }
     }
 
@@ -287,7 +291,9 @@ pub fn lz_compress(ctx: *LzContext) !bool {
             break;
         };
         try sliding_window_push(ctx, b);
-        try queue_push_char(ctx.cctx, b);
+        if (ctx.cctx.mode != FlateCompressMode.NO_COMPRESSION) {
+            try queue_push_char(ctx.cctx, b);
+        }
     }
 
     return done;
@@ -300,8 +306,9 @@ fn sliding_window_push(ctx: *LzContext, b: u8) !void {
     // Save for NO_COMPRESSION queue
     try raw_queue_push_char(ctx.cctx, b);
 
-    if (ctx.sliding_window.count() >= 4) {
+    if (ctx.cctx.mode != FlateCompressMode.NO_COMPRESSION and ctx.sliding_window.count >= 4) {
         // Add a lookup entry for the byte that was dropped into the lookahead
+        // (no need to maintain lookup table for NO_COMPRESSION mode
         const window_bs = try ctx.sliding_window.read_offset_end(3, 4);
         const window_key = bytes_to_u32(window_bs);
         // The global start index of the match in the input stream!
@@ -317,7 +324,7 @@ fn sliding_window_push(ctx: *LzContext, b: u8) !void {
         }
     }
 
-    if (ctx.sliding_window.count() == Flate.window_length) {
+    if (ctx.sliding_window.count == Flate.window_length) {
         // Once the sliding window is filled, slide it one byte forward every iteration
         ctx.maybe_sliding_window_min_index =
             if (ctx.maybe_sliding_window_min_index) |s| s + 1 else 1;
@@ -352,11 +359,6 @@ fn queue_push_char(
     ctx: *CompressContext,
     byte: u8,
 ) !void {
-    if (ctx.mode == FlateCompressMode.NO_COMPRESSION) {
-        // No need to save when using explicit NO_COMPRESSION
-        return;
-    }
-
     if (ctx.write_queue_count + 1 > ctx.write_queue.len) {
         return FlateError.OutOfQueueSpace;
     }

@@ -119,109 +119,52 @@ test "Gzip tmp" {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-fn runall(inputfile: []const u8, mode: FlateCompressMode) !void {
+fn run_all_types(inputfile: []const u8, mode: FlateCompressMode) !void {
     try run(inputfile, "gzip-z7-only", check_z7_ok, mode);
     try run(inputfile, "gzip-go-only", check_ref_ok, mode);
     try run(inputfile, "gzip-go-decompress-z7", check_go_decompress_z7, mode);
     try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go, mode);
 }
 
-test "Gzip best speed check simple text" {
-    try runall("tests/testdata/helloworld.txt", FlateCompressMode.BEST_SPEED);
+fn run_all_modes(inputfile: []const u8) !void {
+    const modes = [_]FlateCompressMode{
+        FlateCompressMode.NO_COMPRESSION,
+        FlateCompressMode.BEST_SPEED,
+        FlateCompressMode.BEST_SIZE,
+    };
+    for (modes) |mode| {
+        try run_all_types(inputfile, mode);
+    }
 }
 
-test "Gzip best speed check short simple text" {
-    try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SPEED);
-}
+// test "Gzip check simple text" {
+//     try run_all_modes("tests/testdata/helloworld.txt");
+// }
 
-test "Gzip best speed check longer simple text" {
-    try runall("tests/testdata/flate_test.txt", FlateCompressMode.BEST_SPEED);
-}
+// test "Gzip check short simple text" {
+//     try run_all_modes("tests/testdata/simple.txt");
+// }
 
-test "Gzip best speed check 9001 repeated characters" {
-    try runall("tests/testdata/over_9000_a.txt", FlateCompressMode.BEST_SPEED);
-}
+// test "Gzip check longer simple text" {
+//     try run_all_modes("tests/testdata/flate_test.txt");
+// }
 
-test "Gzip best speed check rfc1951.txt" {
-    try runall("tests/testdata/rfc1951.txt", FlateCompressMode.BEST_SPEED);
-}
+// test "Gzip check 9001 repeated characters" {
+//     try run_all_modes("tests/testdata/over_9000_a.txt");
+// }
 
-test "Gzip best speed on random data" {
-    try runall(TestContext.random_label, FlateCompressMode.BEST_SPEED);
-}
+// test "Gzip check rfc1951.txt" {
+//     try run_all_modes("tests/testdata/rfc1951.txt");
+// }
 
-test "Gzip best speed on small image" {
-    try runall("tests/testdata/wallpaper_small.jpg", FlateCompressMode.BEST_SPEED);
-}
+// test "Gzip on random data" {
+//     try run_all_modes(TestContext.random_label);
+// }
 
-test "Gzip best speed on large image" {
-    try runall("tests/testdata/wallpaper.jpg", FlateCompressMode.BEST_SPEED);
-}
+// test "Gzip on small image" {
+//     try run_all_modes("tests/testdata/wallpaper_small.jpg");
+// }
 
-// ////////////////////////////////////////////////////////////////////////////////
-
-test "Gzip best size check simple text" {
-    try runall("tests/testdata/helloworld.txt", FlateCompressMode.BEST_SIZE);
-}
-
-test "Gzip best size check short simple text" {
-    try runall("tests/testdata/simple.txt", FlateCompressMode.BEST_SIZE);
-}
-
-test "Gzip best size check longer simple text" {
-    try runall("tests/testdata/flate_test.txt", FlateCompressMode.BEST_SIZE);
-}
-
-test "Gzip best size check 9001 repeated characters" {
-    try runall("tests/testdata/over_9000_a.txt", FlateCompressMode.BEST_SIZE);
-}
-
-test "Gzip best size check rfc1951.txt" {
-    try runall("tests/testdata/rfc1951.txt", FlateCompressMode.BEST_SIZE);
-}
-
-test "Gzip best size on random data" {
-    try runall(TestContext.random_label, FlateCompressMode.BEST_SIZE);
-}
-
-test "Gzip best size on small image" {
-    try runall("tests/testdata/wallpaper_small.jpg", FlateCompressMode.BEST_SIZE);
-}
-
-test "Gzip best size on large image" {
-    try runall("tests/testdata/wallpaper.jpg", FlateCompressMode.BEST_SIZE);
-}
-
-// ////////////////////////////////////////////////////////////////////////////////
-
-test "Gzip no compression check simple text" {
-    try runall("tests/testdata/helloworld.txt", FlateCompressMode.NO_COMPRESSION);
-}
-
-test "Gzip no compression check short simple text" {
-    try runall("tests/testdata/simple.txt", FlateCompressMode.NO_COMPRESSION);
-}
-
-test "Gzip no compression check longer simple text" {
-    try runall("tests/testdata/flate_test.txt", FlateCompressMode.NO_COMPRESSION);
-}
-
-test "Gzip no compression check 9001 repeated characters" {
-    try runall("tests/testdata/over_9000_a.txt", FlateCompressMode.NO_COMPRESSION);
-}
-
-test "Gzip no compression check rfc1951.txt" {
-    try runall("tests/testdata/rfc1951.txt", FlateCompressMode.NO_COMPRESSION);
-}
-
-test "Gzip no compression on random data" {
-    try runall(TestContext.random_label, FlateCompressMode.NO_COMPRESSION);
-}
-
-test "Gzip no compression on small image" {
-    try runall("tests/testdata/wallpaper_small.jpg", FlateCompressMode.NO_COMPRESSION);
-}
-
-test "Gzip no compression on large image" {
-    try runall("tests/testdata/wallpaper.jpg", FlateCompressMode.NO_COMPRESSION);
+test "Gzip on large image" {
+    try run_all_modes("tests/testdata/wallpaper.jpg");
 }
