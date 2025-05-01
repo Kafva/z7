@@ -19,7 +19,7 @@ fn run(
     runFn: fn (*TestContext) @typeInfo(@TypeOf(check_z7_ok)).@"fn".return_type.?,
     mode: FlateCompressMode,
 ) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
@@ -155,7 +155,7 @@ fn run_all_z7_modes(inputfile: []const u8) !void {
 }
 
 fn run_dir(dirpath: []const u8) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 

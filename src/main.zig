@@ -9,35 +9,7 @@ const GzipFlag = @import("gzip.zig").GzipFlag;
 const gzip = @import("gzip.zig").compress;
 const gunzip = @import("gunzip.zig").decompress;
 
-const opt_h = "help";
-const opt_V = "version";
-const opt_v = "verbose";
-const opt_d = "decompress";
-const opt_c = "stdout";
-const opt_k = "keep";
-const opt_0 = "zero";
-const opt_1 = "fast";
-const opt_9 = "best";
-var opts = [_]Flag{
-    .{ .short = 'h', .long = opt_h, .value = .{ .active = false } },
-    .{ .short = 'V', .long = opt_V, .value = .{ .active = false } },
-    .{ .short = 'v', .long = opt_v, .value = .{ .active = false } },
-    .{ .short = 'd', .long = opt_d, .value = .{ .active = false } },
-    .{ .short = 'c', .long = opt_c, .value = .{ .active = false } },
-    .{ .short = 'k', .long = opt_k, .value = .{ .active = false } },
-    .{ .short = '0', .long = opt_0, .value = .{ .active = false } },
-    .{ .short = '1', .long = opt_1, .value = .{ .active = false } },
-    .{ .short = '9', .long = opt_9, .value = .{ .active = false } },
-};
-const flag_h = 0;
-const flag_V = 1;
-const flag_v = 2;
-const flag_d = 3;
-const flag_c = 4;
-const flag_k = 5;
-const flag_0 = 6;
-const flag_1 = 7;
-const flag_9 = 8;
+var opts = [_]?Flag{null} ** 256;
 
 const usage =
     \\Usage: z7 [OPTION]... [FILE]...
@@ -67,25 +39,36 @@ pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+
+    opts['h'] = .{ .short = 'h', .long = "help", .value = .{ .active = false } };
+    opts['V'] = .{ .short = 'V', .long = "version", .value = .{ .active = false } };
+    opts['v'] = .{ .short = 'v', .long = "verbose", .value = .{ .active = false } };
+    opts['d'] = .{ .short = 'd', .long = "decompress", .value = .{ .active = false } };
+    opts['c'] = .{ .short = 'c', .long = "stdout", .value = .{ .active = false } };
+    opts['k'] = .{ .short = 'k', .long = "keep", .value = .{ .active = false } };
+    opts['0'] = .{ .short = '0', .long = "zero", .value = .{ .active = false } };
+    opts['1'] = .{ .short = '1', .long = "fast", .value = .{ .active = false } };
+    opts['9'] = .{ .short = '9', .long = "best", .value = .{ .active = false } };
+
     const stdout = std.io.getStdOut().writer();
 
     var args = try std.process.argsWithAllocator(allocator);
     var flags = FlagIterator(std.process.ArgIterator){ .iter = &args };
     const first_arg = try flags.parse(&opts);
 
-    if (opts[flag_h].value.active) {
+    if (opts['h'].?.value.active) {
         try stdout.writeAll(usage);
         return 0;
     }
 
-    const keep = opts[flag_k].value.active;
+    const keep = opts['k'].?.value.active;
     const gzip_flags = @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC);
     const mode: FlateCompressMode = blk: {
-        if (opts[flag_0].value.active) break :blk FlateCompressMode.NO_COMPRESSION;
-        if (opts[flag_1].value.active) break :blk FlateCompressMode.BEST_SPEED;
+        if (opts['0'].?.value.active) break :blk FlateCompressMode.NO_COMPRESSION;
+        if (opts['1'].?.value.active) break :blk FlateCompressMode.BEST_SPEED;
         break :blk FlateCompressMode.BEST_SIZE;
     };
-    log.enable_debug = opts[flag_v].value.active;
+    log.enable_debug = opts['v'].?.value.active;
     log.debug(@src(), "Starting z7 {s}", .{build_options.version});
 
     if (first_arg) |inputfile| {
@@ -115,7 +98,7 @@ pub fn main() !u8 {
         };
         defer outstream.close();
 
-        if (opts[flag_d].value.active) {
+        if (opts['d'].?.value.active) {
             try gunzip(allocator, &instream, &outstream);
         } else {
             try gzip(allocator, inputfile, &instream, &outstream, mode, gzip_flags);
@@ -131,12 +114,12 @@ pub fn main() !u8 {
 }
 
 fn open_output(allocator: std.mem.Allocator, inputfile: []const u8) !std.fs.File {
-    if (opts[flag_c].value.active) {
+    if (opts['c'].?.value.active) {
         return std.io.getStdOut();
     }
     else {
         const outfile = blk: {
-            if (opts[flag_d].value.active) {
+            if (opts['d'].?.value.active) {
                 if (inputfile.len <= 3) {
                     return Z7Error.InputFileMissingExtension;
                 }

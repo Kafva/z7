@@ -1,11 +1,11 @@
 const std = @import("std");
 const z7 = @import("z7");
-const log = z7.log; 
+const log = z7.log;
 const RingBuffer = z7.ring_buffer.RingBuffer;
 const RingBufferError = z7.ring_buffer.RingBufferError;
 
 test "Ring buffer push" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 

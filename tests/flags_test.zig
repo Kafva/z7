@@ -7,16 +7,12 @@ const FlagIterator = z7.flags.FlagIterator;
 const opt_a = "alpha";
 const opt_b = "beta";
 const opt_c = "charlie";
-var opts = [_]Flag{
-    .{ .short = 'a', .long = opt_a, .value = .{ .str = null } },
-    .{ .short = 'b', .long = opt_b, .value = .{ .str = null } },
-    .{ .short = 'c', .long = opt_c, .value = .{ .active = false } },
-};
+var opts = [_]?Flag{null} ** 256;
 
 fn setup(cmdline: []const u8) std.mem.TokenIterator(u8, .scalar) {
-    opts[0].value.str = null;
-    opts[1].value.str = null;
-    opts[2].value.active = false;
+    opts['a'] = .{ .short = 'a', .long = opt_a, .value = .{ .str = null } };
+    opts['b'] = .{ .short = 'b', .long = opt_b, .value = .{ .str = null } };
+    opts['c'] = .{ .short = 'c', .long = opt_c, .value = .{ .active = false } };
 
     return std.mem.tokenizeScalar(u8, cmdline, ' ');
 }
@@ -34,9 +30,9 @@ test "Parse ok flags" {
     try std.testing.expectEqual(null, first_arg);
     try std.testing.expectEqual(null, iter.next());
 
-    try std.testing.expectEqualStrings("alpha_argument", opts[0].value.str.?);
-    try std.testing.expectEqualStrings("beta_argument", opts[1].value.str.?);
-    try std.testing.expect(opts[2].value.active);
+    try std.testing.expectEqualStrings("alpha_argument", opts['a'].?.value.str.?);
+    try std.testing.expectEqualStrings("beta_argument", opts['b'].?.value.str.?);
+    try std.testing.expect(opts['c'].?.value.active);
 }
 
 test "Parse ok arguments without flags" {
@@ -60,9 +56,9 @@ test "Parse ok flags followed by arguments" {
     try std.testing.expectEqualStrings("ccc", iter.next().?);
     try std.testing.expectEqual(null, iter.next());
 
-    try std.testing.expectEqualStrings("alpha_argument", opts[0].value.str.?);
-    try std.testing.expectEqual(null, opts[1].value.str);
-    try std.testing.expect(opts[2].value.active);
+    try std.testing.expectEqualStrings("alpha_argument", opts['a'].?.value.str.?);
+    try std.testing.expectEqual(null, opts['b'].?.value.str);
+    try std.testing.expect(opts['c'].?.value.active);
 }
 
 test "Stop parsing flags after --" {
@@ -74,9 +70,9 @@ test "Stop parsing flags after --" {
     try std.testing.expectEqualStrings("-b", first_arg.?);
     try std.testing.expectEqual(null, iter.next());
 
-    try std.testing.expectEqualStrings("alpha_argument", opts[0].value.str.?);
-    try std.testing.expectEqual(null, opts[1].value.str);
-    try std.testing.expect(opts[2].value.active);
+    try std.testing.expectEqualStrings("alpha_argument", opts['a'].?.value.str.?);
+    try std.testing.expectEqual(null, opts['b'].?.value.str);
+    try std.testing.expect(opts['c'].?.value.active);
 }
 
 test "Handle unexpected short flag" {

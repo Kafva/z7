@@ -11,7 +11,7 @@ fn run(
     inputfile: []const u8,
     label: []const u8,
 ) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 

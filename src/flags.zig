@@ -26,7 +26,7 @@ pub fn FlagIterator(comptime T: type) type {
 
         /// Returns the first non flag argument if any, additional non-flag
         /// arguments remain in `iter`.
-        pub fn parse(self: @This(), comptime flags: []Flag) FlagError!?([] const u8) {
+        pub fn parse(self: @This(), comptime flags: []?Flag) FlagError!?([] const u8) {
             // Skip program name
             _ = self.iter.*.next();
 
@@ -41,9 +41,11 @@ pub fn FlagIterator(comptime T: type) type {
                         // Flag with argument followed by flag encountered
                         return FlagError.UnexpectedArgument;
                     }
-                    switch (flags[idx].value) {
-                        .active => unreachable,
-                        .str => flags[idx].value.str = @ptrCast(@constCast(arg))
+                    if (flags[idx]) |flag| {
+                        switch (flag.value) {
+                            .active => unreachable,
+                            .str => flags[idx].?.value.str = @ptrCast(@constCast(arg))
+                        }
                     }
                     arg_index = null;
                 }
@@ -53,15 +55,17 @@ pub fn FlagIterator(comptime T: type) type {
                 }
                 else if (is_short or is_long) {
                     // Parse as a new flag
-                    for (0.., flags) |i, flag| {
-                        const match_short = flag.short == arg[1];
-                        const match_long = std.mem.eql(u8, arg[2..], flag.long);
-                        if (match_short or match_long) {
-                            switch (flag.value) {
-                                .active => flags[i].value.active = true,
-                                .str => arg_index = @intCast(i)
+                    for (0.., flags) |i, maybe_flag| {
+                        if (maybe_flag) |flag| {
+                            const match_short = flag.short == arg[1];
+                            const match_long = std.mem.eql(u8, arg[2..], flag.long);
+                            if (match_short or match_long) {
+                                switch (flag.value) {
+                                    .active => flags[i].?.value.active = true,
+                                    .str => arg_index = @intCast(i)
+                                }
+                                break;
                             }
-                            break;
                         }
                         if (i == flags.len - 1) {
                             return FlagError.UnexpectedFlag;
