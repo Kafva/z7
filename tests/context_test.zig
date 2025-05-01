@@ -142,6 +142,27 @@ pub const TestContext = struct {
         try std.testing.expectEqualSlices(u8, lhs_data, rhs_data);
     }
 
+    pub fn list_files(
+        allocator: std.mem.Allocator,
+        dirpath: []const u8,
+    ) !std.ArrayList([]const u8) {
+        var dir = try std.fs.cwd().openDir(dirpath, .{});
+        defer dir.close();
+        var iter = dir.iterate();
+
+        var list = std.ArrayList([]const u8).init(allocator);
+
+        while (try iter.next()) |entry| {
+            if (entry.kind != .file) {
+                continue;
+            }
+            const buf = try std.fmt.allocPrint(allocator, "{s}/{s}", .{dirpath, entry.name});
+            try list.append(buf);
+        }
+
+        return list;
+    }
+
     fn read_random(
         allocator: std.mem.Allocator,
         tmp: *const std.testing.TmpDir,

@@ -20,7 +20,8 @@ fn run(
 
     var enc_len: usize = 0;
     const dec_map = try compress(ctx.allocator, &enc_len, 256, &ctx.in, &ctx.compressed);
-    try ctx.log_result(try ctx.compressed.getPos());
+    const compressed_size = try ctx.compressed.getPos();
+    ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
     try decompress(
         &dec_map,
@@ -28,6 +29,8 @@ fn run(
         &ctx.compressed,
         &ctx.decompressed
     );
+
+    try ctx.log_result(compressed_size);
 
     // Verify correct decoding
     try ctx.eql(ctx.in, ctx.decompressed);

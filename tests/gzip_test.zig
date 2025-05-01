@@ -74,11 +74,10 @@ fn check_z7_decompress_go(ctx: *TestContext) !void {
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
     // Decompress with Go flate implementation
-    const decompressed_len = libflate.Gunzip(
+    _ = libflate.Gunzip(
         try ctx.compressed_path_s(),
         try ctx.decompressed_path_s()
     );
-    try std.testing.expect(decompressed_len > 0);
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -93,11 +92,10 @@ fn check_ref_ok(ctx: *TestContext) !void {
     );
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
-    const decompressed_len = libflate.Gunzip(
+    _ = libflate.Gunzip(
         try ctx.compressed_path_s(),
         try ctx.decompressed_path_s()
     );
-    try std.testing.expect(decompressed_len > 0);
 
     try ctx.log_result(@intCast(compressed_len));
 
@@ -120,13 +118,13 @@ test "Gzip tmp" {
 ////////////////////////////////////////////////////////////////////////////////
 
 fn run_all_types(inputfile: []const u8, mode: FlateCompressMode) !void {
-    try run(inputfile, "gzip-z7-only", check_z7_ok, mode);
-    try run(inputfile, "gzip-go-only", check_ref_ok, mode);
+    try run(inputfile, "gzip-z7", check_z7_ok, mode);
+    try run(inputfile, "gzip-go", check_ref_ok, mode);
     try run(inputfile, "gzip-go-decompress-z7", check_go_decompress_z7, mode);
     try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go, mode);
 }
 
-fn run_all_modes(inputfile: []const u8) !void {
+fn run_all_types_and_modes(inputfile: []const u8) !void {
     const modes = [_]FlateCompressMode{
         FlateCompressMode.NO_COMPRESSION,
         FlateCompressMode.BEST_SPEED,
@@ -137,34 +135,72 @@ fn run_all_modes(inputfile: []const u8) !void {
     }
 }
 
-// test "Gzip check simple text" {
-//     try run_all_modes("tests/testdata/helloworld.txt");
-// }
+fn run_all_z7_modes(inputfile: []const u8) !void {
+    const modes = [_]FlateCompressMode{
+        FlateCompressMode.NO_COMPRESSION,
+        FlateCompressMode.BEST_SPEED,
+        FlateCompressMode.BEST_SIZE,
+    };
+    for (modes) |mode| {
+        try run(inputfile, "gzip-z7", check_z7_ok, mode);
+        try run(inputfile, "gzip-z7-decompress-go", check_z7_decompress_go, mode);
+    }
+}
 
-// test "Gzip check short simple text" {
-//     try run_all_modes("tests/testdata/simple.txt");
-// }
+fn run_dir(dirpath: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
-// test "Gzip check longer simple text" {
-//     try run_all_modes("tests/testdata/flate_test.txt");
-// }
+    const filepaths = try TestContext.list_files(allocator, dirpath);
 
-// test "Gzip check 9001 repeated characters" {
-//     try run_all_modes("tests/testdata/over_9000_a.txt");
-// }
+    for (filepaths.items) |filepath| {
+        try run_all_z7_modes(filepath);
+    }
+}
 
-// test "Gzip check rfc1951.txt" {
-//     try run_all_modes("tests/testdata/rfc1951.txt");
-// }
+////////////////////////////////////////////////////////////////////////////////
 
-// test "Gzip on random data" {
-//     try run_all_modes(TestContext.random_label);
-// }
+test "Gzip on zig fuzz data" {
+    try run_dir("tests/testdata/zig/fuzz");
+}
 
-// test "Gzip on small image" {
-//     try run_all_modes("tests/testdata/wallpaper_small.jpg");
-// }
+test "Gzip on zig block_writer data" {
+    try run_dir("tests/testdata/zig/block_writer");
+}
+
+test "Gzip check empty" {
+    try run_all_types_and_modes("tests/testdata/empty");
+}
+
+test "Gzip check simple text" {
+    try run_all_types_and_modes("tests/testdata/helloworld.txt");
+}
+
+test "Gzip check short simple text" {
+    try run_all_types_and_modes("tests/testdata/simple.txt");
+}
+
+test "Gzip check longer simple text" {
+    try run_all_types_and_modes("tests/testdata/flate_test.txt");
+}
+
+test "Gzip check 9001 repeated characters" {
+    try run_all_types_and_modes("tests/testdata/over_9000_a.txt");
+}
+
+test "Gzip check rfc1951.txt" {
+    try run_all_types_and_modes("tests/testdata/rfc1951.txt");
+}
+
+test "Gzip on random data" {
+    try run_all_types_and_modes(TestContext.random_label);
+}
+
+test "Gzip on small image" {
+    try run_all_types_and_modes("tests/testdata/wallpaper_small.jpg");
+}
 
 test "Gzip on large image" {
-    try run_all_modes("tests/testdata/wallpaper.jpg");
+    try run_all_types_and_modes("tests/testdata/wallpaper.jpg");
 }

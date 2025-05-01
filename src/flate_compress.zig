@@ -132,7 +132,8 @@ fn write_block(ctx: *CompressContext) !bool {
     // Populate the write_queue
     const done = try lz_compress(ctx.lz);
 
-    // Decide which block type to use
+    // Decide which block type to use for this iteration and what block length
+    // to use for the next iteration
     const next_block_length = try pick_block_type(ctx);
 
     const btype: u3 = @intFromEnum(ctx.block_type);
