@@ -13,7 +13,7 @@ test "Ring buffer push" {
     for (0..12) |i| {
         _ = rbuf.push(@truncate(i));
     }
-    try std.testing.expectEqual(10, rbuf.count());
+    try std.testing.expectEqual(10, rbuf.count);
 
     const expected = [_]u8{10,11,2, 3,4,5, 6,7,8, 9};
     // end_index: ~~~~~~~~~~~~^
@@ -33,7 +33,7 @@ test "Ring buffer read" {
     for (0..12) |i| {
         _ = rbuf.push(@truncate(i));
     }
-    try std.testing.expectEqual(10, rbuf.count());
+    try std.testing.expectEqual(10, rbuf.count);
 
     try std.testing.expectEqual(.{11}, try rbuf.read_offset_end(0,1));
     try std.testing.expectEqual(.{10}, try rbuf.read_offset_end(1,1));
@@ -57,7 +57,7 @@ test "Ring buffer OOB read" {
     for (0..2) |i| {
         _ = rbuf.push(@truncate(i));
     }
-    try std.testing.expectEqual(2, rbuf.count());
+    try std.testing.expectEqual(2, rbuf.count);
 
     try std.testing.expectError(
          RingBufferError.InvalidOffsetRead,
@@ -94,19 +94,19 @@ test "Ring buffer prune" {
     for (0..4) |i| {
         _ = rbuf.push(@truncate(i));
     }
-    try std.testing.expectEqual(4, rbuf.count());
+    try std.testing.expectEqual(4, rbuf.count);
     try std.testing.expectEqual(0, rbuf.prune(1));
 
-    try std.testing.expectEqual(3, rbuf.count());
+    try std.testing.expectEqual(3, rbuf.count);
     try std.testing.expectEqual(1, rbuf.prune(1));
 
-    try std.testing.expectEqual(2, rbuf.count());
+    try std.testing.expectEqual(2, rbuf.count);
     try std.testing.expectEqual(2, rbuf.prune(1));
 
-    try std.testing.expectEqual(1, rbuf.count());
+    try std.testing.expectEqual(1, rbuf.count);
     try std.testing.expectEqual(3, rbuf.prune(1));
 
-    try std.testing.expectEqual(0, rbuf.count());
+    try std.testing.expectEqual(0, rbuf.count);
     try std.testing.expectEqual(null, rbuf.prune(1));
 }
 
@@ -119,9 +119,9 @@ test "Ring buffer prune multiple" {
     for (0..4) |i| {
         _ = rbuf.push(@truncate(i));
     }
-    try std.testing.expectEqual(4, rbuf.count());
+    try std.testing.expectEqual(4, rbuf.count);
     try std.testing.expectEqual(0, rbuf.prune(4));
-    try std.testing.expectEqual(0, rbuf.count());
+    try std.testing.expectEqual(0, rbuf.count);
 }
 
 test "Ring buffer push after prune" {

@@ -155,7 +155,7 @@ test "Gzip best speed on small image" {
 }
 
 test "Gzip best speed on large image" {
-    try runall("tests/testdata/wallpaper.jpg", FlateCompressMode.NO_COMPRESSION);
+    try runall("tests/testdata/wallpaper.jpg", FlateCompressMode.BEST_SPEED);
 }
 
 // ////////////////////////////////////////////////////////////////////////////////
