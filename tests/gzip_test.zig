@@ -40,10 +40,11 @@ fn check_z7_ok(ctx: *TestContext) !void {
         ctx.maybe_mode.?,
         // XXX: gzstat.py does not handle gzip flags
         @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
+        false,
     );
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
-    try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
+    try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed, false);
 
     try ctx.log_result(try ctx.compressed.getPos());
 
@@ -62,7 +63,7 @@ fn check_go_decompress_z7(ctx: *TestContext) !void {
 
     try std.testing.expect(compressed_len > 0);
 
-    try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed);
+    try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed, false);
 
     // Verify correct decompression
     try ctx.eql(ctx.in, ctx.decompressed);
@@ -70,7 +71,7 @@ fn check_go_decompress_z7(ctx: *TestContext) !void {
 
 /// Compress with z7 and decompress with Golang
 fn check_z7_decompress_go(ctx: *TestContext) !void {
-    try gzip(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, ctx.maybe_mode.?, 0);
+    try gzip(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, ctx.maybe_mode.?, 0, false);
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
     // Decompress with Go flate implementation
@@ -106,12 +107,12 @@ fn check_ref_ok(ctx: *TestContext) !void {
 ////////////////////////////////////////////////////////////////////////////////
 
 test "Gzip tmp" {
-    try run("tests/testdata/wallpaper.jpg", "gzip-z7", check_z7_ok, FlateCompressMode.NO_COMPRESSION);
-    try run("tests/testdata/wallpaper.jpg", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SIZE);
+    // try run("tests/testdata/wallpaper.jpg", "gzip-z7", check_z7_ok, FlateCompressMode.NO_COMPRESSION);
+    // try run("tests/testdata/wallpaper.jpg", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SIZE);
 
 
-    try run("tests/testdata/wallpaper.jpg", "gzip-go", check_ref_ok, FlateCompressMode.NO_COMPRESSION);
-    try run("tests/testdata/wallpaper.jpg", "gzip-go", check_ref_ok, FlateCompressMode.BEST_SIZE);
+    // try run("tests/testdata/wallpaper.jpg", "gzip-go", check_ref_ok, FlateCompressMode.NO_COMPRESSION);
+    // try run("tests/testdata/wallpaper.jpg", "gzip-go", check_ref_ok, FlateCompressMode.BEST_SIZE);
 
     //try run("/Users/jonas/Downloads/cemu-2.6-macos-12-x64.dmg", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SIZE);
     // try run("tests/testdata/over_9000_a.txt", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SPEED);
@@ -176,38 +177,34 @@ fn run_dir(dirpath: []const u8) !void {
 //     try run_dir("tests/testdata/zig/block_writer");
 // }
 
-// test "Gzip check empty" {
-//     try run_all_types_and_modes("tests/testdata/empty");
-// }
+test "Gzip check empty" {
+    try run_all_types_and_modes("tests/testdata/empty");
+}
 
-// test "Gzip check simple text" {
-//     try run_all_types_and_modes("tests/testdata/helloworld.txt");
-// }
+test "Gzip check simple text" {
+    try run_all_types_and_modes("tests/testdata/helloworld.txt");
+}
 
-// test "Gzip check short simple text" {
-//     try run_all_types_and_modes("tests/testdata/simple.txt");
-// }
+test "Gzip check short simple text" {
+    try run_all_types_and_modes("tests/testdata/simple.txt");
+}
 
-// test "Gzip check longer simple text" {
-//     try run_all_types_and_modes("tests/testdata/flate_test.txt");
-// }
+test "Gzip check longer simple text" {
+    try run_all_types_and_modes("tests/testdata/flate_test.txt");
+}
 
-// test "Gzip check 9001 repeated characters" {
-//     try run_all_types_and_modes("tests/testdata/over_9000_a.txt");
-// }
+test "Gzip check 9001 repeated characters" {
+    try run_all_types_and_modes("tests/testdata/over_9000_a.txt");
+}
 
-// test "Gzip check rfc1951.txt" {
-//     try run_all_types_and_modes("tests/testdata/rfc1951.txt");
-// }
+test "Gzip check rfc1951.txt" {
+    try run_all_types_and_modes("tests/testdata/rfc1951.txt");
+}
 
-// test "Gzip on random data" {
-//     try run_all_types_and_modes(TestContext.random_label);
-// }
+test "Gzip on random data" {
+    try run_all_types_and_modes(TestContext.random_label);
+}
 
-// test "Gzip on small image" {
-//     try run_all_types_and_modes("tests/testdata/wallpaper_small.jpg");
-// }
-
-// test "Gzip on large image" {
-//     try run_all_types_and_modes("tests/testdata/wallpaper.jpg");
-// }
+test "Gzip on small image" {
+    try run_all_types_and_modes("tests/testdata/wallpaper_small.jpg");
+}
