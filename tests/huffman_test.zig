@@ -22,6 +22,8 @@ fn run(
     const dec_map = try compress(ctx.allocator, &enc_len, 256, &ctx.in, &ctx.compressed);
     const compressed_size = try ctx.compressed.getPos();
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
+    // Decompress from the start of the stream
+    try ctx.compressed.seekTo(0);
 
     try decompress(
         &dec_map,

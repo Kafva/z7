@@ -62,10 +62,6 @@ pub fn decompress(
         .dec_map = dec_map,
     };
 
-    // Start from the first element in both streams
-    try ctx.instream.seekTo(0);
-    try ctx.outstream.seekTo(0);
-
     var enc = HuffmanEncoding {
         .bits = 0,
         .bit_shift = 0,

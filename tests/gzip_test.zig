@@ -43,6 +43,8 @@ fn check_z7_ok(ctx: *TestContext) !void {
         false,
     );
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
+    // Decompress from the start of the stream
+    try ctx.compressed.seekTo(0);
 
     try gunzip(ctx.allocator, &ctx.compressed, &ctx.decompressed, false);
 
@@ -114,9 +116,8 @@ test "Gzip tmp" {
     // try run("tests/testdata/wallpaper.jpg", "gzip-go", check_ref_ok, FlateCompressMode.NO_COMPRESSION);
     // try run("tests/testdata/wallpaper.jpg", "gzip-go", check_ref_ok, FlateCompressMode.BEST_SIZE);
 
-    //try run("/Users/jonas/Downloads/cemu-2.6-macos-12-x64.dmg", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SIZE);
     // try run("tests/testdata/over_9000_a.txt", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SPEED);
-    // try run("tests/testdata/rfc1951.txt", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SPEED);
+    //try run("tests/testdata/rfc1951.txt", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SPEED);
     // try run(TestContext.random_label, "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SPEED);
     //try run("tests/testdata/image.jpg", "gzip-z7", check_z7_ok, FlateCompressMode.NO_COMPRESSION);
     //try run("tests/testdata/image.jpg", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SIZE);

@@ -83,13 +83,6 @@ pub fn decompress(
         .cl_dec_map = std.AutoHashMap(HuffmanEncoding, u16).init(allocator),
     };
 
-    // We may want to start from an offset in the input stream
-    // TODO
-    log.debug(@src(), "Seeking to {} byte offset", .{instream_offset});
-    try instream.seekTo(instream_offset);
-    // Always start from the beginning in the output stream
-    try outstream.seekTo(0);
-
     // Decode the stream
     while (!done) {
         const header = try read_bits(&ctx, u3, 3);

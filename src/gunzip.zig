@@ -42,11 +42,6 @@ pub fn decompress(
     var handle_comment = false;
     var handle_fhcrc = false;
 
-    // Always start from the beginning of the input stream and output stream
-    // TODO
-    try instream.seekTo(0);
-    try outstream.seekTo(0);
-
     if (try read_hdr_byte(&ctx) != 0x1f) {
         return GunzipError.InvalidHeader;
     }
@@ -117,6 +112,7 @@ pub fn decompress(
         }
     }
 
+    log.debug(@src(), "Reading deflate stream at @{d}", .{ctx.header_size});
     try inflate(
         allocator,
         ctx.instream,
