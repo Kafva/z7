@@ -35,7 +35,7 @@ const Z7Error = error {
 
 const Z7Context = struct {
     allocator: std.mem.Allocator, 
-    inputfile: []const u8,
+    maybe_inputfile: ?[]const u8,
     stdout: bool,
     progress: bool,
     decompress: bool,
@@ -69,17 +69,8 @@ pub fn main() !u8 {
 
     log.debug(@src(), "Starting z7 {s}", .{build_options.version});
 
-    const instream = blk: {
-        if (std.mem.eql(u8, ctx.inputfile, "-")) {
-            break :blk std.io.getStdIn();
-        }
-        else {
-            const file = std.fs.cwd().openFile(ctx.inputfile, .{}) catch |err| {
-                log.err(@src(), "Failed to open input file: {any}", .{err});
-                return 1;
-            };
-            break :blk file;
-        }
+    const instream = open_input(&ctx) catch {
+        return 1;
     };
     defer instream.close();
 
@@ -104,7 +95,7 @@ pub fn main() !u8 {
     } else {
         try gzip(
             ctx.allocator,
-            ctx.inputfile,
+            if (ctx.maybe_inputfile) |f| f else "-",
             &instream,
             &outstream,
             ctx.mode,
@@ -119,7 +110,9 @@ pub fn main() !u8 {
     }
 
     if (!ctx.keep) {
-        try std.fs.Dir.deleteFile(std.fs.cwd(), ctx.inputfile);
+        if (ctx.maybe_inputfile) |inputfile| {
+            try std.fs.Dir.deleteFile(std.fs.cwd(), inputfile);
+        }
     }
 
     return 0;
@@ -153,49 +146,56 @@ fn parse_flags(allocator: std.mem.Allocator) !Z7Context {
         std.process.exit(0);
     }
 
-    if (maybe_first_arg) |first_arg| {
-        const ctx = Z7Context {
-            .allocator = allocator,
-            .inputfile = first_arg,
-            .stdout = opts['c'].?.value.active,
-            .progress = opts['p'].?.value.active,
-            .decompress = opts['d'].?.value.active,
-            .keep = opts['k'].?.value.active,
-            .mode =  blk: {
-                if (opts['0'].?.value.active) break :blk FlateCompressMode.NO_COMPRESSION;
-                if (opts['1'].?.value.active) break :blk FlateCompressMode.BEST_SPEED;
-                break :blk FlateCompressMode.BEST_SIZE;
-            }
-        };
+    return Z7Context {
+        .allocator = allocator,
+        .maybe_inputfile = maybe_first_arg,
+        .stdout = opts['c'].?.value.active,
+        .progress = opts['p'].?.value.active,
+        .decompress = opts['d'].?.value.active,
+        .keep = opts['k'].?.value.active,
+        .mode =  blk: {
+            if (opts['0'].?.value.active) break :blk FlateCompressMode.NO_COMPRESSION;
+            if (opts['1'].?.value.active) break :blk FlateCompressMode.BEST_SPEED;
+            break :blk FlateCompressMode.BEST_SIZE;
+        }
+    };
+}
 
-        return ctx;
+fn open_input(ctx: *Z7Context) !std.fs.File {
+    if (ctx.maybe_inputfile) |inputfile| {
+        if (std.mem.eql(u8, inputfile, "-")) {
+            return std.io.getStdIn();
+        }
+        else {
+            return try std.fs.cwd().openFile(inputfile, .{});
+        }
     }
-    else {
-        try stdout.writeAll(usage);
-        std.process.exit(1);
-    }
+    return std.io.getStdIn();
 }
 
 fn open_output(ctx: *Z7Context) !std.fs.File {
-    if (ctx.stdout) {
-        return std.io.getStdOut();
-    }
-    else {
+    if (ctx.maybe_inputfile) |inputfile| {
+        if (ctx.stdout or std.mem.eql(u8, inputfile, "-")) {
+            return std.io.getStdOut();
+        }
         const outfile = blk: {
             if (ctx.decompress) {
-                if (ctx.inputfile.len <= 3) {
+                if (inputfile.len <= 3) {
                     return Z7Error.InputFileMissingExtension;
                 }
-                const suffix = ctx.inputfile[ctx.inputfile.len - 3..];
+                const suffix = inputfile[inputfile.len - 3..];
                 if (!std.mem.eql(u8, suffix, ".gz")) {
                     return Z7Error.InputFileMissingExtension;
                 }
-                break :blk ctx.inputfile[0..ctx.inputfile.len - 3];
+                break :blk inputfile[0..inputfile.len - 3];
             } else {
-                break :blk try std.fmt.allocPrint(ctx.allocator, "{s}.gz", .{ctx.inputfile});
+                break :blk try std.fmt.allocPrint(ctx.allocator, "{s}.gz", .{inputfile});
             }
         };
         return try std.fs.cwd().createFile(outfile, .{});
+    }
+    else {
+        return std.io.getStdOut();
     }
 }
 
