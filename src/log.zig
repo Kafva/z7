@@ -52,7 +52,7 @@ pub fn trace(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (build_options.trace or enable_debug) {
+    if (build_options.trace) {
         log(.debug, src, format, args);
     }
 }

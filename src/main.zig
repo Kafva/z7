@@ -1,4 +1,5 @@
 const std = @import("std");
+
 const build_options = @import("build_options");
 
 const util = @import("util.zig");
@@ -29,18 +30,18 @@ const usage =
     \\
 ;
 
-const Z7Error = error {
-    InputFileMissingExtension
-};
-
 const Z7Context = struct {
     allocator: std.mem.Allocator, 
+    /// Unset if reading from stdin
     maybe_inputfile: ?[]const u8,
     stdout: bool,
     progress: bool,
     decompress: bool,
     keep: bool,
     mode: FlateCompressMode,
+    /// A temporary output file needs to be used during decompression if
+    /// the input file does not have a .gz extension
+    use_tmp_outputfile: bool,
 };
 
 pub fn main() !u8 {
@@ -52,7 +53,8 @@ pub fn main() !u8 {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var ctx: Z7Context = parse_flags(allocator) catch {
+    var ctx: Z7Context = parse_cmdline(allocator) catch |err| {
+        log.err(@src(), "Error parsing command line: {any}", .{err});
         return 1;
     };
 
@@ -69,31 +71,33 @@ pub fn main() !u8 {
 
     log.debug(@src(), "Starting z7 {s}", .{build_options.version});
 
-    const instream = open_input(&ctx) catch {
+    var instream = open_input(&ctx) catch |err| {
+        log.err(@src(), "Failed to open input stream: {s}", .{@errorName(err)});
         return 1;
     };
     defer instream.close();
 
     const outstream = open_output(&ctx) catch |err| {
-        switch (err) {
-            Z7Error.InputFileMissingExtension =>
-                log.err(@src(), "Input file is missing .gz extension", .{}),
-            else => {
-                log.err(@src(), "Failed to open output file: {any}", .{err});
-            }
-        }
+        log.err(@src(), "Failed to open output file: {s}", .{@errorName(err)});
         return 1;
     };
     defer outstream.close();
 
     if (ctx.progress) {
-        try util.hide_cursor();
+        util.hide_cursor() catch |err| {
+            log.err(@src(), "Failed to hide cursor: {s}", .{@errorName(err)});
+            return 1;
+        };
+        defer cleanup_progress();
     }
 
     if (ctx.decompress) {
-        try gunzip(allocator, &instream, &outstream, ctx.progress);
+        gunzip(allocator, &instream, &outstream, ctx.progress) catch |err| {
+            log.err(@src(), "Decompression error: {s}", .{@errorName(err)});
+            return 1;
+        };
     } else {
-        try gzip(
+        gzip(
             ctx.allocator,
             if (ctx.maybe_inputfile) |f| f else "-",
             &instream,
@@ -101,24 +105,43 @@ pub fn main() !u8 {
             ctx.mode,
             @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
             ctx.progress
-        );
+        ) catch |err| {
+            log.err(@src(), "Compression error: {s}", .{@errorName(err)});
+            return 1;
+        };
     }
 
     if (ctx.progress) {
-        _ = try std.io.getStdOut().write("\n");
-        try util.show_cursor();
+        _ = std.io.getStdOut().write("\n") catch {};
+        util.show_cursor() catch {};
     }
 
     if (!ctx.keep) {
         if (ctx.maybe_inputfile) |inputfile| {
-            try std.fs.Dir.deleteFile(std.fs.cwd(), inputfile);
+            std.fs.Dir.deleteFile(std.fs.cwd(), inputfile) catch |err| {
+                log.err(@src(), "Failed to delete input file: {s}", .{@errorName(err)});
+                return 1;
+            };
+        }
+    }
+
+    if (ctx.maybe_inputfile) |inputfile| {
+        if (ctx.use_tmp_outputfile) {
+            save_tmp_output(inputfile, &instream, outstream) catch |err| {
+                log.err(
+                    @src(),
+                    "Failed to overwrite input file with decompressed data: {s}",
+                    .{@errorName(err)}
+                );
+                return 1;
+            };
         }
     }
 
     return 0;
 }
 
-fn parse_flags(allocator: std.mem.Allocator) !Z7Context {
+fn parse_cmdline(allocator: std.mem.Allocator) !Z7Context {
     opts['h'] = .{ .short = 'h', .long = "help", .value = .{ .active = false } };
     opts['V'] = .{ .short = 'V', .long = "version", .value = .{ .active = false } };
     opts['p'] = .{ .short = 'p', .long = "progress", .value = .{ .active = false } };
@@ -157,6 +180,25 @@ fn parse_flags(allocator: std.mem.Allocator) !Z7Context {
             if (opts['0'].?.value.active) break :blk FlateCompressMode.NO_COMPRESSION;
             if (opts['1'].?.value.active) break :blk FlateCompressMode.BEST_SPEED;
             break :blk FlateCompressMode.BEST_SIZE;
+        },
+        .use_tmp_outputfile = blk: {
+            // No need for a temporary filename when compressing, just add .gz
+            if (!opts['d'].?.value.active) {
+                break :blk false;
+            }
+
+            if (maybe_first_arg) |first_arg| {
+                // Input file lacks a .gz extension, use temporary file
+                if (first_arg.len <= 3) {
+                    break :blk true;
+                }
+                const suffix = first_arg[first_arg.len - 3..];
+                if (!std.mem.eql(u8, suffix, ".gz")) {
+                    break :blk true;
+                }
+            }
+            // Input file has .gz extension
+            break :blk false;
         }
     };
 }
@@ -167,7 +209,7 @@ fn open_input(ctx: *Z7Context) !std.fs.File {
             return std.io.getStdIn();
         }
         else {
-            return try std.fs.cwd().openFile(inputfile, .{});
+            return try std.fs.cwd().openFile(inputfile, .{ .mode = .read_only });
         }
     }
     return std.io.getStdIn();
@@ -180,14 +222,12 @@ fn open_output(ctx: *Z7Context) !std.fs.File {
         }
         const outfile = blk: {
             if (ctx.decompress) {
-                if (inputfile.len <= 3) {
-                    return Z7Error.InputFileMissingExtension;
+                if (ctx.use_tmp_outputfile) {
+                    return try util.tmpfile();
                 }
-                const suffix = inputfile[inputfile.len - 3..];
-                if (!std.mem.eql(u8, suffix, ".gz")) {
-                    return Z7Error.InputFileMissingExtension;
+                else {
+                    break :blk inputfile[0..inputfile.len - 3];
                 }
-                break :blk inputfile[0..inputfile.len - 3];
             } else {
                 break :blk try std.fmt.allocPrint(ctx.allocator, "{s}.gz", .{inputfile});
             }
@@ -199,12 +239,42 @@ fn open_output(ctx: *Z7Context) !std.fs.File {
     }
 }
 
+fn save_tmp_output(
+    inputfile: []const u8,
+    instream: *std.fs.File,
+    outstream: std.fs.File,
+) !void {
+    // Reopen the input file, truncated
+    instream.close();
+    instream.* = try std.fs.cwd().createFile(inputfile, .{ .truncate = true });
+
+    var buf = [_]u8{0} ** 8192;
+    var read_bytes: usize = 0;
+    const end = try outstream.getEndPos();
+
+    // Overwrite it with the content from the temporary output file
+    try outstream.seekTo(0);
+    while (read_bytes < end) {
+        const cnt = try outstream.readAll(&buf);
+        read_bytes += cnt;
+
+        try instream.writeAll(buf[0..cnt]);
+
+        if (cnt < buf.len) {
+            break;
+        }
+    }
+}
+
+fn cleanup_progress() void {
+    util.show_cursor() catch {};
+}
+
 fn signal_handler(
     _: i32,
     _: *const std.posix.siginfo_t,
     _: ?*anyopaque,
 ) callconv(.c) noreturn {
-    _ = std.io.getStdOut().write("\n") catch {};
-    util.show_cursor() catch {};
+    cleanup_progress();
     std.process.exit(4);
 }

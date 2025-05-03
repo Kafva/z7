@@ -437,7 +437,6 @@ fn walk_generate_translation(
     bits: u16,
     bit_shift: u4,
 ) !void {
-    log.debug(@src(), "index: {d}", .{index});
     const maybe_left_child_index = ctx.array.items[index].maybe_left_child_index;
     const maybe_right_child_index = ctx.array.items[index].maybe_right_child_index;
 

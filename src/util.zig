@@ -5,6 +5,10 @@ const ctime = @cImport({
     @cInclude("time.h");
 });
 
+const cunistd = @cImport({
+    @cInclude("unistd.h");
+});
+
 /// Create an array with `c` repeated `count` times
 pub fn repeat(comptime c: u8, comptime count: u8) ![]const u8 {
     if (count == 0) return "";
@@ -145,15 +149,37 @@ pub fn strtime(epoch: u32) [*c]u8 {
 pub fn progress(comptime prefix: []const u8, current_bytes: usize, total_bytes: f64) !void {
     const written: f64 = @floatFromInt(current_bytes);
     const percent: f64 = 100 * (written / total_bytes);
-    try std.io.getStdOut().writer().print("\r{s} {d:5.1} %", .{prefix, percent});
+    try std.io.getStdErr().writer().print("\r{s} {d:5.1} %", .{prefix, percent});
+    if (written == total_bytes) {
+        _ = try std.io.getStdErr().write("\n");
+    }
+
 }
 
 pub fn hide_cursor() !void {
     _ = try std.io.getStdErr().write("\x1b[?25l");
-    _ = try std.io.getStdOut().write("\x1b[?25l");
 }
 
 pub fn show_cursor() !void {
-    _ = try std.io.getStdErr().write("\x1b[?25l");
-    _ = try std.io.getStdOut().write("\x1b[?25h");
+    _ = try std.io.getStdErr().write("\x1b[?25h");
+}
+
+pub fn tmpfile() !std.fs.File {
+    const tmpl = "/tmp/z7.XXXXXX";
+    var buf = [_]u8{0}**15;
+    var ptr: [*c]u8 = undefined;
+
+    for (0.., tmpl) |i, b| {
+        buf[i] = b;
+    }
+    ptr = &buf;
+
+    const fd = cunistd.mkstemp(ptr);
+    if (fd == -1) {
+        log.err(@src(), "mkstemp failed", .{});
+        return std.fs.File.OpenError.Unexpected;
+    }
+    std.posix.close(fd);
+    
+    return std.fs.cwd().openFile(buf[0..tmpl.len], .{ .mode = .read_write });
 }
