@@ -280,67 +280,70 @@ fn no_compression_write_block(ctx: *CompressContext) !void {
 /// Write the bits for the provided match length and distance to the output
 /// stream.
 fn fixed_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
-    switch (sym) {
-        .char => {
+    switch (sym.typing) {
+        .LITERAL => {
+            const char = sym.value.char;
             // Lit Value    Bits        Codes
             // ---------    ----        -----
             //   0 - 143     8          00110000 through
             //                          10111111
             // 144 - 255     9          110010000 through
             //                          111111111
-            if (sym.char < 144) {
-                try write_bits_be(ctx, u8, 0b0011_0000 + sym.char, 8);
+            if (char < 144) {
+                try write_bits_be(ctx, u8, 0b0011_0000 + char, 8);
             }
             else {
-                const char_9: u9 = 0b1_1001_0000 + @as(u9, sym.char - 144);
+                const char_9: u9 = 0b1_1001_0000 + @as(u9, char - 144);
                 try write_bits_be(ctx, u9, char_9, 9);
             }
-            util.print_char(log.debug, "Output write literal", sym.char);
+            util.print_char(log.debug, "Output write literal", char);
         },
-        .length => {
+        .LENGTH => {
+            const lsym = sym.value.range.sym;
             // Translate the length to the corresponding code
             //
             // 256 - 279     7          000_0000 through
             //                          001_0111
             // 280 - 287     8          1100_0000 through
             //                          1100_0111
-            if (sym.length.code < 280) {
+            if (lsym.code < 280) {
                 // Write the Huffman encoding of 'Code'
-                const hcode: u7 = @truncate(sym.length.code - 256);
+                const hcode: u7 = @truncate(lsym.code - 256);
                 try write_bits_be(ctx, u7, 0b000_0000 + hcode, 7);
             }
             else {
-                const hcode: u8 = @truncate(sym.length.code - 280);
+                const hcode: u8 = @truncate(lsym.code - 280);
                 try write_bits_be(ctx, u8, 0b1100_0000 + hcode, 8);
             }
-            log.debug(@src(), "backref(length): {any}", .{sym.length});
+            log.debug(@src(), "backref(length): {any}", .{sym.value.range});
 
             // Write the 'Extra Bits', i.e. the offset that indicate
             // the exact offset to use in the range.
-            if (sym.length.code != 0) {
-                const offset = sym.length.value.? - sym.length.range_start;
+            if (lsym.code != 0) {
+                const offset = sym.value.range.value - lsym.range_start;
                 try write_bits(
                     ctx,
                     u16,
                     offset,
-                    sym.length.bit_count
+                    lsym.bit_count
                 );
                 log.debug(@src(), "backref(length-offset): {d}", .{offset});
             }
         },
-        .distance => {
-            const denc_code: u5 = @truncate(sym.distance.code);
+        .DISTANCE => {
+            const dsym = sym.value.range.sym;
+            const denc_code: u5 = @truncate(dsym.code);
             try write_bits_be(ctx, u5, denc_code, 5);
-            log.debug(@src(), "backref(distance): {any}", .{sym.distance});
+            log.debug(@src(), "backref(distance): {any}", .{dsym});
 
             // Write the offset bits for the distance
-            if (sym.distance.bit_count != 0) {
-                const offset = sym.distance.value.? - sym.distance.range_start;
+            if (dsym.bit_count != 0) {
+                const offset = sym.value.range.value - dsym.range_start;
                 try write_bits(
                     ctx,
                     u16,
                     offset,
-                    sym.distance.bit_count
+                    dsym.bit_count
                 );
                 log.debug(@src(), "backref(distance-offset): {d}", .{offset});
             }
@@ -359,24 +362,24 @@ fn dynamic_code_gen_enc_maps(ctx: *CompressContext) !void {
     // Calculate the frequency of each `FlateSymbol`
     for (0..ctx.write_queue_count) |i| {
         const sym = ctx.write_queue[i];
-        switch (sym) {
-            .length => {
-                if (ll_freq[sym.length.code] == 0) {
+        switch (sym.typing) {
+            .LENGTH => {
+                if (ll_freq[sym.value.range.sym.code] == 0) {
                     ll_cnt += 1;
                 }
-                ll_freq[sym.length.code] += 1;
+                ll_freq[sym.value.range.sym.code] += 1;
             },
-            .distance => {
-                if (d_freq[sym.distance.code] == 0) {
+            .DISTANCE => {
+                if (d_freq[sym.value.range.sym.code] == 0) {
                     d_cnt += 1;
                 }
-                d_freq[sym.distance.code] += 1;
+                d_freq[sym.value.range.sym.code] += 1;
             },
-            .char => {
-                if (ll_freq[sym.char] == 0) {
+            .LITERAL => {
+                if (ll_freq[sym.value.char] == 0) {
                     ll_cnt += 1;
                 }
-                ll_freq[sym.char] += 1;
+                ll_freq[sym.value.char] += 1;
             }
         }
     }
@@ -564,16 +567,16 @@ fn dynamic_code_write_eob(ctx: *CompressContext) !void {
 
 fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
     const enc: ?HuffmanEncoding = blk: {
-        switch (sym) {
-            .length => {
-                break :blk ctx.ll_enc_map[sym.length.code];
+        switch (sym.typing) {
+            .LENGTH => {
+                break :blk ctx.ll_enc_map[sym.value.range.sym.code];
             },
-            .distance => {
-                break :blk ctx.d_enc_map[sym.distance.code];
+            .DISTANCE => {
+                break :blk ctx.d_enc_map[sym.value.range.sym.code];
             },
-            .char => {
-                util.print_char(log.trace, "literal", @intCast(sym.char));
-                break :blk ctx.ll_enc_map[@intCast(sym.char)];
+            .LITERAL => {
+                util.print_char(log.trace, "literal", @intCast(sym.value.char));
+                break :blk ctx.ll_enc_map[@intCast(sym.value.char)];
             },
         }
     };
@@ -592,27 +595,29 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
     }
 
     // Write the offset bits
-    switch (sym) {
-        .length => {
-            if (sym.length.code != 0) {
-                const offset = sym.length.value.? - sym.length.range_start;
+    switch (sym.typing) {
+        .LENGTH => {
+            const lsym = sym.value.range.sym;
+            if (lsym.code != 0) {
+                const offset = sym.value.range.value - lsym.range_start;
                 try write_bits(
                     ctx,
                     u16,
                     offset,
-                    sym.length.bit_count
+                    lsym.bit_count
                 );
                 log.trace(@src(), "backref(length-offset): {d}", .{offset});
             }
         },
-        .distance => {
-            if (sym.distance.bit_count != 0) {
-                const offset = sym.distance.value.? - sym.distance.range_start;
+        .DISTANCE => {
+            const dsym = sym.value.range.sym;
+            if (dsym.bit_count != 0) {
+                const offset = sym.value.range.value - dsym.range_start;
                 try write_bits(
                     ctx,
                     u16,
                     offset,
-                    sym.distance.bit_count
+                    dsym.bit_count
                 );
                 log.trace(@src(), "backref(distance-offset): {d}", .{offset});
             }

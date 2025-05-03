@@ -73,12 +73,7 @@ pub const TestContext = struct {
     }
 
     pub fn log_result(self: *@This(), new_size: usize) !void {
-        if (build_options.quiet) {
-            return;
-        }
-
         const time_taken_compress: f64 = (self.end_time_compress - self.start_time_compress) / 1_000_000_000;
-
         const end_time_decompress: f64 = @floatFromInt(std.time.nanoTimestamp());
         const time_taken_decompress: f64 = (end_time_decompress - self.end_time_compress) / 1_000_000_000;
 

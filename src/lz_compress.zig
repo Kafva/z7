@@ -11,7 +11,6 @@ const FlateCompressMode = @import("flate_compress.zig").FlateCompressMode;
 const CompressContext = @import("flate_compress.zig").CompressContext;
 const read_byte = @import("flate_compress.zig").read_byte;
 
-
 pub const LzContext = struct {
     /// Pointer back to the main compression context
     cctx: *CompressContext,
@@ -342,14 +341,30 @@ fn queue_push_range(
 
     // Add the length symbol for the back-reference
     const lenc = try RangeSymbol.from_length(match_length);
-    const lsymbol = FlateSymbol { .length = lenc };
+    const lsymbol = FlateSymbol {
+        .value = .{
+            .range = .{
+                .value = match_length,
+                .sym = lenc,
+            },
+        },
+        .typing = .LENGTH,
+    };
     ctx.write_queue[ctx.write_queue_count] = lsymbol;
     ctx.write_queue_count += 1;
     log.debug(@src(), "Queued length [{d}]: {any}", .{match_length, lenc});
 
     // Add the distance symbol for the back-reference
     const denc = try RangeSymbol.from_distance(match_backward_offset);
-    const dsymbol = FlateSymbol { .distance = denc };
+    const dsymbol = FlateSymbol {
+        .value = .{
+            .range = .{
+                .value = match_backward_offset,
+                .sym = denc,
+            },
+        },
+        .typing = .DISTANCE,
+    };
     ctx.write_queue[ctx.write_queue_count] = dsymbol;
     ctx.write_queue_count += 1;
     log.debug(@src(), "Queued distance [{d}]: {any}", .{match_backward_offset, denc});
@@ -363,10 +378,13 @@ fn queue_push_char(
         return FlateError.OutOfQueueSpace;
     }
 
-    const symbol = FlateSymbol { .char = byte };
+    const symbol = FlateSymbol {
+        .value = .{ .char = byte },
+        .typing = .LITERAL,
+    };
     ctx.write_queue[ctx.write_queue_count] = symbol;
     ctx.write_queue_count += 1;
-    util.print_char(log.debug, "Queued literal", symbol.char);
+    util.print_char(log.debug, "Queued literal", byte);
 }
 
 /// Save for NO_COMPRESSION queue

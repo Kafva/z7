@@ -15,7 +15,6 @@ Go needs to be installed to run the unit tests.
 # Flags:
 #   -Ddebug=true      Print debug logs
 #   -Dtrace=true      Print detailed debug logs
-#   -Dquiet=true      Quiet test result output
 zig build test --summary all && ./zig-out/bin/z7-test
 
 # To only build tests for a specific file

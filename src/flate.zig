@@ -86,17 +86,26 @@ pub const ClSymbol = struct {
     }
 };
 
+pub const FlateSymbolType = enum {
+    LITERAL,
+    LENGTH,
+    DISTANCE,
+};
+
 /// Contains either a literal, a length encoding or a distance encoding.
-pub const FlateSymbol = union(enum) {
-    char: u8,
-    length: RangeSymbol,
-    distance: RangeSymbol,
+pub const FlateSymbol = struct {
+    value: union(enum) {
+        char: u8,
+        range: struct {
+            value: u16,
+            sym: RangeSymbol,
+        },
+    },
+    typing: FlateSymbolType
 };
 
 /// Container for length / distance encodings
 pub const RangeSymbol = struct {
-    /// The exact length or distance that this symbol represents
-    value: ?u16,
     /// The symbol used to encode a length or distance (1..2**15)
     code: u16,
     /// The number of extra bits available for this code to represent more values
@@ -114,18 +123,10 @@ pub const RangeSymbol = struct {
         if (fmt.len != 0) {
             return std.fmt.invalidFmtError(fmt, self);
         }
-        if (self.value) |v| {
-            return writer.print(
-                "{{ .value = {d}, .code = {d}, .bit_count = {d}, .range_start = {d} }}",
-                .{v, self.code, self.bit_count, self.range_start}
-            );
-        }
-        else {
-            return writer.print(
-                "{{ .code = {d}, .bit_count = {d}, .range_start = {d} }}",
-                .{self.code, self.bit_count, self.range_start}
-            );
-        }
+        return writer.print(
+            "{{ .code = {d}, .bit_count = {d}, .range_start = {d} }}",
+            .{self.code, self.bit_count, self.range_start}
+        );
     }
 
     /// Map a length onto a `RangeSymbol`
@@ -179,7 +180,6 @@ pub const RangeSymbol = struct {
             },
         };
         return RangeSymbol {
-            .value = length,
             .code = r[0],
             .bit_count = @truncate(r[1]),
             .range_start = r[2]
@@ -238,7 +238,6 @@ pub const RangeSymbol = struct {
             },
         };
         return RangeSymbol {
-            .value = distance,
             .code = r[0],
             .bit_count = @truncate(r[1]),
             .range_start = r[2]
@@ -283,7 +282,6 @@ pub const RangeSymbol = struct {
             },
         };
         return RangeSymbol {
-            .value = null,
             .code = length_code,
             .bit_count = @truncate(r[0]),
             .range_start = r[1]
@@ -329,7 +327,6 @@ pub const RangeSymbol = struct {
             },
         };
         return RangeSymbol {
-            .value = null,
             .code = distance_code,
             .bit_count = @truncate(r[0]),
             .range_start = r[1]
