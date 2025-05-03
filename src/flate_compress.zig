@@ -826,7 +826,7 @@ pub fn read_byte(ctx: *CompressContext) !u8 {
 
     if (ctx.progress) {
         if (ctx.maybe_inputfile_size) |inputfile_size| {
-            try util.progress("Compressing...", ctx.processed_bytes, inputfile_size);
+            try util.progress("Compressing...  ", ctx.processed_bytes, inputfile_size);
         }
     }
 

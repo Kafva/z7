@@ -146,22 +146,22 @@ pub fn strtime(epoch: u32) [*c]u8 {
     return s;
 }
 
-pub fn progress(comptime label: []const u8, current_bytes: usize, total_bytes: f64) !void {
-    const written: f64 = @floatFromInt(current_bytes);
-    const percent: f64 = 100 * (written / total_bytes);
+pub fn progress(
+    comptime label: []const u8,
+    current_bytes: usize,
+    total_bytes: f64,
+) !void {
+    const current: f64 = @floatFromInt(current_bytes);
+    const percent: f64 = 100 * (current / total_bytes);
     try std.io.getStdErr().writer().print("\r[{d:5.1} %] {s}", .{percent, label});
-    if (written == total_bytes) {
-        _ = try std.io.getStdErr().write("\n");
-    }
 }
 
-pub fn hide_cursor() !void {
-    // TODO disable on stdout if not redirected
-    _ = try std.io.getStdErr().write("\x1b[?25l");
+pub fn hide_cursor(f: std.fs.File) !void {
+    _ = try nosuspend f.write("\x1b[?25l");
 }
 
-pub fn show_cursor() !void {
-    _ = try std.io.getStdErr().write("\x1b[?25h");
+pub fn show_cursor(f: std.fs.File) !void {
+    _ = try nosuspend f.write("\x1b[?25h");
 }
 
 pub fn tmpfile(tmpl: *[15]u8) !std.fs.File {

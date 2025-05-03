@@ -111,7 +111,10 @@ pub fn decompress(
                 return FlateError.UnexpectedBlockType;
             }
         }
-        log.debug(@src(), "Done decompressing block #{d} [{d} bytes]", .{ctx.block_cnt, ctx.written_bytes});
+        log.debug(@src(), "Done decompressing block #{d} [{d} bytes]", .{
+            ctx.block_cnt,
+            ctx.written_bytes,
+        });
         ctx.block_cnt += 1;
     }
 
@@ -569,10 +572,11 @@ fn read_bits(ctx: *DecompressContext, comptime T: type, num_bits: u16) !T {
 
     if (ctx.progress) {
         if (ctx.maybe_inputfile_size) |input_filesize| {
+            const current_bytes = @divFloor(ctx.processed_bits, 8);
             try util.progress(
                 "Decompressing...",
-                ctx.start_offset + processed_bytes,
-                input_filesize
+                ctx.start_offset + current_bytes,
+                input_filesize - 8 // Exclude trailer bytes
             );
         }
     }

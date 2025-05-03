@@ -46,7 +46,7 @@ const Z7Context = struct {
     tmp_outputfile: [15]u8,
 };
 
-pub fn main() !u8 {
+pub fn main() u8 {
     // For one-shot programs, an arena allocator is useful, it allows us
     // to do allocations and free everything at once with
     // arena.deinit() at the end of the program instead of keeping track
@@ -72,6 +72,7 @@ pub fn main() !u8 {
     }
 
     log.debug(@src(), "Starting z7 {s}", .{build_options.version});
+    const start_time: f64 = @floatFromInt(std.time.nanoTimestamp());
 
     var instream = open_input(&ctx) catch |err| {
         log.err(@src(), "Failed to open input stream: {s}", .{@errorName(err)});
@@ -86,11 +87,10 @@ pub fn main() !u8 {
     defer outstream.close();
 
     if (ctx.progress) {
-        util.hide_cursor() catch |err| {
+        hide_cursor(outstream) catch |err| {
             log.err(@src(), "Failed to hide cursor: {s}", .{@errorName(err)});
-            return 1;
+                return 1;
         };
-        defer cleanup_progress();
     }
 
     if (ctx.decompress) {
@@ -110,6 +110,15 @@ pub fn main() !u8 {
         ) catch |err| {
             log.err(@src(), "Compression error: {s}", .{@errorName(err)});
             return 1;
+        };
+    }
+
+    if (ctx.progress) {
+        print_stats(start_time, instream, outstream) catch {};
+
+        show_cursor(outstream) catch |err| {
+            log.err(@src(), "Failed to restore cursor: {s}", .{@errorName(err)});
+                return 1;
         };
     }
 
@@ -164,6 +173,10 @@ fn parse_cmdline(allocator: std.mem.Allocator) !Z7Context {
     if (opts['V'].?.value.active) {
         try stderr.writeAll(build_options.version ++ "\n");
         std.process.exit(0);
+    }
+    if (opts['p'].?.value.active and opts['v'].?.value.active) {
+        log.err(@src(), "The --progress and --verbose options are mutually exclusive", .{});
+        std.process.exit(1);
     }
 
     return Z7Context {
@@ -254,8 +267,58 @@ fn save_tmp_output(
     try std.fs.cwd().deleteFile(outfile);
 }
 
-fn cleanup_progress() void {
-    util.show_cursor() catch {};
+fn hide_cursor(outstream: std.fs.File) !void {
+    try util.hide_cursor(std.io.getStdErr());
+
+    if (outstream.handle != std.io.getStdOut().handle) {
+        try util.hide_cursor(std.io.getStdOut());
+    }
+}
+
+fn show_cursor(maybe_outstream: ?std.fs.File) !void {
+    _ = std.io.getStdErr().write("\n") catch {};
+
+    try util.show_cursor(std.io.getStdErr());
+
+    if (maybe_outstream) |outstream| {
+        if (outstream.handle != std.io.getStdOut().handle) {
+            try util.show_cursor(std.io.getStdOut());
+        }
+    }
+}
+
+fn print_stats(start_time: f64, instream: std.fs.File, outstream: std.fs.File) !void {
+    const input_size: u64 = try instream.getEndPos();
+    const output_size: u64 = try outstream.getEndPos();
+
+    const istty = std.io.getStdErr().isTty();
+    const end_time: f64 = @floatFromInt(std.time.nanoTimestamp());
+    const time_taken: f64 = (end_time - start_time) / 1_000_000_000;
+
+    const m: f64 = @floatFromInt(input_size);
+    var k: f64 = undefined;
+    var sign: []const u8 = undefined;
+
+    if (input_size == output_size) {
+        k = 0.0;
+        sign = " ";
+    }
+    else if (output_size > input_size) {
+        k = @floatFromInt(output_size - input_size);
+        sign = if (istty) "\x1b[91m+" else "+";
+    } else {
+        k = @floatFromInt(input_size - output_size);
+        sign = if (istty) "\x1b[92m-" else "-";
+    }
+    const percent = if (m == 0) 0 else 100 * (k / m);
+    const ansi_post = if (istty) "\x1b[0m" else "";
+
+    _ = try std.io.getStdErr().writer().print(" => {s}{d:5.1}{s} %, {d: >6.1} sec", .{
+        sign,
+        percent,
+        ansi_post,
+        time_taken,
+    });
 }
 
 fn signal_handler(
@@ -263,6 +326,6 @@ fn signal_handler(
     _: *const std.posix.siginfo_t,
     _: ?*anyopaque,
 ) callconv(.c) noreturn {
-    cleanup_progress();
+    show_cursor(null) catch {};
     std.process.exit(4);
 }
