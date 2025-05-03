@@ -50,7 +50,7 @@ pub fn main() u8 {
     // For one-shot programs, an arena allocator is useful, it allows us
     // to do allocations and free everything at once with
     // arena.deinit() at the end of the program instead of keeping track
-    // of each malloc().
+    // of each alloc().
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -84,6 +84,7 @@ pub fn main() u8 {
         log.err(@src(), "Failed to open output file: {s}", .{@errorName(err)});
         return 1;
     };
+    defer cleanup_tmp_file(&ctx);
     defer outstream.close();
 
     if (ctx.progress) {
@@ -114,7 +115,7 @@ pub fn main() u8 {
     }
 
     if (ctx.progress) {
-        print_stats(start_time, instream, outstream) catch {};
+        print_stats(ctx.decompress, start_time, instream, outstream) catch {};
 
         show_cursor(outstream) catch |err| {
             log.err(@src(), "Failed to restore cursor: {s}", .{@errorName(err)});
@@ -133,7 +134,7 @@ pub fn main() u8 {
 
     if (ctx.tmp_outputfile[0] != 0) {
         if (ctx.maybe_inputfile) |inputfile| {
-            save_tmp_output(&ctx, inputfile, &instream, outstream) catch |err| {
+            save_tmp_output(inputfile, &instream, outstream) catch |err| {
                 log.err(
                     @src(),
                     "Failed to overwrite input file with decompressed data: {s}",
@@ -223,6 +224,11 @@ fn open_output(ctx: *Z7Context) !std.fs.File {
         if (len > 3 and std.mem.eql(u8, inputfile[len - 3..], ".gz")) {
             return try std.fs.cwd().createFile(inputfile[0..len - 3], .{});
         }
+        // Replace .tgz extension with .tar for output file
+        if (len > 4 and std.mem.eql(u8, inputfile[len - 4..], ".tgz")) {
+            const name = try std.fmt.allocPrint(ctx.allocator, "{s}.tar", .{inputfile[0..len - 4]});
+            return try std.fs.cwd().createFile(name, .{});
+        }
 
         // Otherwise, create a unique temporary file
         @memcpy(ctx.tmp_outputfile[0..ctx.tmp_outputfile.len - 1], "/tmp/z7.XXXXXX");
@@ -236,7 +242,6 @@ fn open_output(ctx: *Z7Context) !std.fs.File {
 }
 
 fn save_tmp_output(
-    ctx: *Z7Context,
     inputfile: []const u8,
     instream: *std.fs.File,
     outstream: std.fs.File,
@@ -261,10 +266,6 @@ fn save_tmp_output(
             break;
         }
     }
-
-    // Remove the temporary output file
-    const outfile = ctx.tmp_outputfile[0..ctx.tmp_outputfile.len - 1];
-    try std.fs.cwd().deleteFile(outfile);
 }
 
 fn hide_cursor(outstream: std.fs.File) !void {
@@ -287,7 +288,22 @@ fn show_cursor(maybe_outstream: ?std.fs.File) !void {
     }
 }
 
-fn print_stats(start_time: f64, instream: std.fs.File, outstream: std.fs.File) !void {
+fn cleanup_tmp_file(ctx: *Z7Context) void {
+    if (ctx.tmp_outputfile[0] == 0) return;
+
+    // Remove the temporary output file
+    const outfile = ctx.tmp_outputfile[0..ctx.tmp_outputfile.len - 1];
+    std.fs.cwd().deleteFile(outfile) catch |err| {
+        log.err(@src(), "Failed to remove '{s}': {s}", .{outfile, @errorName(err)});
+    };
+}
+
+fn print_stats(
+    decompressing: bool,
+    start_time: f64,
+    instream: std.fs.File,
+    outstream: std.fs.File,
+) !void {
     const input_size: u64 = try instream.getEndPos();
     const output_size: u64 = try outstream.getEndPos();
 
@@ -305,7 +321,7 @@ fn print_stats(start_time: f64, instream: std.fs.File, outstream: std.fs.File) !
     }
     else if (output_size > input_size) {
         k = @floatFromInt(output_size - input_size);
-        sign = if (istty) "\x1b[91m+" else "+";
+        sign = if (istty and !decompressing) "\x1b[91m+" else "+";
     } else {
         k = @floatFromInt(input_size - output_size);
         sign = if (istty) "\x1b[92m-" else "-";
