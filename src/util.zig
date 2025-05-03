@@ -146,17 +146,17 @@ pub fn strtime(epoch: u32) [*c]u8 {
     return s;
 }
 
-pub fn progress(comptime prefix: []const u8, current_bytes: usize, total_bytes: f64) !void {
+pub fn progress(comptime label: []const u8, current_bytes: usize, total_bytes: f64) !void {
     const written: f64 = @floatFromInt(current_bytes);
     const percent: f64 = 100 * (written / total_bytes);
-    try std.io.getStdErr().writer().print("\r{s} {d:5.1} %", .{prefix, percent});
+    try std.io.getStdErr().writer().print("\r[{d:5.1} %] {s}", .{percent, label});
     if (written == total_bytes) {
         _ = try std.io.getStdErr().write("\n");
     }
-
 }
 
 pub fn hide_cursor() !void {
+    // TODO disable on stdout if not redirected
     _ = try std.io.getStdErr().write("\x1b[?25l");
 }
 
@@ -164,15 +164,8 @@ pub fn show_cursor() !void {
     _ = try std.io.getStdErr().write("\x1b[?25h");
 }
 
-pub fn tmpfile() !std.fs.File {
-    const tmpl = "/tmp/z7.XXXXXX";
-    var buf = [_]u8{0}**15;
-    var ptr: [*c]u8 = undefined;
-
-    for (0.., tmpl) |i, b| {
-        buf[i] = b;
-    }
-    ptr = &buf;
+pub fn tmpfile(tmpl: *[15]u8) !std.fs.File {
+    const ptr: [*c]u8 = tmpl;
 
     const fd = cunistd.mkstemp(ptr);
     if (fd == -1) {
@@ -181,5 +174,5 @@ pub fn tmpfile() !std.fs.File {
     }
     std.posix.close(fd);
     
-    return std.fs.cwd().openFile(buf[0..tmpl.len], .{ .mode = .read_write });
+    return std.fs.cwd().openFile(tmpl[0..tmpl.len - 1], .{ .mode = .read_write });
 }

@@ -31,7 +31,7 @@ const usage =
 ;
 
 const Z7Context = struct {
-    allocator: std.mem.Allocator, 
+    allocator: std.mem.Allocator,
     /// Unset if reading from stdin
     maybe_inputfile: ?[]const u8,
     stdout: bool,
@@ -41,7 +41,9 @@ const Z7Context = struct {
     mode: FlateCompressMode,
     /// A temporary output file needs to be used during decompression if
     /// the input file does not have a .gz extension
-    use_tmp_outputfile: bool,
+    ///
+    /// This array holds the template for the temp file, NULL terminated.
+    tmp_outputfile: [15]u8,
 };
 
 pub fn main() !u8 {
@@ -111,11 +113,6 @@ pub fn main() !u8 {
         };
     }
 
-    if (ctx.progress) {
-        _ = std.io.getStdOut().write("\n") catch {};
-        util.show_cursor() catch {};
-    }
-
     if (!ctx.keep) {
         if (ctx.maybe_inputfile) |inputfile| {
             std.fs.Dir.deleteFile(std.fs.cwd(), inputfile) catch |err| {
@@ -125,9 +122,9 @@ pub fn main() !u8 {
         }
     }
 
-    if (ctx.maybe_inputfile) |inputfile| {
-        if (ctx.use_tmp_outputfile) {
-            save_tmp_output(inputfile, &instream, outstream) catch |err| {
+    if (ctx.tmp_outputfile[0] != 0) {
+        if (ctx.maybe_inputfile) |inputfile| {
+            save_tmp_output(&ctx, inputfile, &instream, outstream) catch |err| {
                 log.err(
                     @src(),
                     "Failed to overwrite input file with decompressed data: {s}",
@@ -156,16 +153,16 @@ fn parse_cmdline(allocator: std.mem.Allocator) !Z7Context {
     var args = try std.process.argsWithAllocator(allocator);
     var flag_iter = FlagIterator(std.process.ArgIterator){ .iter = &args };
     const maybe_first_arg = try flag_iter.parse(&opts);
-    const stdout = std.io.getStdOut();
+    const stderr = std.io.getStdErr();
 
     log.enable_debug = opts['v'].?.value.active;
 
     if (opts['h'].?.value.active) {
-        try stdout.writeAll(usage);
+        try stderr.writeAll(usage);
         std.process.exit(0);
     }
     if (opts['V'].?.value.active) {
-        try stdout.writeAll(build_options.version ++ "\n");
+        try stderr.writeAll(build_options.version ++ "\n");
         std.process.exit(0);
     }
 
@@ -181,25 +178,7 @@ fn parse_cmdline(allocator: std.mem.Allocator) !Z7Context {
             if (opts['1'].?.value.active) break :blk FlateCompressMode.BEST_SPEED;
             break :blk FlateCompressMode.BEST_SIZE;
         },
-        .use_tmp_outputfile = blk: {
-            // No need for a temporary filename when compressing, just add .gz
-            if (!opts['d'].?.value.active) {
-                break :blk false;
-            }
-
-            if (maybe_first_arg) |first_arg| {
-                // Input file lacks a .gz extension, use temporary file
-                if (first_arg.len <= 3) {
-                    break :blk true;
-                }
-                const suffix = first_arg[first_arg.len - 3..];
-                if (!std.mem.eql(u8, suffix, ".gz")) {
-                    break :blk true;
-                }
-            }
-            // Input file has .gz extension
-            break :blk false;
-        }
+        .tmp_outputfile = .{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
     };
 }
 
@@ -220,26 +199,31 @@ fn open_output(ctx: *Z7Context) !std.fs.File {
         if (ctx.stdout or std.mem.eql(u8, inputfile, "-")) {
             return std.io.getStdOut();
         }
-        const outfile = blk: {
-            if (ctx.decompress) {
-                if (ctx.use_tmp_outputfile) {
-                    return try util.tmpfile();
-                }
-                else {
-                    break :blk inputfile[0..inputfile.len - 3];
-                }
-            } else {
-                break :blk try std.fmt.allocPrint(ctx.allocator, "{s}.gz", .{inputfile});
-            }
-        };
-        return try std.fs.cwd().createFile(outfile, .{});
+
+        if (!ctx.decompress) {
+            const name = try std.fmt.allocPrint(ctx.allocator, "{s}.gz", .{inputfile});
+            return try std.fs.cwd().createFile(name, .{});
+        }
+
+        // No need for a temporary file if there is a .gz extension
+        const len = inputfile.len;
+        if (len > 3 and std.mem.eql(u8, inputfile[len - 3..], ".gz")) {
+            return try std.fs.cwd().createFile(inputfile[0..len - 3], .{});
+        }
+
+        // Otherwise, create a unique temporary file
+        @memcpy(ctx.tmp_outputfile[0..ctx.tmp_outputfile.len - 1], "/tmp/z7.XXXXXX");
+        const tmpfile = try util.tmpfile(&ctx.tmp_outputfile);
+
+        log.debug(@src(), "Writing decompressed data to: {s}", .{ctx.tmp_outputfile});
+        return tmpfile;
     }
-    else {
-        return std.io.getStdOut();
-    }
+
+    return std.io.getStdOut();
 }
 
 fn save_tmp_output(
+    ctx: *Z7Context,
     inputfile: []const u8,
     instream: *std.fs.File,
     outstream: std.fs.File,
@@ -264,6 +248,10 @@ fn save_tmp_output(
             break;
         }
     }
+
+    // Remove the temporary output file
+    const outfile = ctx.tmp_outputfile[0..ctx.tmp_outputfile.len - 1];
+    try std.fs.cwd().deleteFile(outfile);
 }
 
 fn cleanup_progress() void {
