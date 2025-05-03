@@ -38,7 +38,6 @@ fn check_z7_ok(ctx: *TestContext) !void {
         &ctx.in,
         &ctx.compressed,
         ctx.maybe_mode.?,
-        // XXX: gzstat.py does not handle gzip flags
         @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
         false,
     );

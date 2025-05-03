@@ -9,7 +9,6 @@ const RangeSymbol = @import("flate.zig").RangeSymbol;
 const RingBuffer = @import("ring_buffer.zig").RingBuffer;
 const FlateCompressMode = @import("flate_compress.zig").FlateCompressMode;
 const CompressContext = @import("flate_compress.zig").CompressContext;
-const read_byte = @import("flate_compress.zig").read_byte;
 
 pub const LzContext = struct {
     /// Pointer back to the main compression context
@@ -402,6 +401,25 @@ fn raw_queue_push_char(
 
     ctx.write_queue_raw[ctx.write_queue_raw_count] = byte;
     ctx.write_queue_raw_count += 1;
+}
+
+fn read_byte(ctx: *CompressContext) !u8 {
+    const b = try ctx.reader.readByte();
+    util.print_char(log.trace, "Input read", b);
+    ctx.processed_bytes += 1;
+
+    // The final crc should be the crc of the entire input file, update
+    // it incrementally as we process each byte.
+    const bytearr = [1]u8 { b };
+    ctx.crc.update(&bytearr);
+
+    if (ctx.progress) {
+        if (ctx.maybe_inputfile_size) |inputfile_size| {
+            try util.progress("Compressing...  ", ctx.processed_bytes, inputfile_size);
+        }
+    }
+
+    return b;
 }
 
 fn bytes_to_u32(bs: [4]u8) u32 {

@@ -203,7 +203,7 @@ fn write_block(ctx: *CompressContext) !bool {
     return done;
 }
 
-pub fn pick_block_type(ctx: *CompressContext) !usize {
+fn pick_block_type(ctx: *CompressContext) !usize {
     var next_block_length: usize = ctx.block_length;
     const average_len = ctx.lz.backref_average_length();
     log.debug(@src(), "Average match length: {d} bytes", .{average_len});
@@ -258,7 +258,8 @@ pub fn pick_block_type(ctx: *CompressContext) !usize {
 
 fn no_compression_write_block(ctx: *CompressContext) !void {
     if (ctx.block_length > ctx.write_queue_raw.len) {
-        return FlateError.InvalidBlockLength;
+        log.err(@src(), "Block length too large for type-0: {d}", .{ctx.block_length});
+        return FlateError.InternalError;
     }
     // Fill up with zeroes to the next byte boundary
     while (ctx.written_bits % 8 != 0) {
@@ -559,9 +560,10 @@ fn dynamic_code_write_eob(ctx: *CompressContext) !void {
         else if (v.bit_shift <= 8) {
             try write_bits_be(ctx, u8, @truncate(v.bits), v.bit_shift);
         }
-        else unreachable;
+        else return FlateError.InternalError;
     } else {
-        return FlateError.InvalidSymbol;
+        log.err(@src(), "Missing encoding for end-of-block marker", .{});
+        return FlateError.InternalError;
     }
 }
 
@@ -589,9 +591,9 @@ fn dynamic_code_write_symbol(ctx: *CompressContext, sym: FlateSymbol) !void {
         else if (v.bit_shift <= 8) {
             try write_bits_be(ctx, u8, @truncate(v.bits), v.bit_shift);
         }
-        else unreachable;
+        else return FlateError.InternalError;
     } else {
-        return FlateError.InvalidSymbol;
+        return FlateError.InternalError;
     }
 
     // Write the offset bits
@@ -817,23 +819,4 @@ fn write_bits_be(
     // Final least-significant bit
     const bit: u1 = @truncate(value & 1);
     try write_bits(ctx, u1, bit, 1);
-}
-
-pub fn read_byte(ctx: *CompressContext) !u8 {
-    const b = try ctx.reader.readByte();
-    util.print_char(log.trace, "Input read", b);
-    ctx.processed_bytes += 1;
-
-    // The final crc should be the crc of the entire input file, update
-    // it incrementally as we process each byte.
-    const bytearr = [1]u8 { b };
-    ctx.crc.update(&bytearr);
-
-    if (ctx.progress) {
-        if (ctx.maybe_inputfile_size) |inputfile_size| {
-            try util.progress("Compressing...  ", ctx.processed_bytes, inputfile_size);
-        }
-    }
-
-    return b;
 }

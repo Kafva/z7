@@ -1,6 +1,17 @@
 const std = @import("std");
 const log = @import("log.zig");
 
+pub const FlateError = error {
+    UnexpectedBlockType,
+    UnexpectedEof,
+    InternalError,
+    InvalidLiteralLength,
+    InvalidDistance,
+    InvalidLength,
+    InvalidCLSymbol,
+    OutOfQueueSpace,
+};
+
 /// 0 - 15: Represent code lengths of 0 - 15
 ///     16: Copy the previous code length 3 - 6 times.
 ///         The next 2 bits indicate repeat length
@@ -332,20 +343,6 @@ pub const RangeSymbol = struct {
             .range_start = r[1]
         };
     }
-};
-
-pub const FlateError = error {
-    UnexpectedBlockType,
-    UnexpectedEof,
-    InvalidLiteralLength,
-    InternalError,
-    InvalidSymbol,
-    InvalidDistance,
-    InvalidLength,
-    InvalidCLSymbol,
-    InvalidBlockLength,
-    MissingTokenLiteral,
-    OutOfQueueSpace,
 };
 
 pub const FlateBlockType = enum(u2) {

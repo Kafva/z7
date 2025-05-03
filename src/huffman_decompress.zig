@@ -104,6 +104,7 @@ pub fn reconstruct_canonical_code(
     symbol_max: usize
 ) !void {
     if (symbol_max > code_lengths.len) {
+        log.err(@src(), "Bad symbol max value: {d}", .{symbol_max});
         return HuffmanError.InternalError;
     }
 

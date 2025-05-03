@@ -435,7 +435,7 @@ fn walk_generate_translation(
 
     if (bit_shift >= 15) {
         log.err(@src(), "Huffman tree too deep: node requires {} bits", .{bit_shift});
-        return HuffmanError.BadTreeStructure;
+        return HuffmanError.BadEncoding;
     }
 
     if (maybe_left_child_index == null and maybe_right_child_index == null) {
@@ -446,7 +446,7 @@ fn walk_generate_translation(
             ctx.enc_map[value] = enc;
         } else {
             log.err(@src(), "Missing character from leaf node", .{});
-            return HuffmanError.BadTreeStructure;
+            return HuffmanError.BadEncoding;
         }
     } else {
         if (maybe_left_child_index) |child_index| {

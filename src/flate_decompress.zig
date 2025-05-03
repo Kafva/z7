@@ -287,7 +287,8 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
             break;
         };
         if (enc.bit_shift == 15) {
-            return FlateError.InvalidSymbol;
+            log.err(@src(), "Huffman tree too deep", .{});
+            return HuffmanError.BadEncoding;
         }
 
         // The most-significant bit is read first

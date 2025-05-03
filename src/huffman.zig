@@ -6,9 +6,7 @@ pub const color_base: u8 = 214;
 
 pub const HuffmanError = error {
     UnexpectedCharacter,
-    UnexpectedEncodedSymbol,
     BadEncoding,
-    BadTreeStructure,
     MaxDepthInsufficent,
     InternalError
 };
