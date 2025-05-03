@@ -1,4 +1,3 @@
-// zig fmt: off
 const std = @import("std");
 
 pub const FlagError = error{

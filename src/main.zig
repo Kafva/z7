@@ -14,8 +14,8 @@ const gunzip = @import("gunzip.zig").decompress;
 var opts = [_]?Flag{null} ** 256;
 
 const usage =
-    \\Usage: z7 [OPTION]... [FILE]...
-    \\Compress or uncompress FILEs (by default, compress FILES in-place).
+    \\Usage: z7 [OPTION]... [FILE]
+    \\Compress or uncompress FILE (by default, compress in-place).
     \\
     \\  -c, --stdout      write on standard output, keep original files unchanged
     \\  -d, --decompress  decompress

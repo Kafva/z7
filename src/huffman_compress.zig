@@ -97,16 +97,13 @@ pub const HuffmanTreeNode = struct {
 const HuffmanCompressContext = struct {
     allocator: std.mem.Allocator,
     /// The maximum value of symbols from the input stream, 256 for regular
-    /// input from a file, 286 for deflate.
+    /// input from a file, 286 for deflate literal/lengths.
     symbol_max: u16,
-    instream: ?*const std.fs.File,
-    reader: ?std.io.AnyReader,
-    bit_writer: ?std.io.BitWriter(.little, std.io.AnyWriter),
     written_bits: usize,
-    /// The frequency of each byte value to rely on when constructing the
-    /// Huffman code
+    /// The frequency of each symbol to use when constructing the code
     frequencies: []usize,
-    /// Mappings from symbols onto Huffman encodings
+    /// Mappings from symbols onto Huffman encodings, the index
+    /// represents the original symbol value.
     enc_map: []?HuffmanEncoding,
     /// Backing array for Huffman tree nodes
     array: std.ArrayList(HuffmanTreeNode),
@@ -116,15 +113,14 @@ pub fn compress(
     allocator: std.mem.Allocator,
     enc_len: *usize,
     symbol_max: u16,
-    instream: *const std.fs.File,
-    outstream: *const std.fs.File,
+    instream: std.fs.File,
+    outstream: std.fs.File,
 ) !std.AutoHashMap(HuffmanEncoding, u16) {
+    const reader = instream.reader();
+    var bit_writer = std.io.bitWriter(.little, outstream.writer().any());
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
         .symbol_max = symbol_max,
-        .instream = instream,
-        .reader = instream.reader().any(),
-        .bit_writer = std.io.bitWriter(.little, outstream.writer().any()),
         .written_bits = 0,
         .frequencies = try allocator.alloc(usize, symbol_max),
         .enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
@@ -134,7 +130,7 @@ pub fn compress(
     @memset(ctx.frequencies, 0);
 
     // Get frequencies from the input stream
-    const symbol_count = try calculate_frequencies(&ctx);
+    const symbol_count = try calculate_frequencies(&ctx, instream, reader);
     dump_frequencies(&ctx);
 
     const dec_map = try build_huffman_tree(&ctx, symbol_count);
@@ -146,11 +142,11 @@ pub fn compress(
 
     // Write the translations to the output stream
     while (true) {
-        const c = ctx.reader.?.readByte() catch {
+        const c = reader.readByte() catch {
             break;
         };
         if (ctx.enc_map[@intCast(c)]) |enc| {
-            try write_bits_be(&ctx, enc.bits, enc.bit_shift);
+            try write_bits_be(&ctx, &bit_writer, enc.bits, enc.bit_shift);
             util.print_char(log.debug, "Encoded", c);
         } else {
             log.err(@src(), "Unexpected byte: 0x{x}", .{c});
@@ -158,7 +154,7 @@ pub fn compress(
         }
     }
 
-    try ctx.bit_writer.?.flushBits();
+    try bit_writer.flushBits();
     log.debug(@src(), "Wrote {} bits [{} bytes]", .{ctx.written_bits, ctx.written_bits / 8});
 
     // The decoder needs to know the exact number of bits, otherwise the extra
@@ -177,9 +173,6 @@ pub fn build_encoding(
     var ctx = HuffmanCompressContext {
         .allocator = allocator,
         .symbol_max = symbol_max,
-        .instream = null,
-        .reader = null,
-        .bit_writer = null,
         .written_bits = 0,
         .frequencies = frequencies,
         .enc_map = try allocator.alloc(?HuffmanEncoding, symbol_max),
@@ -474,31 +467,40 @@ fn walk_generate_translation(
     }
 }
 
-fn write_bits_be(ctx: *HuffmanCompressContext, value: u16, num_bits: u16) !void {
+fn write_bits_be(
+    ctx: *HuffmanCompressContext,
+    bit_writer: *std.io.BitWriter(.little, std.io.AnyWriter),
+    value: u16,
+    num_bits: u16,
+) !void {
     for (1..num_bits) |i_usize| {
         const i: u4 = @intCast(i_usize);
         const shift_by: u4 = @intCast(num_bits - i);
 
         const bit: u1 = @truncate((value >> shift_by) & 1);
-        try write_bit(ctx, bit);
+        try write_bit(ctx, bit_writer, bit);
     }
 
     // Final least-significant bit
     const bit: u1 = @truncate(value & 1);
-    try write_bit(ctx, bit);
+    try write_bit(ctx, bit_writer, bit);
 }
 
-fn write_bit(ctx: *HuffmanCompressContext, bit: u1) !void {
-    try ctx.bit_writer.?.writeBits(bit, 1);
+fn write_bit(
+    ctx: *HuffmanCompressContext,
+    bit_writer: *std.io.BitWriter(.little, std.io.AnyWriter),
+    bit: u1,
+) !void {
+    try bit_writer.writeBits(bit, 1);
     util.print_bits(log.trace, u16, "Output write", bit, 1, ctx.written_bits);
     ctx.written_bits += 1;
 }
 
 /// Count the occurrences of each byte in `instream`
-fn calculate_frequencies(ctx: *HuffmanCompressContext) !usize {
+fn calculate_frequencies(ctx: *HuffmanCompressContext, instream: std.fs.File, reader: anytype) !usize {
     var cnt: usize = 0;
     while (true) {
-        const c = ctx.reader.?.readByte() catch {
+        const c = reader.readByte() catch {
             break;
         };
         if (ctx.frequencies[c] == 0) {
@@ -507,7 +509,7 @@ fn calculate_frequencies(ctx: *HuffmanCompressContext) !usize {
         ctx.frequencies[c] += 1;
     }
     // Reset the positiion in the input stream
-    try ctx.instream.?.seekTo(0);
+    try instream.seekTo(0);
     return cnt;
 }
 

@@ -39,8 +39,6 @@ const HuffmanCodeLengthToken = struct {
 
 const HuffmanDecompressContext = struct {
     dec_map: *const std.AutoHashMap(HuffmanEncoding, u16),
-    instream: *const std.fs.File,
-    outstream: *const std.fs.File,
     /// Decompression requires a bit_reader
     bit_reader: std.io.BitReader(.little, std.io.AnyReader),
     writer: std.io.AnyWriter,
@@ -50,12 +48,10 @@ const HuffmanDecompressContext = struct {
 pub fn decompress(
     dec_map: *const std.AutoHashMap(HuffmanEncoding, u16),
     encoded_length: usize,
-    instream: *const std.fs.File,
-    outstream: *const std.fs.File,
+    instream: std.fs.File,
+    outstream: std.fs.File,
 ) !void {
     var ctx = HuffmanDecompressContext {
-        .instream = instream,
-        .outstream = outstream,
         .bit_reader = std.io.bitReader(.little, instream.reader().any()),
         .writer = outstream.writer().any(),
         .processed_bits = 0,
