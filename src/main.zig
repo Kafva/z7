@@ -103,8 +103,8 @@ pub fn main() u8 {
         gzip(
             ctx.allocator,
             if (ctx.maybe_inputfile) |f| f else "-",
-            &instream,
-            &outstream,
+            instream,
+            outstream,
             ctx.mode,
             @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
             ctx.progress

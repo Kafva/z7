@@ -13,6 +13,7 @@ const CompressContext = @import("flate_compress.zig").CompressContext;
 pub const LzContext = struct {
     /// Pointer back to the main compression context
     cctx: *CompressContext,
+    reader: std.io.AnyReader,
     /// The *total* number of bytes processed into the sliding window
     processed_bytes_sliding_window: i32,
     /// Starting position of a backref match relative to the start of the input stream
@@ -404,7 +405,7 @@ fn raw_queue_push_char(
 }
 
 fn read_byte(ctx: *CompressContext) !u8 {
-    const b = try ctx.reader.readByte();
+    const b = try ctx.lz.reader.readByte();
     util.print_char(log.trace, "Input read", b);
     ctx.processed_bytes += 1;
 

@@ -35,8 +35,8 @@ fn check_z7_ok(ctx: *TestContext) !void {
     try gzip(
         ctx.allocator,
         ctx.inputfile,
-        &ctx.in,
-        &ctx.compressed,
+        ctx.in,
+        ctx.compressed,
         ctx.maybe_mode.?,
         @intFromEnum(GzipFlag.FNAME) | @intFromEnum(GzipFlag.FHCRC),
         false,
@@ -72,7 +72,7 @@ fn check_go_decompress_z7(ctx: *TestContext) !void {
 
 /// Compress with z7 and decompress with Golang
 fn check_z7_decompress_go(ctx: *TestContext) !void {
-    try gzip(ctx.allocator, ctx.inputfile, &ctx.in, &ctx.compressed, ctx.maybe_mode.?, 0, false);
+    try gzip(ctx.allocator, ctx.inputfile, ctx.in, ctx.compressed, ctx.maybe_mode.?, 0, false);
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
     // Decompress with Go flate implementation

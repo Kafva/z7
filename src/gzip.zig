@@ -29,8 +29,8 @@ const GzipContext = struct {
 pub fn compress(
     allocator: std.mem.Allocator,
     inputfile: []const u8,
-    instream: *const std.fs.File,
-    outstream: *const std.fs.File,
+    instream: std.fs.File,
+    outstream: std.fs.File,
     mode: FlateCompressMode,
     flags: u8,
     progress: bool,

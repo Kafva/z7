@@ -29,7 +29,6 @@ pub const CompressContext = struct {
     block_type: FlateBlockType,
     block_cnt: usize,
     bit_writer: std.io.BitWriter(Flate.writer_endian, std.io.AnyWriter),
-    reader: std.io.AnyReader,
     written_bits: usize,
     processed_bytes: usize,
     block_start: usize,
@@ -69,8 +68,8 @@ pub const FlateCompressMode = enum(u8) {
 
 pub fn compress(
     allocator: std.mem.Allocator,
-    instream: *const std.fs.File,
-    outstream: *const std.fs.File,
+    instream: std.fs.File,
+    outstream: std.fs.File,
     instream_offset: usize,
     mode: FlateCompressMode,
     progress: bool,
@@ -93,7 +92,6 @@ pub fn compress(
         .block_length = Flate.no_compression_block_length_max,
         .block_cnt = 0,
         .bit_writer = std.io.bitWriter(Flate.writer_endian, outstream.writer().any()),
-        .reader = instream.reader().any(),
         .written_bits = 0,
         .processed_bytes = 0,
         .block_start = 0,
@@ -111,6 +109,7 @@ pub fn compress(
     };
     var lz = LzContext {
         .cctx = &ctx,
+        .reader = instream.reader().any(),
         .processed_bytes_sliding_window = 0,
         .match_length = 0,
         .match_distance = 0,
