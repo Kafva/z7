@@ -33,6 +33,9 @@ pub const CompressContext = struct {
     processed_bytes: usize,
     block_start: usize,
     lz: *LzContext,
+    /// Queue for raw bytes to write to the output stream
+    write_queue_output: []u8,
+    write_queue_output_count: usize,
     /// Initial offset into the input stream
     instream_offset: usize,
     /// Queue of symbols to write to the output stream, we need to keep this
@@ -60,7 +63,7 @@ pub const CompressContext = struct {
 pub const FlateCompressMode = enum(u8) {
     /// Only block type-0
     NO_COMPRESSION = 0,
-    /// Prefer block type-1
+    /// Prefer block type-1 (not really faster)
     BEST_SPEED = 1,
     /// Prefer block type-2
     BEST_SIZE = 9,
@@ -97,6 +100,8 @@ pub fn compress(
         .block_start = 0,
         .lz = undefined,
         .instream_offset = instream_offset,
+        .write_queue_output = try allocator.alloc(u8, Flate.write_bufsize),
+        .write_queue_output_count = 0,
         .write_queue = try allocator.alloc(FlateSymbol, Flate.compression_block_length_max),
         .write_queue_count = 0,
         .write_queue_raw = try allocator.alloc(u8, Flate.compression_block_length_max),
@@ -271,10 +276,8 @@ fn no_compression_write_block(ctx: *CompressContext) !void {
     try write_bits(ctx, u16, len, 16);
     try write_bits(ctx, u16, ~len, 16);
 
-    // Write the uncompressed content from the write_queue
-    for (0..ctx.write_queue_raw_count) |i| {
-        try write_bits(ctx, u8, ctx.write_queue_raw[i], 8);
-    }
+    // Write bytes as-is to output stream in bulk
+    try write_bytes(ctx, ctx.write_queue_raw[0..ctx.write_queue_raw_count]);
 }
 
 /// Write the bits for the provided match length and distance to the output
@@ -773,6 +776,11 @@ fn dynamic_code_write_cl_symbol(ctx: *CompressContext, sym: ClSymbol) !void {
     }
 }
 
+fn write_bytes(ctx: *CompressContext, buf: []u8) !void {
+    try ctx.bit_writer.writer.writeAll(buf);
+    ctx.written_bits += buf.len * 8;
+}
+
 /// Write bits with the configured bit-ordering
 fn write_bits(
     ctx: *CompressContext,
@@ -782,7 +790,7 @@ fn write_bits(
 ) !void {
     try ctx.bit_writer.writeBits(value, num_bits);
     if (T == u8 and num_bits == 8) {
-        util.print_char(log.debug, "Output write", value);
+        util.print_char(log.trace, "Output write", value);
     }
     else {
         const offset = ctx.instream_offset + @divFloor(ctx.written_bits, 8);
@@ -794,7 +802,8 @@ fn write_bits(
 /// Write bits with the configured little-endian writer *BUT* write the bits
 /// of `value` in the most-to-least-significant order.
 ///
-/// 0b0111_1000 should be written as 11110xxx xxxxx000 to the output stream.
+/// 0b0111_1000 should be written as 0001_1110 to the output stream. Can look like
+/// 11110xxx xxxxx000 in xxd.
 fn write_bits_be(
     ctx: *CompressContext,
     comptime T: type,
@@ -807,15 +816,19 @@ fn write_bits_be(
         u4, u3 => u2,
         else => u1
     };
-    for (1..num_bits) |i_usize| {
-        const i: V = @intCast(i_usize);
-        const shift_by: V = @intCast(num_bits - i);
 
-        const bit: u1 = @truncate((value >> shift_by) & 1);
-        try write_bits(ctx, u1, bit, 1);
+    // Reverse the internal order of the bits
+    var rev_value: T = 0;
+    for (0..num_bits) |i_usize| {
+        const i: V = @intCast(i_usize);
+        const shift_by: V = @intCast(num_bits - 1 - i);
+        const shift_rev: V = @intCast(i);
+
+        // Most siginifcant bit of `value`
+        const bit: T = (value >> shift_by) & 1;
+        // Set as least significant bit of `rev_value`
+        rev_value |= (bit << shift_rev);
     }
 
-    // Final least-significant bit
-    const bit: u1 = @truncate(value & 1);
-    try write_bits(ctx, u1, bit, 1);
+    try write_bits(ctx, u16, rev_value, num_bits);
 }
