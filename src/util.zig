@@ -5,8 +5,8 @@ const ctime = @cImport({
     @cInclude("time.h");
 });
 
-const cunistd = @cImport({
-    @cInclude("unistd.h");
+const cstdlib = @cImport({
+    @cInclude("stdlib.h");
 });
 
 /// Create an array with `c` repeated `count` times
@@ -167,7 +167,7 @@ pub fn show_cursor(f: std.fs.File) !void {
 pub fn tmpfile(tmpl: *[15]u8) !std.fs.File {
     const ptr: [*c]u8 = tmpl;
 
-    const fd = cunistd.mkstemp(ptr);
+    const fd = cstdlib.mkstemp(ptr);
     if (fd == -1) {
         log.err(@src(), "mkstemp failed", .{});
         return std.fs.File.OpenError.Unexpected;

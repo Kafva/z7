@@ -20,6 +20,11 @@ fn build_binary(
     });
     exe.root_module.addOptions("build_options", build_options);
 
+    if (target.result.os.tag != .macos) {
+        // Needed for mkstemp() on Linux
+        exe.linkLibC();
+    }
+
     // Install `z7` binary into standard binary path with `zig install`
     const exe_install = b.addInstallArtifact(exe, .{});
     // Add targets to the `zig build --help` menu
