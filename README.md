@@ -1,6 +1,7 @@
 # z7
-Gzip implementation in Zig, compatible with Zig version 0.14.0.
-To build and install an optimized build:
+Gzip implementation written in Zig, compatible with Zig version 0.14.0.
+Disclaimer: this is not a super optimized Gzip implementation, it works but
+don't expect it to be fast.
 
 ```bash
 zig build bin -Doptimize=ReleaseFast && 

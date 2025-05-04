@@ -5,8 +5,8 @@ const build_options = z7.build_options;
 const log = z7.log;
 const FlateCompressMode = z7.flate_compress.FlateCompressMode;
 
-const libflate = @cImport({
-    @cInclude("libflate.h");
+const go = @cImport({
+    @cInclude("libgogzip.h");
 });
 
 pub const TestContext = struct {
@@ -108,19 +108,19 @@ pub const TestContext = struct {
                         });
     }
 
-    pub fn compressed_path_s(self: *@This()) !libflate.GoString {
+    pub fn compressed_path_s(self: *@This()) !go.GoString {
         return self.go_str_tmp_filepath("compressed.bin");
     }
 
-    pub fn decompressed_path_s(self: *@This()) !libflate.GoString {
+    pub fn decompressed_path_s(self: *@This()) !go.GoString {
         return self.go_str_tmp_filepath("decompressed.bin");
     }
 
-    pub fn inputfile_s(self: *@This()) !libflate.GoString {
+    pub fn inputfile_s(self: *@This()) !go.GoString {
         if (std.mem.eql(u8, self.inputfile, random_label)) {
             return self.go_str_tmp_filepath("random.bin");
         }
-        return libflate.GoString{
+        return go.GoString{
             .p = self.inputfile.ptr,
             .n = @intCast(self.inputfile.len)
         };
@@ -181,7 +181,7 @@ pub const TestContext = struct {
     fn go_str_tmp_filepath(
         self: *@This(),
         filename: []const u8,
-    ) !libflate.GoString {
+    ) !go.GoString {
         const null_terminator = [_]u8 {0};
         const buf = try self.allocator.alloc(u8, 512);
         for (0..512) |i| {
@@ -193,7 +193,7 @@ pub const TestContext = struct {
         // Make sure to exclude everything after the first \0 in the
         // byte array from the length.
         const len = std.mem.indexOf(u8, buf, &null_terminator).?;
-        return libflate.GoString{
+        return go.GoString{
             .p = buf.ptr,
             .n = @intCast(len)
         };

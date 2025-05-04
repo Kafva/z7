@@ -9,8 +9,8 @@ const FlateCompressMode = z7.flate_compress.FlateCompressMode;
 const gzip = z7.gzip.compress;
 const gunzip = z7.gunzip.decompress;
 
-const libflate = @cImport({
-    @cInclude("libflate.h");
+const go = @cImport({
+    @cInclude("libgogzip.h");
 });
 
 fn run(
@@ -55,7 +55,7 @@ fn check_z7_ok(ctx: *TestContext) !void {
 
 /// Compress with Golang and decompress with z7
 fn check_go_decompress_z7(ctx: *TestContext) !void {
-    const compressed_len = libflate.Gzip(
+    const compressed_len = go.Gzip(
         try ctx.inputfile_s(),
         try ctx.compressed_path_s(),
         @intFromEnum(ctx.maybe_mode.?),
@@ -76,7 +76,7 @@ fn check_z7_decompress_go(ctx: *TestContext) !void {
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
     // Decompress with Go flate implementation
-    _ = libflate.Gunzip(
+    _ = go.Gunzip(
         try ctx.compressed_path_s(),
         try ctx.decompressed_path_s()
     );
@@ -87,14 +87,14 @@ fn check_z7_decompress_go(ctx: *TestContext) !void {
 
 /// Verify that the Golang implementation is ok for ffi
 fn check_ref_ok(ctx: *TestContext) !void {
-    const compressed_len = libflate.Gzip(
+    const compressed_len = go.Gzip(
         try ctx.inputfile_s(),
         try ctx.compressed_path_s(),
         @intFromEnum(ctx.maybe_mode.?),
     );
     ctx.end_time_compress = @floatFromInt(std.time.nanoTimestamp());
 
-    _ = libflate.Gunzip(
+    _ = go.Gunzip(
         try ctx.compressed_path_s(),
         try ctx.decompressed_path_s()
     );
@@ -151,12 +151,6 @@ fn run_dir(dirpath: []const u8) !void {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-
-test "tmp" {
-    //try run("tests/testdata/FreeRTOS.tar", "gzip-z7", check_z7_ok, FlateCompressMode.NO_COMPRESSION);
-    //try run("tests/testdata/FreeRTOS.tar", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SIZE);
-    //try run("tests/testdata/FreeRTOS.tar", "gzip-go", check_ref_ok, FlateCompressMode.BEST_SIZE);
-}
 
 test "Gzip on zig fuzz data" {
     try run_dir("tests/testdata/zig/fuzz");

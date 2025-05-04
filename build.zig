@@ -1,7 +1,7 @@
 const std = @import("std");
 
 // TODO: Importing `.version` from build.zig.zon should work in future zig
-// versions: 
+// versions:
 //  https://github.com/ziglang/zig/pull/20271 [OK]
 //  https://github.com/ziglang/zig/issues/22775
 const version = "0.0.0";
@@ -62,7 +62,7 @@ fn build_tests(
     // Build reference implementation library for testing
     // There is a reference implementation in zig stdlib but we use this
     const go_out = "tests/out";
-    const go_lib = go_out ++ "/libflate.so";
+    const go_lib = go_out ++ "/libgogzip.so";
 
     const go_args = [_][]const u8{
         "go",
@@ -70,14 +70,14 @@ fn build_tests(
         "-buildmode=c-shared",
         "-o",
         go_lib,
-        "tests/go/flate.go",
+        "tests/go/gzip.go",
     };
     std.fs.cwd().makeDir(go_out) catch {};
     const go_run = b.addSystemCommand(&go_args);
 
     tests.root_module.addImport("z7", z7_module);
     tests.addLibraryPath(.{ .cwd_relative = go_out });
-    tests.linkSystemLibrary("flate");
+    tests.linkSystemLibrary("gogzip");
     tests.addIncludePath(.{ .cwd_relative = go_out });
 
     switch (target.result.os.tag) {
@@ -85,7 +85,7 @@ fn build_tests(
             // XXX: `.addLibraryPath(...) + .linkSystemLibrary(...)` does not
             // work properly on macOS, the linker only searches in /System paths
             // and the cwd(?). HACK: workaround, create a symLink at cwd...
-            std.fs.cwd().symLink(go_lib, "./libflate.so", .{}) catch {};
+            std.fs.cwd().symLink(go_lib, "./libgogzip.so", .{}) catch {};
         },
         else => {
             tests.linkLibC();

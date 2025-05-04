@@ -1,6 +1,6 @@
 # vi: ft=gitignore
 
-/libflate.*
+/lib*
 .lldbinit
 
 # General

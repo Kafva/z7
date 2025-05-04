@@ -33,10 +33,23 @@ func Gzip(inputfile string, outputfile string, level int) int64 {
     // We are responsible to set the subfield format correctly ourselves
     writer.Extra = []byte{0x1, 0x0, 4, 0x0, 0xe, 0xe, 0xe, 0xe}
 
-    err = compress(inputfile, writer)
+    in, err := os.Open(inputfile)
     if err != nil {
         println(err.Error())
         return -1
+    }
+    defer in.Close()
+
+    // Write input file via the provided writer to the output file
+    for {
+        written, err := io.Copy(writer, in)
+        if err != nil {
+            println(err.Error())
+            return -1
+        }
+        if written == 0 {
+            break
+        }
     }
 
     err = writer.Close()
@@ -71,37 +84,6 @@ func Gunzip(inputfile string, outputfile string) int64 {
         return -1
     }
 
-    err = decompress(out, reader)
-    if err != nil {
-        println(err.Error())
-        return -1
-    }
-
-    return getSize(out)
-}
-
-func compress(inputfile string, writer io.Writer) error {
-    in, err := os.Open(inputfile)
-    if err != nil {
-        return err
-    }
-    defer in.Close()
-
-    // Write input file via the provided writer to the output file
-    for {
-        written, err := io.Copy(writer, in)
-        if err != nil {
-            return err
-        }
-        if written == 0 {
-            break
-        }
-    }
-    return nil
-}
-
-/// Write input file via reader to output file
-func decompress(out *os.File, reader io.Reader) error {
     for {
         written, err := io.Copy(out, reader)
 
@@ -109,14 +91,15 @@ func decompress(out *os.File, reader io.Reader) error {
             if err == io.EOF || err == io.ErrUnexpectedEOF {
                 break
             }
-            return err
+            println(err.Error())
+            return -1
         }
         if written == 0 {
             break
         }
     }
 
-    return nil
+    return getSize(out)
 }
 
 func getSize(out *os.File) int64 {
