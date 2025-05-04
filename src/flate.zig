@@ -382,4 +382,6 @@ pub const Flate = struct {
     pub const cl_symbol_max: usize = 19;
     /// The order to write and read the code length symbol lengths
     pub const cl_code_order = [_]u16{16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
+    /// Bytes are written in bulk to disk at increments of this size
+    pub const write_bufsize = 4096;
 };

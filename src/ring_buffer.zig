@@ -53,27 +53,28 @@ pub fn RingBuffer(comptime T: type) type {
             }
         }
 
-        /// Return the internal index in the ring buffer `backward_offset` steps
-        /// backwards.
-        pub fn index_offset_end(self: @This(), backward_offset: i32) !usize {
+        fn get_start_offset_end(
+            self: *@This(),
+            backward_offset: i32,
+            ret_count: usize,
+        ) !i32 {
             const cnt: i32 = @intCast(self.count);
             if (cnt > 0 and self.maybe_end_index != null) {
-                if (backward_offset > cnt - 1) {
+                if (backward_offset > cnt - 1 or ret_count > cnt) {
                     if (!is_test) {
-                        log.err(@src(), "Attempting to retrieve index for backward offset {d} with {d} items", .{
-                            backward_offset,
-                            cnt,
-                        });
+                        log.err(
+                            @src(),
+                            "Attempting to read {d} item(s) from backward offset {d} with {d} items",
+                            .{ret_count, backward_offset, cnt}
+                        );
                     }
                     return RingBufferError.InvalidOffsetRead;
                 }
 
-                const offset_index: i32 = @mod(self.maybe_end_index.? - backward_offset, self.capacity);
-                return @intCast(offset_index);
+                return @intCast(self.maybe_end_index.? - backward_offset);
             }
 
             return RingBufferError.EmptyRead;
-
         }
 
         /// Offset 0 will return the latest item at `end_index`
@@ -81,53 +82,25 @@ pub fn RingBuffer(comptime T: type) type {
         /// With `ret_count=2`, Offset 1 would return [end_index - 1..end_index] inclusive.
         pub fn read_offset_end(
             self: *@This(),
+            allocator: std.mem.Allocator,
+            backward_offset: i32,
+            ret_count: usize,
+        ) ![]T {
+            const offset_start: i32 = try self.get_start_offset_end(backward_offset, ret_count);
+            const arr = try allocator.alloc(T, ret_count);
+            self.populate_array(arr, offset_start, ret_count);
+            return arr;
+        }
+
+        pub fn read_offset_end_fixed(
+            self: *@This(),
             backward_offset: i32,
             comptime ret_count: usize,
         ) ![ret_count]T {
-            const cnt: i32 = @intCast(self.count);
-            if (cnt > 0 and self.maybe_end_index != null) {
-                if (backward_offset > cnt - 1 or ret_count > cnt) {
-                    if (!is_test) {
-                        log.err(@src(), "Attempting to read from backward offset {d} with {d} items", .{
-                            backward_offset,
-                            cnt,
-                        });
-                    }
-                    return RingBufferError.InvalidOffsetRead;
-                }
-
-                const offset_start: i32 = self.maybe_end_index.? - backward_offset;
-                return self.return_array(offset_start, ret_count);
-            }
-
-            return RingBufferError.EmptyRead;
-        }
-
-        /// Offset 0 will return the first item at `start_index`
-        /// Offset 1 will return the item one index after `start_index`
-        /// With `ret_count=2`, Offset 1 would return [start_index..start_index + 1] inclusive.
-        pub fn read_offset_start(
-            self: *@This(),
-            forward_offset: i32,
-            comptime ret_count: usize,
-        ) ![ret_count]T {
-            const cnt: i32 = @intCast(self.count);
-            if (cnt > 0 and self.maybe_end_index != null) {
-                if (forward_offset > cnt - 1 or ret_count > cnt) {
-                    if (!is_test) {
-                        log.err(@src(), "Attempting to read from forward offset {d} with {d} items", .{
-                            forward_offset,
-                            cnt,
-                        });
-                    }
-                    return RingBufferError.InvalidOffsetRead;
-                }
-
-                const offset_start: i32 = self.start_index + forward_offset;
-                return self.return_array(offset_start, ret_count);
-            }
-
-            return RingBufferError.EmptyRead;
+            const offset_start: i32 = try self.get_start_offset_end(backward_offset, ret_count);
+            var arr = [_]T{0} ** ret_count;
+            self.populate_array(&arr, offset_start, ret_count);
+            return arr;
         }
 
         /// Push a new item onto the end of the ring buffer, if the buffer is full,
@@ -178,18 +151,17 @@ pub fn RingBuffer(comptime T: type) type {
             }
         }
 
-        fn return_array(
+        fn populate_array(
             self: *@This(),
+            arr: []T,
             offset_start: i32,
-            comptime ret_count: usize,
-        ) ![ret_count]T {
-            var r = [_]T{0}**ret_count;
+            ret_count: usize,
+        ) void {
             for (0..ret_count) |i_usize| {
                 const i: i32 = @intCast(i_usize);
                 const ret_i: usize = @intCast(@mod(offset_start + i, self.capacity));
-                r[i_usize] = self.data[ret_i];
+                arr[i_usize] = self.data[ret_i];
             }
-            return r;
         }
     };
 }

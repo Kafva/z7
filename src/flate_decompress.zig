@@ -48,9 +48,6 @@ const DecompressContext = struct {
     cl_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
 };
 
-/// Bytes are written in bulk to disk at increments of this size
-const write_bufsize = 4096;
-
 pub fn decompress(
     allocator: std.mem.Allocator,
     instream: *const std.fs.File,
@@ -162,7 +159,7 @@ fn no_compression_decompress_block(ctx: *DecompressContext) !void {
 }
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
-    var buf = [_]u8{0} ** write_bufsize;
+    var buf = [_]u8{0} ** Flate.write_bufsize;
     var bufidx: usize = 0;
 
     while (true) {
@@ -284,7 +281,7 @@ fn fixed_code_decoding_map(comptime num_bits: u8) !std.AutoHashMap(u16, u16) {
 }
 
 fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
-    var buf = [_]u8{0} ** write_bufsize;
+    var buf = [_]u8{0} ** Flate.write_bufsize;
     var bufidx: usize = 0;
 
     // Extract the Huffman trees, i.e. `ll_dec_map` and `d_dec_map` from
@@ -313,7 +310,10 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
 
         if (match_length) |length| {
             if (ctx.d_dec_map.get(enc)) |v| {
-                if (v > Flate.d_symbol_max) unreachable;
+                if (v > Flate.d_symbol_max) {
+                    log.err(@src(), "Invalid distance symbol: {d}", .{v});
+                    return FlateError.InternalError;
+                }
 
                 // Decode distance of match
                 const distance = try read_symbol_backref_distance(ctx, v);
@@ -590,11 +590,14 @@ fn write_backref_match(
     length: u16,
     distance: u16,
 ) !void {
+    // Note: an LZ stream can looks like this:
+    //  ('a', [258:1] )
+    // In this scenario the [258:1] backreference will not be available in the
+    // sliding window immediatelly, we need to write to the sliding window
+    // incrementally as we are creating the backref.
     for (0..length) |_| {
-        // Since we add one byte every iteration the offset is
-        // always equal to the distance
-        const bs: [1]u8 = try ctx.sliding_window.read_offset_end(distance - 1, 1);
-        // Write each byte to the output stream AND the the sliding window
+        // Since we add one byte every iteration the offset is always equal to the distance
+        const bs: [1]u8 = try ctx.sliding_window.read_offset_end_fixed(distance - 1, 1);
         _ = ctx.sliding_window.push(bs[0]);
         buf[bufidx.*] = bs[0];
         bufidx.* += 1;

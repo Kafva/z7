@@ -154,50 +154,50 @@ fn run_dir(dirpath: []const u8) !void {
 
 test "tmp" {
     //try run("tests/testdata/FreeRTOS.tar", "gzip-z7", check_z7_ok, FlateCompressMode.NO_COMPRESSION);
-    try run("tests/testdata/FreeRTOS.tar", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SIZE);
+    //try run("tests/testdata/over_9000_a.txt", "gzip-z7", check_go_decompress_z7, FlateCompressMode.BEST_SPEED);
     //try run("tests/testdata/FreeRTOS.tar", "gzip-go", check_ref_ok, FlateCompressMode.BEST_SIZE);
 }
 
-// test "Gzip on zig fuzz data" {
-//     try run_dir("tests/testdata/zig/fuzz");
-// }
+test "Gzip on zig fuzz data" {
+    try run_dir("tests/testdata/zig/fuzz");
+}
 
-// test "Gzip on zig block_writer data" {
-//     try run_dir("tests/testdata/zig/block_writer");
-// }
+test "Gzip on zig block_writer data" {
+    try run_dir("tests/testdata/zig/block_writer");
+}
 
-// test "Gzip check empty" {
-//     try run_all_types_and_modes("tests/testdata/empty");
-// }
+test "Gzip check empty" {
+    try run_all_types_and_modes("tests/testdata/empty");
+}
 
-// test "Gzip check simple text" {
-//     try run_all_types_and_modes("tests/testdata/helloworld.txt");
-// }
+test "Gzip check simple text" {
+    try run_all_types_and_modes("tests/testdata/helloworld.txt");
+}
 
-// test "Gzip check short simple text" {
-//     try run_all_types_and_modes("tests/testdata/simple.txt");
-// }
+test "Gzip check short simple text" {
+    try run_all_types_and_modes("tests/testdata/simple.txt");
+}
 
-// test "Gzip check longer simple text" {
-//     try run_all_types_and_modes("tests/testdata/flate_test.txt");
-// }
+test "Gzip check longer simple text" {
+    try run_all_types_and_modes("tests/testdata/flate_test.txt");
+}
 
-// test "Gzip check 9001 repeated characters" {
-//     try run_all_types_and_modes("tests/testdata/over_9000_a.txt");
-// }
+test "Gzip check 9001 repeated characters" {
+    try run_all_types_and_modes("tests/testdata/over_9000_a.txt");
+}
 
-// test "Gzip check rfc1951.txt" {
-//     try run_all_types_and_modes("tests/testdata/rfc1951.txt");
-// }
+test "Gzip check rfc1951.txt" {
+    try run_all_types_and_modes("tests/testdata/rfc1951.txt");
+}
 
-// test "Gzip on random data" {
-//     try run_all_types_and_modes(TestContext.random_label);
-// }
+test "Gzip on random data" {
+    try run_all_types_and_modes(TestContext.random_label);
+}
 
-// test "Gzip on small image" {
-//     try run_all_types_and_modes("tests/testdata/wallpaper_small.jpg");
-// }
+test "Gzip on small image" {
+    try run_all_types_and_modes("tests/testdata/wallpaper_small.jpg");
+}
 
-// test "Gzip on source code tar archive" {
-//     try run_all_types_and_modes("tests/testdata/FreeRTOS.tar");
-// }
+test "Gzip on source code tar archive" {
+    try run_all_types_and_modes("tests/testdata/FreeRTOS.tar");
+}

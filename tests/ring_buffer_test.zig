@@ -35,11 +35,11 @@ test "Ring buffer read" {
     }
     try std.testing.expectEqual(10, rbuf.count);
 
-    try std.testing.expectEqual(.{11}, try rbuf.read_offset_end(0,1));
-    try std.testing.expectEqual(.{10}, try rbuf.read_offset_end(1,1));
-    try std.testing.expectEqual(.{9,10}, try rbuf.read_offset_end(2,2));
-    try std.testing.expectEqual(.{8}, try rbuf.read_offset_end(3,1));
-    try std.testing.expectEqual(.{7,8,9}, try rbuf.read_offset_end(4,3));
+    try std.testing.expectEqualSlices(u8, &[_]u8{11}, try rbuf.read_offset_end(allocator, 0,1));
+    try std.testing.expectEqualSlices(u8, &[_]u8{10}, try rbuf.read_offset_end(allocator, 1,1));
+    try std.testing.expectEqualSlices(u8, &[_]u8{9,10}, try rbuf.read_offset_end(allocator, 2,2));
+    try std.testing.expectEqualSlices(u8, &[_]u8{8}, try rbuf.read_offset_end(allocator, 3,1));
+    try std.testing.expectEqualSlices(u8, &[_]u8{7,8,9}, try rbuf.read_offset_end(allocator, 4,3));
 }
 
 test "Ring buffer OOB read" {
@@ -51,7 +51,7 @@ test "Ring buffer OOB read" {
 
     try std.testing.expectError(
          RingBufferError.EmptyRead,
-        rbuf.read_offset_end(0,1)
+        rbuf.read_offset_end(allocator, 0,1)
     );
 
     for (0..2) |i| {
@@ -61,27 +61,27 @@ test "Ring buffer OOB read" {
 
     try std.testing.expectError(
          RingBufferError.InvalidOffsetRead,
-         rbuf.read_offset_end(2,1)
+         rbuf.read_offset_end(allocator, 2,1)
     );
 
     try std.testing.expectError(
          RingBufferError.InvalidOffsetRead,
-        rbuf.read_offset_end(1,3)
+        rbuf.read_offset_end(allocator, 1,3)
     );
 
     _ = rbuf.push(@truncate(2));
 
-    try std.testing.expectEqual(.{0}, try rbuf.read_offset_end(2,1));
-    try std.testing.expectEqual(.{1}, try rbuf.read_offset_end(1,1));
-    try std.testing.expectEqual(.{2}, try rbuf.read_offset_end(0,1));
+    try std.testing.expectEqual(.{0}, try rbuf.read_offset_end_fixed(2,1));
+    try std.testing.expectEqual(.{1}, try rbuf.read_offset_end_fixed(1,1));
+    try std.testing.expectEqual(.{2}, try rbuf.read_offset_end_fixed(0,1));
 
-    try std.testing.expectEqual(.{0}, try rbuf.read_offset_start(0,1));
-    try std.testing.expectEqual(.{1}, try rbuf.read_offset_start(1,1));
-    try std.testing.expectEqual(.{2}, try rbuf.read_offset_start(2,1));
+    try std.testing.expectEqualSlices(u8, &[_]u8{0}, try rbuf.read_offset_end(allocator, 2,1));
+    try std.testing.expectEqualSlices(u8, &[_]u8{1}, try rbuf.read_offset_end(allocator, 1,1));
+    try std.testing.expectEqualSlices(u8, &[_]u8{2}, try rbuf.read_offset_end(allocator, 0,1));
 
     try std.testing.expectError(
          RingBufferError.InvalidOffsetRead,
-        rbuf.read_offset_end(111, 1)
+        rbuf.read_offset_end(allocator, 111, 1)
     );
 }
 

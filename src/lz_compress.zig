@@ -154,7 +154,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
             // This distance remains the same since we are adding bytes to window
             // as we go (at the same time as we increase the match length)
             const backward_offset: i32 = ctx.match_distance - 4;
-            const bs = try ctx.sliding_window.read_offset_end(backward_offset, 1);
+            const bs = try ctx.sliding_window.read_offset_end_fixed(backward_offset, 1);
 
             if (ctx.match_length == ctx.match_distance or          // Reached the end of the window
                 ctx.match_length + 1 == Flate.lookahead_length or  // Maximum length match
@@ -194,7 +194,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
             }
 
             // Look for new match
-            const bs = try ctx.lookahead.read_offset_end(3, 4);
+            const bs = try ctx.lookahead.read_offset_end_fixed(3, 4);
             const key = bytes_to_u32(bs);
 
             if (ctx.lookup_table.getPtr(key)) |ptr| {
@@ -307,7 +307,7 @@ fn sliding_window_push(ctx: *LzContext, b: u8) !void {
     if (ctx.cctx.mode != FlateCompressMode.NO_COMPRESSION and ctx.sliding_window.count >= 4) {
         // Add a lookup entry for the byte that was dropped into the lookahead
         // (no need to maintain lookup table for NO_COMPRESSION mode
-        const window_bs = try ctx.sliding_window.read_offset_end(3, 4);
+        const window_bs = try ctx.sliding_window.read_offset_end_fixed(3, 4);
         const window_key = bytes_to_u32(window_bs);
         // The global start index of the match in the input stream!
         const start_idx = ctx.processed_bytes_sliding_window - 4;
