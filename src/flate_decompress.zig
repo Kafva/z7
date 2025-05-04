@@ -48,6 +48,9 @@ const DecompressContext = struct {
     cl_dec_map: std.AutoHashMap(HuffmanEncoding, u16),
 };
 
+/// Bytes are written in bulk to disk at increments of this size
+const write_bufsize = 4096;
+
 pub fn decompress(
     allocator: std.mem.Allocator,
     instream: *const std.fs.File,
@@ -149,12 +152,19 @@ fn no_compression_decompress_block(ctx: *DecompressContext) !void {
     // Write bytes as-is to output stream in bulk
     const buf = try ctx.allocator.alloc(u8, block_size);
     const cnt = try read_bytes(ctx, buf);
+
+    for (buf[0..cnt]) |b| {
+        _ = ctx.sliding_window.push(b);
+    }
     try write_bytes(ctx, buf[0..cnt]);
 
     ctx.allocator.free(buf);
 }
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
+    var buf = [_]u8{0} ** write_bufsize;
+    var bufidx: usize = 0;
+
     while (true) {
         const v = blk: {
             var key = read_bits_be(ctx, 7) catch {
@@ -198,8 +208,7 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
         };
 
         if (v < 256) {
-            const c: u8 = @truncate(v);
-            try write_byte(ctx, c);
+            try write_byte_match(ctx, &buf, &bufidx, @truncate(v));
         }
         else if (v == 256) {
             log.debug(@src(), "End-of-block marker found", .{});
@@ -216,11 +225,16 @@ fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
             const distance = try read_symbol_backref_distance(ctx, distance_code);
 
             // Write the backreferences to the output stream
-            try write_backref_match(ctx, length, distance);
+            try write_backref_match(ctx, &buf, &bufidx, length, distance);
         }
         else {
             return FlateError.InvalidLiteralLength;
         }
+    }
+
+    // Flush any left-over data
+    if (bufidx != 0) {
+        try write_bytes(ctx, buf[0..bufidx]);
     }
 }
 
@@ -270,6 +284,9 @@ fn fixed_code_decoding_map(comptime num_bits: u8) !std.AutoHashMap(u16, u16) {
 }
 
 fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
+    var buf = [_]u8{0} ** write_bufsize;
+    var bufidx: usize = 0;
+
     // Extract the Huffman trees, i.e. `ll_dec_map` and `d_dec_map` from
     // the initial metadata.
     try dynamic_code_decompress_metadata(ctx);
@@ -302,7 +319,7 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
                 const distance = try read_symbol_backref_distance(ctx, v);
 
                 // Write match to output stream
-                try write_backref_match(ctx, length, distance);
+                try write_backref_match(ctx, &buf, &bufidx, length, distance);
 
                 enc.bits = 0;
                 enc.bit_shift = 0;
@@ -313,8 +330,7 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
 
         if (ctx.ll_dec_map.get(enc)) |v| {
             if (v < 256) {
-                const c: u8 = @truncate(v);
-                try write_byte(ctx, c);
+                try write_byte_match(ctx, &buf, &bufidx, @truncate(v));
             }
             else if (v == 256) {
                 log.debug(@src(), "End-of-block marker found", .{});
@@ -331,6 +347,11 @@ fn dynamic_code_decompress_block(ctx: *DecompressContext) !void {
             enc.bits = 0;
             enc.bit_shift = 0;
         }
+    }
+
+    // Flush any left-over data
+    if (bufidx != 0) {
+        try write_bytes(ctx, buf[0..bufidx]);
     }
 
     // Clear mappings for next iteration
@@ -548,14 +569,41 @@ fn read_symbol_backref_distance(ctx: *DecompressContext, v: u16) !u16 {
     return distance;
 }
 
-fn write_backref_match(ctx: *DecompressContext, length: u16, distance: u16) !void {
-    for (0..length) |i| {
+fn write_byte_match(ctx: *DecompressContext, buf: []u8, bufidx: *usize, b: u8) !void {
+    _ = ctx.sliding_window.push(b);
+    util.print_char(log.debug, "literal", b);
+
+    buf[bufidx.*] = b;
+    bufidx.* += 1;
+
+    if (bufidx.* == buf.len) {
+        // Flush the buffer once its filled
+        try write_bytes(ctx, buf[0..bufidx.*]);
+        bufidx.* = 0;
+    }
+}
+
+fn write_backref_match(
+    ctx: *DecompressContext,
+    buf: []u8,
+    bufidx: *usize,
+    length: u16,
+    distance: u16,
+) !void {
+    for (0..length) |_| {
         // Since we add one byte every iteration the offset is
         // always equal to the distance
         const bs: [1]u8 = try ctx.sliding_window.read_offset_end(distance - 1, 1);
         // Write each byte to the output stream AND the the sliding window
-        try write_byte(ctx, bs[0]);
-        log.trace(@src(), "backref[{} - {}]: '{c}'", .{distance, i, bs[0]});
+        _ = ctx.sliding_window.push(bs[0]);
+        buf[bufidx.*] = bs[0];
+        bufidx.* += 1;
+
+        if (bufidx.* == buf.len) {
+            // Flush the buffer once its filled
+            try write_bytes(ctx, buf[0..bufidx.*]);
+            bufidx.* = 0;
+        }
     }
 }
 
@@ -577,20 +625,6 @@ fn read_bits(ctx: *DecompressContext, comptime T: type, num_bits: u16) !T {
     return bits;
 }
 
-fn print_progress(ctx: *DecompressContext) !void {
-    if (!ctx.progress) {
-        return;
-    }
-    if (ctx.maybe_inputfile_size) |input_filesize| {
-        const current_bytes = @divFloor(ctx.processed_bits, 8);
-        try util.progress(
-            "Decompressing...",
-            ctx.start_offset + current_bytes,
-            input_filesize - 8 // Exclude trailer bytes
-        );
-    }
-}
-
 /// This stream: 11110xxx xxxxx000 should be interpreted as 0b01111_000
 fn read_bits_be(ctx: *DecompressContext, num_bits: u16) !u16 {
     var out: u16 = 0;
@@ -609,25 +643,26 @@ fn read_bits_be(ctx: *DecompressContext, num_bits: u16) !u16 {
     return out;
 }
 
-fn write_byte(ctx: *DecompressContext, c: u8) !void {
-    _ = ctx.sliding_window.push(c);
-    try ctx.writer.writeByte(c);
-    ctx.written_bytes += 1;
+fn write_bytes(ctx: *DecompressContext, buf: []u8) !void {
+    try ctx.writer.writeAll(buf);
+    ctx.written_bytes += buf.len;
 
     // The crc in the trailer of the gzip format is performed on the
     // original input file, calculate the crc for the output file we are
     // writing incrementally as we process each byte.
-    const bytearr = [1]u8 { c };
-    ctx.crc.update(&bytearr);
-}
-
-fn write_bytes(ctx: *DecompressContext, buf: []u8) !void {
-    for (buf) |b| {
-        _ = ctx.sliding_window.push(b);
-    }
-    try ctx.writer.writeAll(buf);
-    ctx.written_bytes += buf.len;
-
     ctx.crc.update(buf);
 }
 
+fn print_progress(ctx: *DecompressContext) !void {
+    if (!ctx.progress) {
+        return;
+    }
+    if (ctx.maybe_inputfile_size) |input_filesize| {
+        const current_bytes = @divFloor(ctx.processed_bits, 8);
+        try util.progress(
+            "Decompressing...",
+            ctx.start_offset + current_bytes,
+            input_filesize - 8 // Exclude trailer bytes
+        );
+    }
+}

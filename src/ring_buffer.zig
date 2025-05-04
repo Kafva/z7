@@ -156,27 +156,6 @@ pub fn RingBuffer(comptime T: type) type {
             return null;
         }
 
-        /// Push a new item onto the end of the ring buffer, if the buffer is full,
-        /// overwrite the oldest item.
-        // pub fn extend(self: *@This(), items: []T) void {
-        //     if (self.maybe_end_index) |end_index| {
-        //         self.maybe_end_index = @mod(end_index + items.len, self.capacity);
-
-        //         const new_end_index: usize = @intCast(self.maybe_end_index.?);
-
-        //         if (new_end_index >= self.start_index) {
-        //             self.start_index = @mod(self.start_index + items.len, self.capacity);
-        //         }
-        //     }
-        //     else {
-        //         self.maybe_end_index = items.len - 1;
-        //         self.data[@intCast(self.maybe_end_index.?)] = item;
-        //     }
-
-        //     if (self.count < self.capacity) self.count += 1;
-        // }
-
-
         /// Drop the `prune_cnt` oldest value from the buffer, moving the
         /// `start_index` closer to the `end_index`.
         /// Returns the oldest value that was pruned.

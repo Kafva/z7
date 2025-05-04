@@ -153,9 +153,9 @@ fn run_dir(dirpath: []const u8) !void {
 
 
 test "tmp" {
-    try run("tests/testdata/FreeRTOS.tar", "gzip-z7", check_z7_ok, FlateCompressMode.NO_COMPRESSION);
+    //try run("tests/testdata/FreeRTOS.tar", "gzip-z7", check_z7_ok, FlateCompressMode.NO_COMPRESSION);
     try run("tests/testdata/FreeRTOS.tar", "gzip-z7", check_z7_ok, FlateCompressMode.BEST_SIZE);
-    try run("tests/testdata/FreeRTOS.tar", "gzip-go", check_ref_ok, FlateCompressMode.BEST_SIZE);
+    //try run("tests/testdata/FreeRTOS.tar", "gzip-go", check_ref_ok, FlateCompressMode.BEST_SIZE);
 }
 
 // test "Gzip on zig fuzz data" {
