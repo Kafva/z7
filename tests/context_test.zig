@@ -141,7 +141,7 @@ pub const TestContext = struct {
         allocator: std.mem.Allocator,
         dirpath: []const u8,
     ) !std.ArrayList([]const u8) {
-        var dir = try std.fs.cwd().openDir(dirpath, .{});
+        var dir = try std.fs.cwd().openDir(dirpath, .{ .iterate = true });
         defer dir.close();
         var iter = dir.iterate();
 
