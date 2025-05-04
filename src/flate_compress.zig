@@ -799,11 +799,15 @@ fn write_bits(
     ctx.written_bits += num_bits;
 }
 
-/// Write bits with the configured little-endian writer *BUT* write the bits
-/// of `value` in the most-to-least-significant order.
+/// Write `value` with the most-to-least-significant *BIT* order.
 ///
-/// 0b0111_1000 should be written as 0001_1110 to the output stream. Can look like
-/// 11110xxx xxxxx000 in xxd.
+/// 0b0111_1000 should be written as [0111 1000] to the output stream.
+/// `xxd -b` would show this as:
+///     00011110
+///
+/// Each byte is internally ordered with most-significant-bit first!
+/// if broken across a byte boundary it could look like:
+///     11110xxx xxxxx000
 fn write_bits_be(
     ctx: *CompressContext,
     comptime T: type,
@@ -824,7 +828,7 @@ fn write_bits_be(
         const shift_by: V = @intCast(num_bits - 1 - i);
         const shift_rev: V = @intCast(i);
 
-        // Most siginifcant bit of `value`
+        // Most significant bit of `value`
         const bit: T = (value >> shift_by) & 1;
         // Set as least significant bit of `rev_value`
         rev_value |= (bit << shift_rev);
