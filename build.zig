@@ -1,11 +1,5 @@
 const std = @import("std");
 
-// TODO: Importing `.version` from build.zig.zon should work in future zig
-// versions:
-//  https://github.com/ziglang/zig/pull/20271 [OK]
-//  https://github.com/ziglang/zig/issues/22775
-const version = "0.1.0";
-
 fn build_binary(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -117,6 +111,18 @@ pub fn build(b: *std.Build) void {
 
     // Configure build options
     const build_options = b.addOptions();
+
+    // Fetch version string
+    const version = blk: {
+        var ret: u8 = undefined;
+        const out = b.runAllowFail(
+            &.{ "git", "-C", b.build_root.path orelse ".", "describe", "--tags" },
+            &ret,
+            .Inherit,
+        ) catch break :blk "unknown";
+        // Trim newline
+        break :blk out[0..out.len - 1];
+    };
     build_options.addOption([]const u8, "version", version);
 
     const debug_opt = b.option(bool, "debug", "Print debug logs") orelse false;
