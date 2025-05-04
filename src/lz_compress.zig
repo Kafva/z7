@@ -108,7 +108,7 @@ pub const LzItem = struct {
         }
         // Always take the match furthest in the past, this optimizes for long
         // runs of the same character, e.g. 'aaaa' -> 'aaaa' -> 'aaaa', we pick the
-        // first occurence of 'aaaa'.
+        // first occurrence of 'aaaa'.
         const idx = LzItem.start_indices_max - self.start_indices_cnt;
         const oldest_value = self.start_indices[idx];
         if (oldest_value < 0) {
@@ -152,7 +152,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
 
             // The backward offset will be the initial distance to the match from where
             // the window was when the match started excluding the match length.
-            // This distance remains the same since we are adding bytes to window
+            // This distance remains the same since we are adding bytes to the window
             // as we go (at the same time as we increase the match length)
             const backward_offset: i32 = ctx.match_distance - 4;
             const bs = try ctx.sliding_window.read_offset_end_fixed(backward_offset, 1);
@@ -182,7 +182,7 @@ pub fn lz_compress(ctx: *LzContext) !bool {
             }
             else {
                 // Extend match!
-                util.print_char(log.debug, "Extending match", b);
+                util.print_char(log.trace, "Extending match", b);
                 ctx.match_length += 1;
             }
         }

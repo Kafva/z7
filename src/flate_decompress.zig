@@ -455,7 +455,7 @@ fn dynamic_code_decompress_cl_symbols(
 
         if (ctx.cl_dec_map.get(enc)) |v| {
             var repeat_length: ?u8 = null;
-            var repeat_value: u4 = 0; 
+            var repeat_value: u4 = 0;
 
             switch (v) {
                 0...15 => {
@@ -593,7 +593,7 @@ fn write_backref_match(
     // Note: an LZ stream can looks like this:
     //  ('a', [258:1] )
     // In this scenario the [258:1] backreference will not be available in the
-    // sliding window immediatelly, we need to write to the sliding window
+    // sliding window immediately, we need to write to the sliding window
     // incrementally as we are creating the backref.
     for (0..length) |_| {
         // Since we add one byte every iteration the offset is always equal to the distance

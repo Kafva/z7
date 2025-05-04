@@ -94,8 +94,8 @@ fn read_bit(ctx: *HuffmanDecompressContext) !u16 {
     return bit;
 }
 
-/// Given an array of code lengths for each symbol in ascending order from 
-/// `[0, symbol_max]`, construct the corresponding canonical Huffman code for 
+/// Given an array of code lengths for each symbol in ascending order from
+/// `[0, symbol_max]`, construct the corresponding canonical Huffman code for
 /// decoding according to the algorithm in 3.2.2 of the DEFLATE RFC.
 pub fn reconstruct_canonical_code(
     allocator: *const std.mem.Allocator,

@@ -804,10 +804,9 @@ fn write_bits(
 /// 0b0111_1000 should be written as [0111 1000] to the output stream.
 /// `xxd -b` would show this as:
 ///     00011110
-///
-/// Each byte is internally ordered with most-significant-bit first!
-/// if broken across a byte boundary it could look like:
+/// If broken across a byte boundary it could look like:
 ///     11110xxx xxxxx000
+///
 fn write_bits_be(
     ctx: *CompressContext,
     comptime T: type,

@@ -4,7 +4,7 @@ const std = @import("std");
 // versions:
 //  https://github.com/ziglang/zig/pull/20271 [OK]
 //  https://github.com/ziglang/zig/issues/22775
-const version = "0.0.0";
+const version = "0.1.0";
 
 fn build_binary(
     b: *std.Build,

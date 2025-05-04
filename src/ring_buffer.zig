@@ -12,7 +12,7 @@ pub fn RingBuffer(comptime T: type) type {
         data: []T,
         /// The oldest value is at this index (head)
         start_index: i32 = 0,
-        /// The newest value is at this index (tail), set to `null` when the 
+        /// The newest value is at this index (tail), set to `null` when the
         /// buffer is empty.
         maybe_end_index: ?i32 = null,
         /// Keep the data size as signed integer to simplify type conversions
@@ -80,18 +80,6 @@ pub fn RingBuffer(comptime T: type) type {
         /// Offset 0 will return the latest item at `end_index`
         /// Offset 1 will return the item one index before `end_index`
         /// With `ret_count=2`, Offset 1 would return [end_index - 1..end_index] inclusive.
-        pub fn read_offset_end(
-            self: *@This(),
-            allocator: std.mem.Allocator,
-            backward_offset: i32,
-            ret_count: usize,
-        ) ![]T {
-            const offset_start: i32 = try self.get_start_offset_end(backward_offset, ret_count);
-            const arr = try allocator.alloc(T, ret_count);
-            self.populate_array(arr, offset_start, ret_count);
-            return arr;
-        }
-
         pub fn read_offset_end_fixed(
             self: *@This(),
             backward_offset: i32,

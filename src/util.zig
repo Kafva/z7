@@ -173,6 +173,6 @@ pub fn tmpfile(tmpl: *[15]u8) !std.fs.File {
         return std.fs.File.OpenError.Unexpected;
     }
     std.posix.close(fd);
-    
+
     return std.fs.cwd().openFile(tmpl[0..tmpl.len - 1], .{ .mode = .read_write });
 }

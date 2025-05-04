@@ -1,6 +1,6 @@
 # z7
 Gzip implementation written in Zig, compatible with Zig version 0.14.0.
-Disclaimer: this is not a super optimized Gzip implementation, it works but
+Disclaimer: this is not an optimized Gzip implementation, it works but
 don't expect it to be fast.
 
 ```bash
