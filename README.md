@@ -1,10 +1,10 @@
 # z7
-Gzip implementation written in Zig, compatible with Zig version 0.14.0.
+Gzip implementation in Zig, compatible with Zig version 0.14.0.
 Disclaimer: this is not an optimized Gzip implementation, it works but
 don't expect it to be fast.
 
 ```bash
-zig build bin -Doptimize=ReleaseFast && 
+zig build bin -Doptimize=ReleaseFast &&
     install -m755 ./zig-out/bin/z7 ~/.local/bin/z7
 ```
 
