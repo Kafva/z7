@@ -9,9 +9,6 @@ const libflate = @cImport({
     @cInclude("libflate.h");
 });
 
-/// Manually disable to keep tmpdir output for debugging
-const cleanup_tmpdir = false;
-
 pub const TestContext = struct {
     allocator: std.mem.Allocator,
     tmp: std.testing.TmpDir,
@@ -67,7 +64,7 @@ pub const TestContext = struct {
         self.in.close();
         self.compressed.close();
         self.decompressed.close();
-        if (cleanup_tmpdir) {
+        if (build_options.cleanup) {
             self.tmp.cleanup();
         }
     }

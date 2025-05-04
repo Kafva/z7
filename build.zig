@@ -120,6 +120,9 @@ pub fn build(b: *std.Build) void {
     const trace_opt = b.option(bool, "trace", "Print detailed debug logs") orelse false;
     build_options.addOption(bool, "trace", trace_opt);
 
+    const cleanup_opt = b.option(bool, "cleanup", "Cleanup tmpfiles on exit") orelse true;
+    build_options.addOption(bool, "cleanup", cleanup_opt);
+
     build_tests(b, target, optimize, build_options);
     build_binary(b, target, optimize, build_options);
 }

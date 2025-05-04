@@ -146,13 +146,12 @@ fn no_compression_decompress_block(ctx: *DecompressContext) !void {
     }
     log.debug(@src(), "Decompressing {d} bytes from type-0 block", .{block_size});
 
-    // Write bytes as-is to output stream
-    for (0..block_size) |_| {
-        const b = read_bits(ctx, u8, 8) catch {
-            return FlateError.UnexpectedEof;
-        };
-        try write_byte(ctx, b);
-    }
+    // Write bytes as-is to output stream in bulk
+    const buf = try ctx.allocator.alloc(u8, block_size);
+    const cnt = try read_bytes(ctx, buf);
+    try write_bytes(ctx, buf[0..cnt]);
+
+    ctx.allocator.free(buf);
 }
 
 fn fixed_code_decompress_block(ctx: *DecompressContext) !void {
@@ -560,29 +559,36 @@ fn write_backref_match(ctx: *DecompressContext, length: u16, distance: u16) !voi
     }
 }
 
+fn read_bytes(ctx: *DecompressContext, buf: []u8) !usize {
+    const cnt = try ctx.bit_reader.reader.readAll(buf);
+    ctx.processed_bits  += cnt * 8;
+
+    try print_progress(ctx);
+    return cnt;
+}
 
 /// Read bits with the configured bit-ordering from the input stream
 fn read_bits(ctx: *DecompressContext, comptime T: type, num_bits: u16) !T {
-    const bits = ctx.bit_reader.readBitsNoEof(T, num_bits) catch |e| {
-        return e;
-    };
-    const processed_bytes = @divFloor(ctx.processed_bits, 8);
-    const offset = ctx.start_offset + processed_bytes;
-    util.print_bits(log.trace, T, "Input read", bits, num_bits, offset);
+    const bits = try ctx.bit_reader.readBitsNoEof(T, num_bits);
     ctx.processed_bits += num_bits;
 
-    if (ctx.progress) {
-        if (ctx.maybe_inputfile_size) |input_filesize| {
-            const current_bytes = @divFloor(ctx.processed_bits, 8);
-            try util.progress(
-                "Decompressing...",
-                ctx.start_offset + current_bytes,
-                input_filesize - 8 // Exclude trailer bytes
-            );
-        }
-    }
+    try print_progress(ctx);
 
     return bits;
+}
+
+fn print_progress(ctx: *DecompressContext) !void {
+    if (!ctx.progress) {
+        return;
+    }
+    if (ctx.maybe_inputfile_size) |input_filesize| {
+        const current_bytes = @divFloor(ctx.processed_bits, 8);
+        try util.progress(
+            "Decompressing...",
+            ctx.start_offset + current_bytes,
+            input_filesize - 8 // Exclude trailer bytes
+        );
+    }
 }
 
 /// This stream: 11110xxx xxxxx000 should be interpreted as 0b01111_000
@@ -606,7 +612,6 @@ fn read_bits_be(ctx: *DecompressContext, num_bits: u16) !u16 {
 fn write_byte(ctx: *DecompressContext, c: u8) !void {
     _ = ctx.sliding_window.push(c);
     try ctx.writer.writeByte(c);
-    util.print_char(log.debug, "Output write", c);
     ctx.written_bytes += 1;
 
     // The crc in the trailer of the gzip format is performed on the
@@ -615,3 +620,14 @@ fn write_byte(ctx: *DecompressContext, c: u8) !void {
     const bytearr = [1]u8 { c };
     ctx.crc.update(&bytearr);
 }
+
+fn write_bytes(ctx: *DecompressContext, buf: []u8) !void {
+    for (buf) |b| {
+        _ = ctx.sliding_window.push(b);
+    }
+    try ctx.writer.writeAll(buf);
+    ctx.written_bytes += buf.len;
+
+    ctx.crc.update(buf);
+}
+
