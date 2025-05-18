@@ -123,7 +123,7 @@ pub fn main() u8 {
         };
     }
 
-    if (!ctx.keep) {
+    if (!ctx.keep and !ctx.stdout) {
         if (ctx.maybe_inputfile) |inputfile| {
             std.fs.Dir.deleteFile(std.fs.cwd(), inputfile) catch |err| {
                 log.err(@src(), "Failed to delete input file: {s}", .{@errorName(err)});
